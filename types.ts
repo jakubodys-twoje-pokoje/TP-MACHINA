@@ -6,6 +6,8 @@ export interface Property {
   description: string | null;
   address: string | null;
   contact_info: string | null;
+  maps_link?: string | null;
+  amenities?: string | null;
   created_at: string;
 }
 

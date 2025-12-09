@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { Save, Loader2, Trash2 } from 'lucide-react';
+import { Save, Loader2, Trash2, Plus, X } from 'lucide-react';
 import { Property } from '../types';
 import { useProperties } from '../contexts/PropertyContext';
 
@@ -13,6 +13,7 @@ export const PropertyView: React.FC = () => {
   const [property, setProperty] = useState<Property | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [newAmenity, setNewAmenity] = useState('');
 
   useEffect(() => {
     if (id) fetchProperty(id);
@@ -31,6 +32,29 @@ export const PropertyView: React.FC = () => {
     }
     setLoading(false);
   };
+  
+  const handleAmenityChange = (newAmenities: string[]) => {
+    if (property) {
+      setProperty({ ...property, amenities: newAmenities.join(',') });
+    }
+  };
+
+  const handleAddAmenity = () => {
+    if (newAmenity.trim() === '') return;
+    const currentAmenities = property?.amenities?.split(',').filter(Boolean) || [];
+    if (currentAmenities.map(a => a.toLowerCase()).includes(newAmenity.trim().toLowerCase())) {
+        alert("To udogodnienie już istnieje.");
+        return;
+    }
+    handleAmenityChange([...currentAmenities, newAmenity.trim()]);
+    setNewAmenity('');
+  };
+
+  const handleDeleteAmenity = (amenityToRemove: string) => {
+    const currentAmenities = property?.amenities?.split(',').filter(Boolean) || [];
+    handleAmenityChange(currentAmenities.filter(a => a !== amenityToRemove));
+  };
+
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,7 +68,9 @@ export const PropertyView: React.FC = () => {
           name: property.name,
           address: property.address,
           description: property.description,
-          contact_info: property.contact_info
+          contact_info: property.contact_info,
+          maps_link: property.maps_link,
+          amenities: property.amenities,
         })
         .eq('id', id);
 
@@ -120,6 +146,47 @@ export const PropertyView: React.FC = () => {
               className="w-full bg-slate-900 border border-border text-white rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none"
             />
           </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-1">Link do Map Google</label>
+            <input
+              type="url"
+              value={property.maps_link || ''}
+              onChange={(e) => setProperty({...property, maps_link: e.target.value})}
+              placeholder="https://maps.app.goo.gl/..."
+              className="w-full bg-slate-900 border border-border text-white rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-1">Udogodnienia Obiektu</label>
+            <div className="bg-slate-900 border border-border rounded-lg p-3 space-y-3">
+              <div className="flex flex-wrap gap-2">
+                {(property.amenities || '').split(',').filter(a => a.trim()).map(amenity => (
+                  <div key={amenity} className="bg-slate-700 text-slate-300 text-xs font-medium pl-3 pr-2 py-1 rounded-full flex items-center gap-2">
+                    {amenity.trim()}
+                    <button type="button" onClick={() => handleDeleteAmenity(amenity.trim())} className="text-slate-400 hover:text-white transition-colors">
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+               <div className="flex gap-2 items-center border-t border-border pt-3">
+                <input
+                  type="text"
+                  value={newAmenity}
+                  onChange={(e) => setNewAmenity(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddAmenity())}
+                  placeholder="Wpisz nowe udogodnienie"
+                  className="flex-grow bg-slate-800 border border-slate-700 text-white rounded-lg p-2 text-sm outline-none focus:ring-1 focus:ring-indigo-500"
+                />
+                <button type="button" onClick={handleAddAmenity} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 text-sm font-medium rounded-lg flex items-center gap-1 transition-colors">
+                  <Plus size={16} /> Dodaj
+                </button>
+              </div>
+            </div>
+          </div>
+
 
           <div>
             <label className="block text-sm font-medium text-slate-400 mb-1">Opis</label>
