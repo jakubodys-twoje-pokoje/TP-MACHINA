@@ -1,10 +1,12 @@
 import React, { createContext, useState, useEffect, useContext, ReactNode } from 'react';
 import { supabase } from '../services/supabaseClient';
-import { Property, Unit, Availability } from '../types';
+import { Property, Unit, Availability, Notification } from '../types';
 import { facilitiesMap } from '../data/facilities';
 
 interface PropertyContextType {
   properties: Property[];
+  notifications: Notification[];
+  unreadCount: number;
   loading: boolean;
   error: string | null;
   fetchProperties: () => Promise<void>;
@@ -12,12 +14,18 @@ interface PropertyContextType {
   deleteProperty: (id: string) => Promise<void>;
   importFromHotres: (oid: string, propertyId: string) => Promise<void>;
   syncAvailability: (oid: string, propertyId: string) => Promise<void>;
+  fetchNotifications: () => Promise<void>;
+  markNotificationAsRead: (id: string) => Promise<void>;
+  markAllNotificationsAsRead: () => Promise<void>;
+  deleteNotification: (id: string) => Promise<void>;
 }
 
 const PropertyContext = createContext<PropertyContextType | undefined>(undefined);
 
 export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [properties, setProperties] = useState<Property[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,14 +50,32 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       setLoading(false);
     }
   };
+
+  const fetchNotifications = async () => {
+    const { data, error } = await supabase
+      .from('notifications')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error("Błąd pobierania powiadomień:", error);
+      return;
+    }
+
+    setNotifications(data || []);
+    setUnreadCount(data?.filter(n => !n.is_read).length || 0);
+  };
   
   useEffect(() => {
     fetchProperties();
+    fetchNotifications();
+
     const { data: authListener } = supabase.auth.onAuthStateChange(
       (event) => {
         if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
            setLoading(true);
            fetchProperties();
+           fetchNotifications();
         }
       }
     );
@@ -57,6 +83,27 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       authListener.subscription.unsubscribe();
     };
   }, []);
+
+  const markNotificationAsRead = async (id: string) => {
+    const { error } = await supabase.from('notifications').update({ is_read: true }).eq('id', id);
+    if (error) throw error;
+    await fetchNotifications();
+  };
+
+  const markAllNotificationsAsRead = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if(!user) return;
+    const { error } = await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('is_read', false);
+    if (error) throw error;
+    await fetchNotifications();
+  };
+
+  const deleteNotification = async (id: string) => {
+      const { error } = await supabase.from('notifications').delete().eq('id', id);
+      if (error) throw error;
+      await fetchNotifications();
+  };
+
 
   const addProperty = async (name: string, description: string | null): Promise<Property | null> => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -161,67 +208,100 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   };
 
   const syncAvailability = async (oid: string, propertyId: string) => {
-    // 1. Get all units for this property to create a type_id -> unit_id map
-    const { data: units, error: unitsError } = await supabase
-      .from('units')
-      .select('id, external_type_id')
-      .eq('property_id', propertyId);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Brak użytkownika");
 
-    if (unitsError) throw unitsError;
-    if (!units || units.length === 0) throw new Error("Brak kwater do synchronizacji dostępności.");
+      const property = properties.find(p => p.id === propertyId);
+      if (!property) throw new Error("Nie znaleziono obiektu");
 
-    const typeIdToUnitIdMap = new Map<string, string>();
-    units.forEach(unit => {
-      if (unit.external_type_id) {
-        typeIdToUnitIdMap.set(unit.external_type_id, unit.id);
+      // 1. Get all units for this property for mapping
+      const { data: units, error: unitsError } = await supabase.from('units').select('id, name, external_type_id').eq('property_id', propertyId);
+      if (unitsError) throw unitsError;
+      if (!units || units.length === 0) throw new Error("Brak kwater do synchronizacji.");
+
+      const typeIdToUnitMap = new Map<string, { id: string; name: string }>();
+      units.forEach(unit => {
+          if (unit.external_type_id) typeIdToUnitMap.set(unit.external_type_id, { id: unit.id, name: unit.name });
+      });
+
+      // 2. Get current availability from DB
+      const { data: currentAvailData } = await supabase.from('availability').select('unit_id, date, status').in('unit_id', units.map(u => u.id));
+      const currentAvailMap = new Map<string, 'available' | 'blocked'>();
+      currentAvailData?.forEach(a => currentAvailMap.set(`${a.unit_id}-${a.date}`, a.status as any));
+      
+      // 3. Fetch availability data from Hotres
+      const fromDate = '2026-01-01';
+      const tillDate = '2026-12-31';
+      const availUrl = `https://panel.hotres.pl/api_availability?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}&from=${fromDate}&till=${tillDate}`;
+      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(availUrl)}`;
+      
+      const response = await fetch(proxyUrl);
+      if (!response.ok) throw new Error(`API Dostępności: ${response.status}`);
+      const newAvailData = await response.json();
+      if (!Array.isArray(newAvailData)) throw new Error("API Dostępności: Zły format danych.");
+
+      // 4. Compare and find changes
+      const allChanges: { unitId: string, unitName: string, date: string, newStatus: 'available' | 'blocked' }[] = [];
+      const recordsToUpsert: Omit<Availability, 'id' | 'reservation_id'>[] = [];
+
+      for (const typeData of newAvailData) {
+          const unit = typeIdToUnitMap.get(String(typeData.type_id));
+          if (unit && typeData.dates && Array.isArray(typeData.dates)) {
+              for (const dateInfo of typeData.dates) {
+                  const newStatus = dateInfo.available === "1" ? 'available' : 'blocked';
+                  recordsToUpsert.push({ unit_id: unit.id, date: dateInfo.date, status: newStatus });
+
+                  const oldStatus = currentAvailMap.get(`${unit.id}-${dateInfo.date}`);
+                  if (oldStatus !== newStatus) {
+                      allChanges.push({ unitId: unit.id, unitName: unit.name, date: dateInfo.date, newStatus });
+                  }
+              }
+          }
       }
-    });
 
-    // 2. Fetch availability data from Hotres for 2026
-    const fromDate = '2026-01-01';
-    const tillDate = '2026-12-31';
-    const availUrl = `https://panel.hotres.pl/api_availability?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}&from=${fromDate}&till=${tillDate}`;
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(availUrl)}`;
-    
-    const response = await fetch(proxyUrl);
-    if (!response.ok) throw new Error(`Błąd połączenia z API Dostępności: ${response.status}`);
-    const availabilityData = await response.json();
+      // 5. Group changes and create notifications
+      const notificationsToInsert: Omit<Notification, 'id' | 'created_at' | 'is_read' | 'user_id'>[] = [];
+      const changesByUnit = allChanges.reduce((acc, change) => {
+          (acc[change.unitId] = acc[change.unitId] || []).push(change);
+          return acc;
+      }, {} as Record<string, typeof allChanges>);
 
-    // 3. Prepare records for batch upsert
-    const recordsToUpsert: Omit<Availability, 'id' | 'reservation_id'>[] = [];
-    if (!Array.isArray(availabilityData)) {
-      throw new Error("Odpowiedź z API Dostępności nie jest w oczekiwanym formacie (tablica).");
-    }
+      for (const unitId in changesByUnit) {
+          const unitChanges = changesByUnit[unitId].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+          if (unitChanges.length === 0) continue;
 
-    for (const typeData of availabilityData) {
-      const unitId = typeIdToUnitIdMap.get(String(typeData.type_id));
-      if (unitId && typeData.dates && Array.isArray(typeData.dates)) {
-        for (const dateInfo of typeData.dates) {
-          recordsToUpsert.push({
-            unit_id: unitId,
-            date: dateInfo.date,
-            status: dateInfo.available === "1" ? 'available' : 'blocked'
-          });
-        }
+          let group = { change_type: unitChanges[0].newStatus, start_date: unitChanges[0].date, end_date: unitChanges[0].date };
+          for (let i = 1; i < unitChanges.length; i++) {
+              const prevDate = new Date(unitChanges[i - 1].date);
+              const currentDate = new Date(unitChanges[i].date);
+              const diffDays = (currentDate.getTime() - prevDate.getTime()) / (1000 * 3600 * 24);
+
+              if (unitChanges[i].newStatus === group.change_type && diffDays === 1) {
+                  group.end_date = unitChanges[i].date;
+              } else {
+                  notificationsToInsert.push({ property_id: propertyId, property_name: property.name, unit_id: unitId, unit_name: unitChanges[0].unitName, ...group });
+                  group = { change_type: unitChanges[i].newStatus, start_date: unitChanges[i].date, end_date: unitChanges[i].date };
+              }
+          }
+          notificationsToInsert.push({ property_id: propertyId, property_name: property.name, unit_id: unitId, unit_name: unitChanges[0].unitName, ...group });
       }
-    }
 
-    if (recordsToUpsert.length === 0) {
-      console.warn("Nie znaleziono danych o dostępności do zsynchronizowania.");
-      return; 
-    }
-
-    // 4. Execute batch upsert
-    const { error: upsertError } = await supabase
-      .from('availability')
-      .upsert(recordsToUpsert, { onConflict: 'unit_id, date' });
-
-    if (upsertError) throw upsertError;
+      // 6. Execute DB operations
+      if (recordsToUpsert.length > 0) {
+          const { error: upsertError } = await supabase.from('availability').upsert(recordsToUpsert, { onConflict: 'unit_id, date' });
+          if (upsertError) throw upsertError;
+      }
+      if (notificationsToInsert.length > 0) {
+          const { error: notifError } = await supabase.from('notifications').insert(notificationsToInsert.map(n => ({...n, user_id: user.id })));
+          if (notifError) throw notifError;
+          await fetchNotifications(); // Refresh notifications in UI
+      }
   };
-
 
   const value = {
     properties,
+    notifications,
+    unreadCount,
     loading,
     error,
     fetchProperties,
@@ -229,6 +309,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     deleteProperty,
     importFromHotres,
     syncAvailability,
+    fetchNotifications,
+    markNotificationAsRead,
+    markAllNotificationsAsRead,
+    deleteNotification
   };
 
   return (

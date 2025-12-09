@@ -1,4 +1,5 @@
 
+
 export interface Property {
   id: string;
   user_id: string;
@@ -57,7 +58,16 @@ export interface SeasonalPrice {
     price: number;
 }
 
-
-export interface RouteParams {
-  propertyId?: string;
+export interface Notification {
+  id: string;
+  user_id: string;
+  property_id: string;
+  unit_id: string;
+  property_name: string;
+  unit_name: string;
+  change_type: 'available' | 'blocked';
+  start_date: string;
+  end_date: string;
+  is_read: boolean;
+  created_at: string;
 }

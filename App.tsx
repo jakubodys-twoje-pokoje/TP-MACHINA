@@ -6,8 +6,9 @@ import { Layout } from './components/Layout';
 import { PropertyView } from './components/PropertyView';
 import { UnitsView } from './components/UnitsView';
 import { CalendarView } from './components/CalendarView';
-import { PricingView } from './components/PricingView'; // Import new view
-import { Loader2, Building } from 'lucide-react';
+import { PricingView } from './components/PricingView';
+import { Dashboard } from './components/Dashboard'; // Import Dashboard
+import { Loader2 } from 'lucide-react';
 import { PropertyProvider } from './contexts/PropertyContext';
 
 const App: React.FC = () => {
@@ -87,17 +88,7 @@ const App: React.FC = () => {
       <PropertyProvider>
         <Layout>
           <Routes>
-            <Route path="/" element={
-              <div className="text-center mt-20 p-4">
-                <div className="w-20 h-20 bg-indigo-600/20 rounded-full flex items-center justify-center mx-auto mb-6">
-                   <Building className="text-indigo-500" size={40} /> 
-                </div>
-                <h2 className="text-3xl font-bold text-white mb-4">Witaj w Panelu Rezerwacji</h2>
-                <p className="text-slate-400 max-w-md mx-auto">
-                  Wybierz obiekt z menu po lewej stronie, aby rozpocząć edycję, lub dodaj nowy obiekt przyciskiem "+".
-                </p>
-              </div>
-            } />
+            <Route path="/" element={<Dashboard />} /> 
             
             <Route path="/property/:id/details" element={<PropertyView />} />
             <Route path="/property/:id/units" element={<UnitsView />} />

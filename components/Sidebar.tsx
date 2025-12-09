@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2, AlertTriangle, Tag } from 'lucide-react';
+import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2, AlertTriangle, Tag, Bell } from 'lucide-react';
 import { useProperties } from '../contexts/PropertyContext';
 
 export const Sidebar: React.FC = () => {
-  const { properties, loading, error, addProperty, importFromHotres } = useProperties();
+  const { properties, loading, error, addProperty, importFromHotres, unreadCount } = useProperties();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -66,6 +66,15 @@ export const Sidebar: React.FC = () => {
       </div>
 
       <div className="flex-1 overflow-y-auto py-4 px-3 space-y-1 custom-scrollbar">
+        <NavLink to="/" className={({isActive}) => `flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors mb-4 ${isActive ? 'bg-slate-800 text-white font-medium' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`}>
+          <div className="flex items-center gap-3"><Bell size={16} /> Panel główny</div>
+          {unreadCount > 0 && (
+            <span className="bg-red-600 text-white text-xs font-bold rounded-full h-5 w-5 flex items-center justify-center">
+              {unreadCount}
+            </span>
+          )}
+        </NavLink>
+
         <div className="text-xs font-bold text-slate-500 uppercase tracking-wider px-3 mb-2">Twoje Obiekty</div>
         {loading ? (
           <div className="flex justify-center py-4"><Loader2 className="animate-spin text-slate-500" /></div>
