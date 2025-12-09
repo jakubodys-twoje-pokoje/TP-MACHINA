@@ -17,6 +17,7 @@ export interface Unit {
   capacity: number;
   description: string | null;
   external_id?: string | null;
+  external_type_id?: string | null; // Nowe pole
 }
 
 export interface Availability {

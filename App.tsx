@@ -7,6 +7,7 @@ import { PropertyView } from './components/PropertyView';
 import { UnitsView } from './components/UnitsView';
 import { CalendarView } from './components/CalendarView';
 import { Loader2, Building } from 'lucide-react';
+import { PropertyProvider } from './contexts/PropertyContext';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
@@ -18,14 +19,10 @@ const App: React.FC = () => {
 
     const initSession = async () => {
       try {
-        // Bezpieczne pobranie sesji
         const { data, error } = await supabase.auth.getSession();
-        
         if (error) {
-            console.error("Błąd sesji Supabase:", error);
-            // Nie rzucamy błędu krytycznego, po prostu zakładamy brak sesji
+          console.error("Błąd sesji Supabase:", error);
         }
-        
         if (mounted) {
           setSession(data.session);
         }
@@ -41,7 +38,6 @@ const App: React.FC = () => {
 
     initSession();
 
-    // Nasłuchiwanie zmian w autoryzacji
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -87,27 +83,29 @@ const App: React.FC = () => {
 
   return (
     <HashRouter>
-      <Layout>
-        <Routes>
-          <Route path="/" element={
-            <div className="text-center mt-20 p-4">
-              <div className="w-20 h-20 bg-indigo-600/20 rounded-full flex items-center justify-center mx-auto mb-6">
-                 <Building className="text-indigo-500" size={40} /> 
+      <PropertyProvider>
+        <Layout>
+          <Routes>
+            <Route path="/" element={
+              <div className="text-center mt-20 p-4">
+                <div className="w-20 h-20 bg-indigo-600/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                   <Building className="text-indigo-500" size={40} /> 
+                </div>
+                <h2 className="text-3xl font-bold text-white mb-4">Witaj w Panelu Rezerwacji</h2>
+                <p className="text-slate-400 max-w-md mx-auto">
+                  Wybierz obiekt z menu po lewej stronie, aby rozpocząć edycję, lub dodaj nowy obiekt przyciskiem "+".
+                </p>
               </div>
-              <h2 className="text-3xl font-bold text-white mb-4">Witaj w Panelu Rezerwacji</h2>
-              <p className="text-slate-400 max-w-md mx-auto">
-                Wybierz obiekt z menu po lewej stronie, aby rozpocząć edycję, lub dodaj nowy obiekt przyciskiem "+".
-              </p>
-            </div>
-          } />
-          
-          <Route path="/property/:id/details" element={<PropertyView />} />
-          <Route path="/property/:id/units" element={<UnitsView />} />
-          <Route path="/property/:id/calendar" element={<CalendarView />} />
-          
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Layout>
+            } />
+            
+            <Route path="/property/:id/details" element={<PropertyView />} />
+            <Route path="/property/:id/units" element={<UnitsView />} />
+            <Route path="/property/:id/calendar" element={<CalendarView />} />
+            
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Layout>
+      </PropertyProvider>
     </HashRouter>
   );
 };

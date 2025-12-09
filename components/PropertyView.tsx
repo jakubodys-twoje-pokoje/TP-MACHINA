@@ -1,11 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { Save, Loader2, Trash2 } from 'lucide-react';
 import { Property } from '../types';
+import { useProperties } from '../contexts/PropertyContext';
 
 export const PropertyView: React.FC = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { deleteProperty } = useProperties();
+
   const [property, setProperty] = useState<Property | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -57,11 +61,13 @@ export const PropertyView: React.FC = () => {
   const handleDelete = async () => {
     if (!id || !confirm('Czy na pewno chcesz usunąć ten obiekt? Tej operacji nie można cofnąć.')) return;
     
-    const { error } = await supabase.from('properties').delete().eq('id', id);
-    if (!error) {
-       window.location.hash = '/'; // Simple redirect after delete
-    } else {
-       alert('Błąd usuwania');
+    try {
+      await deleteProperty(id);
+      alert('Obiekt usunięty.');
+      navigate('/');
+    } catch (error) {
+      alert('Błąd usuwania obiektu.');
+      console.error(error);
     }
   };
 
