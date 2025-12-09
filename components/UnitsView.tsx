@@ -1,9 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2, ImageOff, Ruler, Layers, Bath, ChevronDown } from 'lucide-react';
+import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2, ImageOff, Ruler, Layers, Bath, ChevronDown, Save, X } from 'lucide-react';
 import { Unit, Property } from '../types';
 import { useProperties } from '../contexts/PropertyContext';
+
+const facilitiesMap: { [key: string]: string } = {
+  '1': 'Wi-Fi', '2': 'Parking', '3': 'Aneks kuchenny', '4': 'Lodówka',
+  '5': 'Telewizor', '6': 'Balkon / Taras', '9': 'Czajnik', '10': 'Naczynia i sztućce',
+  '17': 'Ręczniki', '19': 'Płyta kuchenna', '22': 'Łazienka w pokoju', '23': 'Szafa / Garderoba',
+  '24': 'Zestaw do parzenia kawy i herbaty', '67': 'Taras', '70': 'Grill', '74': 'Meble ogrodowe',
+  '76': 'Pościel', '77': 'Stół',
+};
+
 
 const BedDetails: React.FC<{ unit: Unit }> = ({ unit }) => {
   const details = [
@@ -34,6 +43,9 @@ export const UnitsView: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [expandedUnitId, setExpandedUnitId] = useState<string | null>(null);
+  const [editingUnitId, setEditingUnitId] = useState<string | null>(null);
+  const [editFormData, setEditFormData] = useState<Partial<Unit>>({});
+
   const { importFromHotres } = useProperties();
 
   useEffect(() => {
@@ -61,6 +73,39 @@ export const UnitsView: React.FC = () => {
     if (!error) setUnits(data || []);
     setLoading(false);
   };
+  
+  const handleEditClick = (unit: Unit) => {
+    setEditingUnitId(unit.id);
+    setEditFormData(unit);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingUnitId(null);
+    setEditFormData({});
+  };
+  
+  const handleSaveEdit = async () => {
+    if (!editingUnitId) return;
+    const { error } = await supabase
+      .from('units')
+      .update(editFormData)
+      .eq('id', editingUnitId);
+
+    if (error) {
+      alert('Błąd zapisu: ' + error.message);
+    } else {
+      setUnits(units.map(u => u.id === editingUnitId ? { ...u, ...editFormData } : u));
+      handleCancelEdit();
+    }
+  };
+  
+  const handleFormChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value, type } = e.target;
+    setEditFormData(prev => ({
+      ...prev,
+      [name]: type === 'number' ? (value === '' ? null : Number(value)) : value
+    }));
+  };
 
   const handleSync = async () => {
     if (!property || !property.description) {
@@ -76,7 +121,7 @@ export const UnitsView: React.FC = () => {
     setIsSyncing(true);
     try {
       await importFromHotres(oidMatch[1], property.id);
-      await fetchUnits(); // Refresh the list
+      await fetchUnits();
     } catch (err: any) {
       alert(`Błąd synchronizacji: ${err.message}`);
     } finally {
@@ -85,7 +130,7 @@ export const UnitsView: React.FC = () => {
   }
 
   const handleDelete = async (e: React.MouseEvent, unitId: string) => {
-    e.stopPropagation(); // Prevent row from expanding when clicking delete
+    e.stopPropagation();
     if (!confirm('Usunąć kwaterę? Ta akcja jest nieodwracalna.')) return;
     const { error } = await supabase.from('units').delete().eq('id', unitId);
     if (!error) {
@@ -98,6 +143,75 @@ export const UnitsView: React.FC = () => {
   };
   
   const isImported = property?.description?.includes('Hotres OID');
+
+  const renderDisplayRow = (unit: Unit) => (
+    <tr onClick={() => handleToggleRow(unit.id)} className="hover:bg-slate-800/50 transition-colors cursor-pointer">
+      <td className="px-4 py-3 text-center">
+        <ChevronDown size={16} className={`text-slate-600 transition-transform duration-200 ${expandedUnitId === unit.id ? 'rotate-180' : ''}`} />
+      </td>
+      <td className="px-4 py-3">
+        {unit.photo_url ? (
+          <img src={unit.photo_url} alt={unit.name} className="w-12 h-12 object-cover rounded-md bg-slate-800" />
+        ) : (
+          <div className="w-12 h-12 flex items-center justify-center bg-slate-800 rounded-md">
+            <ImageOff size={20} className="text-slate-600" />
+          </div>
+        )}
+      </td>
+      <td className="px-4 py-4 font-medium text-white">{unit.name}</td>
+      <td className="px-4 py-4 text-slate-400 font-mono text-xs">
+        <span className="flex items-center gap-2">
+            <Key size={14}/>
+            <div>
+                <div>{unit.external_id} <span className="text-slate-600">(pokój)</span></div>
+                <div className="mt-1">{unit.external_type_id} <span className="text-slate-600">(typ)</span></div>
+            </div>
+        </span>
+      </td>
+      <td className="px-4 py-4 text-slate-300">
+        {unit.max_adults ? <span className="flex items-center gap-1.5"><Users size={14} className="text-slate-500"/> {unit.max_adults}</span> : <span className="text-slate-500">—</span>}
+      </td>
+      <td className="px-4 py-4 text-slate-300"><BedDetails unit={unit} /></td>
+      <td className="px-4 py-4 text-slate-300">
+        {unit.area ? <span className="flex items-center gap-1.5"><Ruler size={14} className="text-slate-500"/> {unit.area} m²</span> : <span className="text-slate-500">—</span>}
+      </td>
+      <td className="px-4 py-4 text-slate-300">
+        {unit.floor !== null && unit.floor !== undefined ? <span className="flex items-center gap-1.5"><Layers size={14} className="text-slate-500"/> {unit.floor}</span> : <span className="text-slate-500">—</span>}
+      </td>
+      <td className="px-4 py-4 text-slate-300">
+        {unit.bathroom_count ? <span className="flex items-center gap-1.5"><Bath size={14} className="text-slate-500"/> {unit.bathroom_count}</span> : <span className="text-slate-500">—</span>}
+      </td>
+      <td className="px-4 py-4 text-right">
+        <div className="flex items-center justify-end gap-2">
+          <button onClick={(e) => { e.stopPropagation(); handleEditClick(unit); }} title="Edytuj" className="text-slate-400 hover:text-indigo-400 p-2 rounded-md transition-colors hover:bg-indigo-500/10"><Edit2 size={16} /></button>
+          <button onClick={(e) => handleDelete(e, unit.id)} title="Usuń" className="text-slate-400 hover:text-red-400 p-2 rounded-md transition-colors hover:bg-red-500/10"><Trash2 size={16} /></button>
+        </div>
+      </td>
+    </tr>
+  );
+
+  const renderEditRow = (unit: Unit) => (
+    <tr className="bg-slate-800">
+       <td className="px-4 py-3 text-center"><Edit2 size={16} className="text-indigo-400" /></td>
+       <td className="px-4 py-3">
+         <input type="text" name="photo_url" value={editFormData.photo_url || ''} onChange={handleFormChange} className="w-24 bg-slate-900 border border-border text-white rounded p-1 text-xs" placeholder="URL zdjęcia"/>
+       </td>
+       <td className="px-4 py-3"><input type="text" name="name" value={editFormData.name || ''} onChange={handleFormChange} className="w-full bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
+       <td className="px-4 py-3"></td>
+       <td className="px-4 py-3"><input type="number" name="max_adults" value={editFormData.max_adults || ''} onChange={handleFormChange} className="w-16 bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
+       <td className="px-4 py-3"></td>
+       <td className="px-4 py-3"><input type="number" name="area" value={editFormData.area || ''} onChange={handleFormChange} className="w-16 bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
+       <td className="px-4 py-3"><input type="number" name="floor" value={editFormData.floor || ''} onChange={handleFormChange} className="w-16 bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
+       <td className="px-4 py-3"><input type="number" name="bathroom_count" value={editFormData.bathroom_count || ''} onChange={handleFormChange} className="w-16 bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
+       <td className="px-4 py-3 text-right">
+         <div className="flex items-center justify-end gap-2">
+           <button onClick={handleSaveEdit} title="Zapisz" className="text-green-400 hover:text-green-300 p-2 rounded-md transition-colors hover:bg-green-500/10"><Save size={16} /></button>
+           <button onClick={handleCancelEdit} title="Anuluj" className="text-slate-400 hover:text-white p-2 rounded-md transition-colors hover:bg-slate-700"><X size={16} /></button>
+         </div>
+       </td>
+    </tr>
+  );
+
 
   return (
     <div className="space-y-6">
@@ -139,73 +253,30 @@ export const UnitsView: React.FC = () => {
           <tbody className="divide-y divide-border">
             {units.map(unit => (
               <React.Fragment key={unit.id}>
-                <tr onClick={() => handleToggleRow(unit.id)} className="hover:bg-slate-800/50 transition-colors cursor-pointer">
-                  <td className="px-4 py-3 text-center">
-                    <ChevronDown size={16} className={`text-slate-600 transition-transform duration-200 ${expandedUnitId === unit.id ? 'rotate-180' : ''}`} />
-                  </td>
-                  <td className="px-4 py-3">
-                    {unit.photo_url ? (
-                      <img src={unit.photo_url} alt={unit.name} className="w-12 h-12 object-cover rounded-md bg-slate-800" />
-                    ) : (
-                      <div className="w-12 h-12 flex items-center justify-center bg-slate-800 rounded-md">
-                        <ImageOff size={20} className="text-slate-600" />
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-4 font-medium text-white">{unit.name}</td>
-                  <td className="px-4 py-4 text-slate-400 font-mono text-xs">
-                    <span className="flex items-center gap-2">
-                        <Key size={14}/>
-                        <div>
-                            <div>{unit.external_id} <span className="text-slate-600">(pokój)</span></div>
-                            <div className="mt-1">{unit.external_type_id} <span className="text-slate-600">(typ)</span></div>
-                        </div>
-                    </span>
-                  </td>
-                  <td className="px-4 py-4 text-slate-300">
-                    {unit.max_adults ? (
-                      <span className="flex items-center gap-1.5"><Users size={14} className="text-slate-500"/> {unit.max_adults}</span>
-                    ) : (
-                      <span className="text-slate-500">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-4 text-slate-300">
-                    <BedDetails unit={unit} />
-                  </td>
-                   <td className="px-4 py-4 text-slate-300">
-                     {unit.area ? (
-                       <span className="flex items-center gap-1.5"><Ruler size={14} className="text-slate-500"/> {unit.area} m²</span>
-                     ) : (
-                       <span className="text-slate-500">—</span>
-                     )}
-                   </td>
-                   <td className="px-4 py-4 text-slate-300">
-                     {unit.floor !== null && unit.floor !== undefined ? (
-                       <span className="flex items-center gap-1.5"><Layers size={14} className="text-slate-500"/> {unit.floor}</span>
-                     ) : (
-                       <span className="text-slate-500">—</span>
-                     )}
-                   </td>
-                   <td className="px-4 py-4 text-slate-300">
-                     {unit.bathroom_count ? (
-                       <span className="flex items-center gap-1.5"><Bath size={14} className="text-slate-500"/> {unit.bathroom_count}</span>
-                     ) : (
-                       <span className="text-slate-500">—</span>
-                     )}
-                   </td>
-                  <td className="px-4 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <button title="Edycja (niedostępna dla importowanych)" disabled className="text-slate-600 p-2 rounded-md cursor-not-allowed"><Edit2 size={16} /></button>
-                      <button onClick={(e) => handleDelete(e, unit.id)} className="text-slate-400 hover:text-red-400 p-2 rounded-md transition-colors hover:bg-red-500/10"><Trash2 size={16} /></button>
-                    </div>
-                  </td>
-                </tr>
+                {editingUnitId === unit.id ? renderEditRow(unit) : renderDisplayRow(unit)}
+                
                 {expandedUnitId === unit.id && (
                   <tr className="bg-slate-900/70">
                     <td colSpan={10} className="p-0">
-                      <div className="p-6 border-t-2 border-indigo-500">
-                        <h4 className="text-sm font-bold text-white mb-3">Opis kwatery</h4>
-                        <div className="text-sm prose" dangerouslySetInnerHTML={{ __html: unit.description || '<p class="italic text-slate-500">Brak opisu.</p>' }} />
+                      <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6 border-t-2 border-indigo-500">
+                        <div className="md:col-span-2">
+                           <h4 className="text-sm font-bold text-white mb-3">Opis kwatery</h4>
+                           <div className="text-sm prose" dangerouslySetInnerHTML={{ __html: unit.description || '<p class="italic text-slate-500">Brak opisu.</p>' }} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-white mb-3">Udogodnienia</h4>
+                          {unit.facilities ? (
+                             <div className="flex flex-wrap gap-2">
+                               {unit.facilities.split(',').map(id => facilitiesMap[id.trim()] ? (
+                                 <span key={id} className="bg-slate-700 text-slate-300 text-xs font-medium px-2 py-1 rounded-full">
+                                   {facilitiesMap[id.trim()]}
+                                 </span>
+                               ) : null)}
+                             </div>
+                          ) : (
+                            <p className="italic text-slate-500 text-sm">Brak danych o udogodnieniach.</p>
+                          )}
+                        </div>
                       </div>
                     </td>
                   </tr>
