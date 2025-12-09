@@ -1,62 +1,83 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { Property, Availability } from '../types';
-import { AlertCircle, RefreshCw, Loader2, Power, Timer } from 'lucide-react';
+import { Property, Availability, Unit } from '../types';
+import { RefreshCw, Loader2, Power, Timer, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useProperties } from '../contexts/PropertyContext';
+
+// Calendar Generation Logic
+const getDaysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
+const getFirstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
 
 export const CalendarView: React.FC = () => {
   const { id: propertyId } = useParams<{ id: string }>();
   const [property, setProperty] = useState<Property | null>(null);
-  const [availabilityList, setAvailabilityList] = useState<Availability[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [selectedUnitId, setSelectedUnitId] = useState<string>('');
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [availabilityData, setAvailabilityData] = useState<Map<string, Availability['status']>>(new Map());
   
-  // Sync state
+  const [loadingUnits, setLoadingUnits] = useState(true);
+  const [loadingAvailability, setLoadingAvailability] = useState(false);
+
   const [isSyncing, setIsSyncing] = useState(false);
   const [isAutoSync, setIsAutoSync] = useState(false);
   const [intervalSeconds, setIntervalSeconds] = useState(3600);
   const [lastSync, setLastSync] = useState<Date | null>(null);
-  // FIX: In a browser environment, setInterval returns a number, not NodeJS.Timeout.
   const timerRef = useRef<number | null>(null);
-
-  // @ts-ignore - The context will be updated in the next step
+  
   const { syncAvailability } = useProperties();
 
   useEffect(() => {
     if (propertyId) {
-      fetchProperty();
-      fetchAvailability();
+      fetchPropertyAndUnits();
     }
   }, [propertyId]);
 
-  const fetchProperty = async () => {
+  useEffect(() => {
+    if (selectedUnitId) {
+      fetchAvailabilityForMonth();
+    }
+  }, [selectedUnitId, currentDate]);
+  
+  const fetchPropertyAndUnits = async () => {
     if (!propertyId) return;
-    const { data } = await supabase.from('properties').select('*').eq('id', propertyId).single();
-    setProperty(data);
+    setLoadingUnits(true);
+    const { data: propData } = await supabase.from('properties').select('*').eq('id', propertyId).single();
+    setProperty(propData);
+
+    const { data: unitsData } = await supabase.from('units').select('*').eq('property_id', propertyId).order('name');
+    setUnits(unitsData || []);
+    if (unitsData && unitsData.length > 0) {
+      setSelectedUnitId(unitsData[0].id);
+    }
+    setLoadingUnits(false);
   };
 
-  const fetchAvailability = async () => {
-    if (!propertyId) return;
-    setLoading(true);
-    // Fetch all units for this property
-    const { data: units } = await supabase.from('units').select('id').eq('property_id', propertyId);
-    if (units && units.length > 0) {
-      const unitIds = units.map(u => u.id);
-      // Fetch availability for all units in this property
-      const { data: availData } = await supabase
-        .from('availability')
-        .select('*')
-        .in('unit_id', unitIds)
-        .neq('status', 'available')
-        .order('date', { ascending: false })
-        .limit(100); // Limit for display purposes
-      setAvailabilityList(availData || []);
-    } else {
-      setAvailabilityList([]);
-    }
-    setLoading(false);
+  const fetchAvailabilityForMonth = async () => {
+    if (!selectedUnitId) return;
+    setLoadingAvailability(true);
+
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const startDate = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const endDate = `${year}-${String(month + 1).padStart(2, '0')}-${getDaysInMonth(year, month)}`;
+
+    const { data } = await supabase
+      .from('availability')
+      .select('date, status')
+      .eq('unit_id', selectedUnitId)
+      .gte('date', startDate)
+      .lte('date', endDate);
+      
+    const newAvailMap = new Map<string, Availability['status']>();
+    (data || []).forEach(item => {
+      newAvailMap.set(item.date, item.status as Availability['status']);
+    });
+    setAvailabilityData(newAvailMap);
+    setLoadingAvailability(false);
   };
-  
+
   const handleSync = async () => {
     if (!property || !property.description) {
       alert("Brak OID w opisie obiektu. Nie można zsynchronizować.");
@@ -70,9 +91,8 @@ export const CalendarView: React.FC = () => {
     
     setIsSyncing(true);
     try {
-      // @ts-ignore
       await syncAvailability(oidMatch[1], property.id);
-      await fetchAvailability();
+      await fetchAvailabilityForMonth();
       setLastSync(new Date());
       alert('Synchronizacja dostępności zakończona pomyślnie.');
     } catch (err: any) {
@@ -81,44 +101,102 @@ export const CalendarView: React.FC = () => {
       setIsSyncing(false);
     }
   };
-  
-  // Effect for managing the auto-sync interval
+
   useEffect(() => {
-    if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-    }
+    if (timerRef.current) clearInterval(timerRef.current);
     if (isAutoSync && intervalSeconds > 0 && propertyId) {
-        timerRef.current = setInterval(handleSync, intervalSeconds * 1000);
+      timerRef.current = setInterval(handleSync, intervalSeconds * 1000);
     }
-    return () => {
-        if (timerRef.current) {
-            clearInterval(timerRef.current);
-        }
-    };
+    return () => { if (timerRef.current) clearInterval(timerRef.current) };
   }, [isAutoSync, intervalSeconds, propertyId]);
 
+  const calendarGrid = useMemo(() => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const daysInMonth = getDaysInMonth(year, month);
+    const firstDay = getFirstDayOfMonth(year, month);
+    
+    const grid = [];
+    for (let i = 0; i < (firstDay === 0 ? 6 : firstDay - 1); i++) {
+      grid.push(<div key={`empty-${i}`} className="p-2"></div>);
+    }
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const status = availabilityData.get(dateStr);
+      
+      const isUnavailable = status === 'booked' || status === 'blocked';
+      const isToday = new Date().toDateString() === new Date(year, month, day).toDateString();
+      
+      grid.push(
+        <div 
+          key={day} 
+          className={`h-20 flex flex-col items-center justify-center rounded-lg transition-colors
+            ${isUnavailable ? 'bg-red-900/40' : 'bg-slate-800/50'}
+            ${isToday ? 'border-2 border-indigo-500' : 'border border-transparent'}
+          `}
+        >
+          <span className={`font-bold text-lg ${isUnavailable ? 'text-red-400/50' : 'text-slate-200'}`}>{day}</span>
+        </div>
+      );
+    }
+    return grid;
+  }, [currentDate, availabilityData]);
+  
+  const changeMonth = (delta: number) => {
+    setCurrentDate(prev => {
+      const newDate = new Date(prev);
+      newDate.setMonth(newDate.getMonth() + delta);
+      return newDate;
+    });
+  };
 
-  if (!property && !loading) return (
-      <div className="flex flex-col items-center justify-center h-64 text-slate-500">
-          <AlertCircle size={48} className="mb-4 text-slate-600" />
-          <p className="text-lg font-medium">Nie znaleziono obiektu.</p>
-      </div>
-  );
+  const weekdays = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Ndz'];
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center justify-between border-b border-border pb-4">
-        <h2 className="text-2xl font-bold text-white">Zarządzanie Dostępnością</h2>
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-4">
+        <h2 className="text-2xl font-bold text-white">Kalendarz Dostępności</h2>
+        {units.length > 0 && (
+          <select 
+             value={selectedUnitId}
+             onChange={e => setSelectedUnitId(e.target.value)}
+             className="bg-surface border border-border rounded-lg px-3 py-2 text-white outline-none focus:ring-2 focus:ring-indigo-500 min-w-[200px]"
+          >
+            {units.map(unit => <option key={unit.id} value={unit.id}>{unit.name}</option>)}
+          </select>
+        )}
       </div>
+
+       {loadingUnits ? (
+        <div className="text-center py-8 text-slate-500"><Loader2 className="animate-spin inline-block mr-2" /> Ładowanie...</div>
+      ) : units.length === 0 ? (
+        <p className="text-sm text-slate-500 italic text-center py-8">Brak kwater w tym obiekcie. Dodaj je w zakładce 'Kwatery', aby zarządzać dostępnością.</p>
+      ) : (
+        <div className="bg-surface rounded-xl border border-border p-6 shadow-lg relative">
+          {loadingAvailability && <div className="absolute inset-0 bg-surface/50 backdrop-blur-sm flex items-center justify-center z-10"><Loader2 className="animate-spin text-indigo-400" size={32}/></div>}
+          
+          <div className="flex items-center justify-between mb-4">
+            <button onClick={() => changeMonth(-1)} className="p-2 rounded-md hover:bg-slate-700"><ChevronLeft /></button>
+            <h3 className="text-xl font-bold text-white tracking-wide">
+              {currentDate.toLocaleString('pl-PL', { month: 'long', year: 'numeric' })}
+            </h3>
+            <button onClick={() => changeMonth(1)} className="p-2 rounded-md hover:bg-slate-700"><ChevronRight /></button>
+          </div>
+          
+          <div className="grid grid-cols-7 gap-2 text-center text-xs text-slate-400 font-bold mb-2">
+            {weekdays.map(day => <div key={day}>{day}</div>)}
+          </div>
+          <div className="grid grid-cols-7 gap-2">
+            {calendarGrid}
+          </div>
+        </div>
+      )}
 
       {/* SYNC PANEL */}
       <div className="bg-surface rounded-xl border border-border p-6 shadow-lg">
         <h3 className="text-lg font-bold text-white mb-2">Synchronizacja z Hotres</h3>
         <p className="text-sm text-slate-400 mb-6">Pobierz i zaktualizuj stany dostępności dla wszystkich kwater w tym obiekcie na rok 2026.</p>
-        
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-          {/* Manual Sync */}
           <div className="space-y-4">
              <button 
               onClick={handleSync}
@@ -132,8 +210,6 @@ export const CalendarView: React.FC = () => {
               {lastSync ? `Ostatnia synchronizacja: ${lastSync.toLocaleTimeString()}` : 'Naciśnij, aby pobrać dane.'}
             </p>
           </div>
-          
-          {/* Auto Sync */}
           <div className="bg-slate-900/50 p-4 rounded-lg border border-border space-y-4">
               <div className="flex items-center justify-between">
                 <label htmlFor="auto-sync-toggle" className="flex items-center gap-2 font-medium text-slate-300 cursor-pointer">
@@ -162,30 +238,6 @@ export const CalendarView: React.FC = () => {
           </div>
         </div>
       </div>
-      
-      {/* LAST 100 UNAVAILABLE DATES */}
-       <div className="bg-surface rounded-xl border border-border p-6 shadow-lg">
-           <h3 className="text-lg font-bold text-white mb-4">Ostatnie 100 Zmian Dostępności</h3>
-            {loading ? (
-                <div className="text-center py-8 text-slate-500"><Loader2 className="animate-spin inline-block mr-2" /> Ładowanie...</div>
-            ) : availabilityList.length === 0 ? (
-                <p className="text-sm text-slate-500 italic text-center py-8">Brak zdefiniowanych blokad lub rezerwacji. Cały kalendarz jest oznaczony jako dostępny.</p>
-            ) : (
-                <div className="max-h-96 overflow-y-auto custom-scrollbar pr-2">
-                    <ul className="space-y-2">
-                    {availabilityList.map(a => (
-                        <li key={a.id} className="flex justify-between items-center p-2 bg-slate-900/40 rounded-md">
-                            <span className="font-mono text-sm text-slate-300">{a.date}</span>
-                             <span className={`text-xs px-2 py-0.5 rounded-md uppercase font-bold tracking-wider ${a.status === 'booked' ? 'bg-red-500/10 text-red-400' : 'bg-orange-500/10 text-orange-400'}`}>
-                                {a.status === 'blocked' ? 'Zablokowane' : a.status}
-                             </span>
-                        </li>
-                    ))}
-                    </ul>
-                </div>
-            )}
-       </div>
-
     </div>
   );
 };
