@@ -77,7 +77,17 @@ export const UnitsView: React.FC = () => {
   
   const handleEditClick = (unit: Unit) => {
     setEditingUnitId(unit.id);
-    setEditFormData(unit);
+    
+    // Translate facility IDs to names for editing
+    const facilityString = unit.facilities || '';
+    const translatedFacilities = facilityString
+      .split(',')
+      .map(id => id.trim())
+      .filter(Boolean)
+      .map(id => facilitiesMap[id] || id) // Translate ID to name, or keep as is if not found
+      .join(', ');
+
+    setEditFormData({ ...unit, facilities: translatedFacilities });
     setExpandedUnitId(unit.id); // Automatically expand when editing
   };
 
@@ -295,7 +305,7 @@ export const UnitsView: React.FC = () => {
                                 className="w-full bg-slate-900 border border-border text-white rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none resize-y text-sm"
                               />
                            ) : (
-                             <div className="text-sm prose break-words" dangerouslySetInnerHTML={{ __html: unit.description || '<p class="italic text-slate-500">Brak opisu.</p>' }} />
+                             <div className="text-sm prose" dangerouslySetInnerHTML={{ __html: unit.description || '<p class="italic text-slate-500">Brak opisu.</p>' }} />
                            )}
                         </div>
 
