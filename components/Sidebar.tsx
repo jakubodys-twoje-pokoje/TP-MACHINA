@@ -96,10 +96,10 @@ export const Sidebar: React.FC = () => {
   };
 
   const importFromHotres = async (oid: string, propertyId: string) => {
-    // We use 'allorigins' proxy to bypass CORS restrictions in the browser. 
-    // Direct call to hotres.pl from a browser web app would be blocked.
+    // We use 'allorigins' proxy to bypass CORS restrictions in the browser.
+    // Added timestamp to prevent caching.
     const targetUrl = `https://panel.hotres.pl/api_rooms?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}`;
-    const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
+    const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}&t=${Date.now()}`;
 
     try {
       const response = await fetch(url);
@@ -111,19 +111,25 @@ export const Sidebar: React.FC = () => {
       const parser = new DOMParser();
       const xmlDoc = parser.parseFromString(xmlText, "text/xml");
       
+      // Check for parsing errors
+      const parserError = xmlDoc.getElementsByTagName("parsererror");
+      if (parserError.length > 0) {
+        throw new Error("Błąd parsowania XML z Hotres.");
+      }
+
       const rooms = xmlDoc.getElementsByTagName("room");
       if (rooms.length === 0) {
           console.warn("Brak pokoi w XML:", xmlText);
-          throw new Error("Nie znaleziono pokoi dla podanego OID w odpowiedzi API.");
+          throw new Error("API zwróciło poprawną odpowiedź, ale nie znaleziono w niej żadnych pokoi (znacznik <room>). Sprawdź OID.");
       }
 
       const unitsToInsert = [];
 
       for (let i = 0; i < rooms.length; i++) {
         const room = rooms[i];
-        const name = room.getElementsByTagName("room_name")[0]?.textContent || `Pokój ${i+1}`;
+        const name = room.getElementsByTagName("room_name")[0]?.textContent?.trim() || `Pokój ${i+1}`;
         const capacityStr = room.getElementsByTagName("people")[0]?.textContent || "2";
-        const desc = room.getElementsByTagName("room_desc")[0]?.textContent || "";
+        const desc = room.getElementsByTagName("room_desc")[0]?.textContent?.trim() || "";
         
         // Basic mapping
         unitsToInsert.push({
@@ -131,7 +137,7 @@ export const Sidebar: React.FC = () => {
           name: name,
           type: 'room',
           capacity: parseInt(capacityStr) || 2,
-          description: desc.substring(0, 500) // Limit length just in case
+          description: desc.substring(0, 1000) // Limit description length
         });
       }
 
@@ -142,42 +148,46 @@ export const Sidebar: React.FC = () => {
 
     } catch (err: any) {
       console.error("Import failed:", err);
-      alert(`Ostrzeżenie: Obiekt utworzono, ale import pokoi nie powiódł się. Powód: ${err.message}`);
+      // Property is created, so we just warn about units
+      alert(`Ostrzeżenie: Obiekt utworzono pomyślnie, ale import pokoi nie powiódł się.\n\nPowód: ${err.message}`);
     }
   };
 
   return (
     <>
-    <nav className="flex flex-col h-full overflow-y-auto relative z-10">
+    <nav className="flex flex-col h-full overflow-y-auto relative z-10 scrollbar-thin scrollbar-thumb-slate-700">
       <div className="p-6">
         <h1 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
             <Building size={18} className="text-white" />
           </div>
           Machina
         </h1>
-        <p className="text-xs text-slate-500 mt-1 uppercase tracking-wider font-semibold">Panel Rezerwacji</p>
+        <p className="text-xs text-slate-500 mt-1 uppercase tracking-wider font-semibold pl-10">Panel Rezerwacji</p>
       </div>
 
-      <div className="px-4 pb-2">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-semibold text-slate-500 uppercase">Twoje Obiekty</span>
+      <div className="px-4 pb-2 flex-1">
+        <div className="flex items-center justify-between mb-4 px-2">
+          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Twoje Obiekty</span>
           <button 
             onClick={() => setIsModalOpen(true)}
-            className="text-slate-400 hover:text-white transition-colors p-1 bg-slate-800 rounded hover:bg-indigo-600"
+            className="text-slate-400 hover:text-white transition-all p-1.5 bg-slate-800/50 hover:bg-indigo-600 rounded-md ring-1 ring-slate-700/50 hover:ring-indigo-500"
             title="Dodaj obiekt"
           >
-            <Plus size={14} />
+            <Plus size={14} strokeWidth={3} />
           </button>
         </div>
         
         {loading ? (
-          <div className="animate-pulse space-y-2">
-            <div className="h-8 bg-slate-800 rounded"></div>
-            <div className="h-8 bg-slate-800 rounded"></div>
+          <div className="animate-pulse space-y-3 px-2">
+            <div className="h-10 bg-slate-800 rounded-lg"></div>
+            <div className="h-10 bg-slate-800 rounded-lg"></div>
+            <div className="h-10 bg-slate-800 rounded-lg"></div>
           </div>
         ) : properties.length === 0 ? (
-          <div className="text-sm text-slate-500 italic py-2">Brak obiektów. Dodaj pierwszy!</div>
+          <div className="text-sm text-slate-500 italic py-4 text-center border border-dashed border-slate-700 rounded-lg mx-2">
+            Brak obiektów.<br/>Dodaj pierwszy!
+          </div>
         ) : (
           <ul className="space-y-1">
             {properties.map((prop) => {
@@ -188,46 +198,46 @@ export const Sidebar: React.FC = () => {
                   <div 
                     onClick={() => navigate(`/property/${prop.id}/details`)}
                     className={`
-                      group flex items-center gap-3 px-3 py-2 text-sm rounded-md cursor-pointer transition-all
+                      group flex items-center gap-3 px-3 py-2.5 text-sm rounded-lg cursor-pointer transition-all border border-transparent
                       ${isActive 
-                        ? 'bg-indigo-600/10 text-indigo-400 font-medium' 
+                        ? 'bg-indigo-600/10 text-indigo-400 font-medium border-indigo-500/20' 
                         : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}
                     `}
                   >
-                    <Home size={16} className={isActive ? 'text-indigo-400' : 'text-slate-500 group-hover:text-slate-300'} />
+                    <Home size={18} className={`flex-shrink-0 ${isActive ? 'text-indigo-400' : 'text-slate-500 group-hover:text-slate-300'}`} />
                     <span className="truncate">{prop.name}</span>
                   </div>
 
                   {isActive && (
-                    <div className="ml-4 pl-4 border-l border-border mt-1 space-y-1 mb-2">
+                    <div className="ml-5 pl-4 border-l-2 border-slate-800 mt-1 space-y-1 mb-3 animate-in slide-in-from-left-2 duration-200">
                       <NavLink 
                         to={`/property/${prop.id}/details`}
                         className={({ isActive }) => `
-                          flex items-center gap-2 px-3 py-1.5 text-xs rounded-md transition-colors
-                          ${isActive ? 'text-white bg-slate-700/50' : 'text-slate-500 hover:text-slate-300'}
+                          flex items-center gap-2 px-3 py-2 text-xs rounded-md transition-colors
+                          ${isActive ? 'text-white bg-slate-800 font-medium' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'}
                         `}
                       >
-                        <Settings size={12} />
+                        <Settings size={14} />
                         Ustawienia
                       </NavLink>
                       <NavLink 
                         to={`/property/${prop.id}/units`}
                         className={({ isActive }) => `
-                          flex items-center gap-2 px-3 py-1.5 text-xs rounded-md transition-colors
-                          ${isActive ? 'text-white bg-slate-700/50' : 'text-slate-500 hover:text-slate-300'}
+                          flex items-center gap-2 px-3 py-2 text-xs rounded-md transition-colors
+                          ${isActive ? 'text-white bg-slate-800 font-medium' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'}
                         `}
                       >
-                        <BedDouble size={12} />
+                        <BedDouble size={14} />
                         Kwatery
                       </NavLink>
                       <NavLink 
                         to={`/property/${prop.id}/calendar`}
                         className={({ isActive }) => `
-                          flex items-center gap-2 px-3 py-1.5 text-xs rounded-md transition-colors
-                          ${isActive ? 'text-white bg-slate-700/50' : 'text-slate-500 hover:text-slate-300'}
+                          flex items-center gap-2 px-3 py-2 text-xs rounded-md transition-colors
+                          ${isActive ? 'text-white bg-slate-800 font-medium' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'}
                         `}
                       >
-                        <Calendar size={12} />
+                        <Calendar size={14} />
                         Cennik & Dostępność
                       </NavLink>
                     </div>
@@ -242,76 +252,78 @@ export const Sidebar: React.FC = () => {
 
     {/* CREATE PROPERTY MODAL */}
     {isModalOpen && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-        <div className="bg-surface border border-border w-full max-w-md rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-          <div className="flex items-center justify-between p-4 border-b border-border bg-slate-900/50">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+        <div className="bg-surface border border-slate-700 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 ring-1 ring-white/10">
+          <div className="flex items-center justify-between p-5 border-b border-slate-700 bg-slate-900/80">
             <h3 className="text-lg font-bold text-white">Dodaj nowy obiekt</h3>
-            <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-white transition-colors">
-              <X size={20} />
+            <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-white transition-colors bg-slate-800 p-1 rounded-full hover:bg-slate-700">
+              <X size={18} />
             </button>
           </div>
           
-          <div className="p-4">
+          <div className="p-6">
             {/* Tabs */}
-            <div className="flex bg-slate-900 p-1 rounded-lg mb-6">
+            <div className="flex bg-slate-900 p-1.5 rounded-xl mb-6 ring-1 ring-slate-800">
               <button 
                 onClick={() => setModalMode('manual')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-md transition-all ${modalMode === 'manual' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium rounded-lg transition-all ${modalMode === 'manual' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'}`}
               >
-                <Type size={14} /> Ręcznie
+                <Type size={16} /> Ręcznie
               </button>
               <button 
                 onClick={() => setModalMode('import')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-md transition-all ${modalMode === 'import' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium rounded-lg transition-all ${modalMode === 'import' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'}`}
               >
-                <Globe size={14} /> Import OID
+                <Globe size={16} /> Import Hotres
               </button>
             </div>
 
-            <form onSubmit={handleCreateProperty} className="space-y-4">
+            <form onSubmit={handleCreateProperty} className="space-y-5">
               <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1 uppercase">Nazwa Obiektu</label>
+                <label className="block text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-wide">Nazwa Obiektu</label>
                 <input 
                   type="text" 
                   required
                   placeholder="np. Apartamenty nad Morzem"
-                  className="w-full bg-slate-900 border border-border text-white rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none"
+                  className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all placeholder:text-slate-600"
                   value={formData.name}
                   onChange={e => setFormData({...formData, name: e.target.value})}
                 />
               </div>
 
               {modalMode === 'import' && (
-                <div className="animate-in fade-in slide-in-from-top-2">
-                  <label className="block text-xs font-medium text-slate-400 mb-1 uppercase">Hotres OID</label>
-                  <input 
-                    type="text" 
-                    required
-                    placeholder="np. 4268"
-                    className="w-full bg-slate-900 border border-border text-white rounded-lg p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none font-mono"
-                    value={formData.oid}
-                    onChange={e => setFormData({...formData, oid: e.target.value})}
-                  />
-                  <p className="text-xs text-slate-500 mt-2">
-                    System pobierze listę pokoi z API Hotres i automatycznie utworzy je w bazie.
+                <div className="animate-in fade-in slide-in-from-top-2 space-y-3 p-4 bg-indigo-900/20 rounded-xl border border-indigo-500/20">
+                  <div>
+                    <label className="block text-xs font-bold text-indigo-300 mb-1.5 uppercase tracking-wide">Hotres OID</label>
+                    <input 
+                      type="text" 
+                      required
+                      placeholder="np. 4268"
+                      className="w-full bg-slate-900 border border-indigo-500/30 text-white rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none font-mono tracking-widest"
+                      value={formData.oid}
+                      onChange={e => setFormData({...formData, oid: e.target.value})}
+                    />
+                  </div>
+                  <p className="text-xs text-indigo-200/70 leading-relaxed">
+                    System połączy się z API Hotres, pobierze listę pokoi (nazwy, opisy, liczby osób) i automatycznie utworzy je w bazie danych.
                   </p>
                 </div>
               )}
 
-              <div className="pt-4 flex justify-end gap-3">
+              <div className="pt-4 flex justify-end gap-3 border-t border-slate-800 mt-6">
                 <button 
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors"
+                  className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors hover:bg-slate-800 rounded-lg"
                 >
                   Anuluj
                 </button>
                 <button 
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-colors disabled:opacity-50"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-all shadow-lg shadow-indigo-900/20 disabled:opacity-70 disabled:cursor-not-allowed"
                 >
-                  {isSubmitting && <Loader2 className="animate-spin" size={14} />}
+                  {isSubmitting && <Loader2 className="animate-spin" size={16} />}
                   {modalMode === 'import' ? 'Importuj i Utwórz' : 'Utwórz Obiekt'}
                 </button>
               </div>
