@@ -1,6 +1,3 @@
-
-
-
 export interface Property {
   id: string;
   user_id: string;
@@ -56,7 +53,8 @@ export interface Notification {
   is_read: boolean;
   created_at: string;
 }
-// FIX: Add missing Season and SeasonalPrice interfaces
+
+// FIX: Add Season and SeasonalPrice types to resolve import errors in components/PricingView.tsx
 export interface Season {
   id: string;
   property_id: string;
