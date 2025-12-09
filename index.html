@@ -16,6 +16,15 @@
               primary: '#6366f1',    // Indigo 500
               secondary: '#64748b',  // Slate 500
               border: '#334155',     // Slate 700
+            },
+            animation: {
+              in: 'animate-in .6s ease-in-out',
+            },
+            keyframes: {
+              'animate-in': {
+                '0%': { opacity: '0', transform: 'translateY(-10px)' },
+                '100%': { opacity: '1', transform: 'translateY(0)' },
+              },
             }
           }
         }
@@ -46,6 +55,7 @@
         color: #cbd5e1; /* slate-300 */
         line-height: 1.6;
         max-width: 100%;
+        overflow-wrap: break-word; /* Fix for long words breaking layout */
       }
       .prose p {
         margin-bottom: 1em;
@@ -64,21 +74,76 @@
         padding-left: 1.5em;
         margin-bottom: 1em;
       }
+      @keyframes animate-in {
+        from {
+          opacity: 0;
+          transform: translateY(-10px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      .animate-in {
+        animation: animate-in 0.3s ease-out forwards;
+      }
+      @keyframes zoom-in-95 {
+        from {
+          opacity: 0;
+          transform: scale(0.95);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+      .zoom-in-95 {
+          animation: zoom-in-95 0.2s ease-out forwards;
+      }
+      @keyframes fade-in {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      .fade-in {
+          animation: fade-in 0.2s ease-out forwards;
+      }
+      @keyframes slide-in-from-left-2 {
+          from { transform: translateX(-0.5rem); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+      }
+      .slide-in-from-left-2 {
+          animation: slide-in-from-left-2 0.3s ease-out forwards;
+      }
+      @keyframes slide-in-from-top-2 {
+        from {
+          transform: translateY(-0.5rem);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
+      .slide-in-from-top-2 {
+        animation: slide-in-from-top-2 0.3s ease-out forwards;
+      }
     </style>
   <script type="importmap">
 {
   "imports": {
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "react": "https://esm.sh/react@18.2.0",
+    "lucide-react": "https://esm.sh/lucide-react@0.372.0",
+    "react-router-dom": "https://esm.sh/react-router-dom@6.22.3",
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.42.0",
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
-    "react/": "https://aistudiocdn.com/react@^19.2.1/",
-    "react": "https://aistudiocdn.com/react@^19.2.1",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.556.0",
-    "react-router-dom": "https://aistudiocdn.com/react-router-dom@^7.10.1",
-    "@supabase/supabase-js": "https://aistudiocdn.com/@supabase/supabase-js@^2.87.1"
+    "react/": "https://aistudiocdn.com/react@^19.2.1/"
   }
 }
 </script>
 </head>
   <body>
     <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
   </body>
 </html>

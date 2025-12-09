@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2, ImageOff, Ruler, Layers, Bath, ChevronDown, Save, X } from 'lucide-react';
+import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2, ImageOff, Ruler, Layers, Bath, ChevronDown, Save, X, PlusCircle } from 'lucide-react';
 import { Unit, Property } from '../types';
 import { useProperties } from '../contexts/PropertyContext';
 
@@ -45,6 +45,8 @@ export const UnitsView: React.FC = () => {
   const [expandedUnitId, setExpandedUnitId] = useState<string | null>(null);
   const [editingUnitId, setEditingUnitId] = useState<string | null>(null);
   const [editFormData, setEditFormData] = useState<Partial<Unit>>({});
+  const [isSaving, setIsSaving] = useState(false);
+
 
   const { importFromHotres } = useProperties();
 
@@ -77,6 +79,7 @@ export const UnitsView: React.FC = () => {
   const handleEditClick = (unit: Unit) => {
     setEditingUnitId(unit.id);
     setEditFormData(unit);
+    setExpandedUnitId(unit.id); // Automatically expand when editing
   };
 
   const handleCancelEdit = () => {
@@ -86,26 +89,52 @@ export const UnitsView: React.FC = () => {
   
   const handleSaveEdit = async () => {
     if (!editingUnitId) return;
+    setIsSaving(true);
+    const { facilities, ...restOfData } = editFormData;
+
+    // Ensure facilities is a string, even if it's empty
+    const updatedData = { ...restOfData, facilities: Array.isArray(facilities) ? facilities.join(',') : facilities || '' };
+
+
     const { error } = await supabase
       .from('units')
-      .update(editFormData)
+      .update(updatedData)
       .eq('id', editingUnitId);
-
+      
+    setIsSaving(false);
     if (error) {
       alert('Błąd zapisu: ' + error.message);
     } else {
-      setUnits(units.map(u => u.id === editingUnitId ? { ...u, ...editFormData } : u));
+      setUnits(units.map(u => u.id === editingUnitId ? { ...u, ...updatedData } : u));
       handleCancelEdit();
     }
   };
   
-  const handleFormChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
+    // @ts-ignore
+    const isNumber = type === 'number';
     setEditFormData(prev => ({
       ...prev,
-      [name]: type === 'number' ? (value === '' ? null : Number(value)) : value
+      [name]: isNumber ? (value === '' ? null : Number(value)) : value
     }));
   };
+
+  const handleFacilityChange = (facilityId: string, isAdding: boolean) => {
+    const currentFacilities = editFormData.facilities?.split(',').map(s => s.trim()).filter(Boolean) || [];
+    let newFacilities;
+    if (isAdding) {
+      if (!currentFacilities.includes(facilityId)) {
+        newFacilities = [...currentFacilities, facilityId];
+      } else {
+        return;
+      }
+    } else {
+      newFacilities = currentFacilities.filter(id => id !== facilityId);
+    }
+    setEditFormData(prev => ({ ...prev, facilities: newFacilities.join(',') }));
+  };
+
 
   const handleSync = async () => {
     if (!property || !property.description) {
@@ -139,6 +168,7 @@ export const UnitsView: React.FC = () => {
   };
 
   const handleToggleRow = (unitId: string) => {
+    if (editingUnitId === unitId) return; // Don't collapse if editing
     setExpandedUnitId(currentId => (currentId === unitId ? null : unitId));
   };
   
@@ -192,20 +222,22 @@ export const UnitsView: React.FC = () => {
 
   const renderEditRow = (unit: Unit) => (
     <tr className="bg-slate-800">
-       <td className="px-4 py-3 text-center"><Edit2 size={16} className="text-indigo-400" /></td>
+       <td className="px-4 py-3 text-center"><Edit2 size={16} className="text-indigo-400 animate-pulse" /></td>
        <td className="px-4 py-3">
          <input type="text" name="photo_url" value={editFormData.photo_url || ''} onChange={handleFormChange} className="w-24 bg-slate-900 border border-border text-white rounded p-1 text-xs" placeholder="URL zdjęcia"/>
        </td>
        <td className="px-4 py-3"><input type="text" name="name" value={editFormData.name || ''} onChange={handleFormChange} className="w-full bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
        <td className="px-4 py-3"></td>
-       <td className="px-4 py-3"><input type="number" name="max_adults" value={editFormData.max_adults || ''} onChange={handleFormChange} className="w-16 bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
+       <td className="px-4 py-3"><input type="number" name="max_adults" value={editFormData.max_adults ?? ''} onChange={handleFormChange} className="w-16 bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
        <td className="px-4 py-3"></td>
-       <td className="px-4 py-3"><input type="number" name="area" value={editFormData.area || ''} onChange={handleFormChange} className="w-16 bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
-       <td className="px-4 py-3"><input type="number" name="floor" value={editFormData.floor || ''} onChange={handleFormChange} className="w-16 bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
-       <td className="px-4 py-3"><input type="number" name="bathroom_count" value={editFormData.bathroom_count || ''} onChange={handleFormChange} className="w-16 bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
+       <td className="px-4 py-3"><input type="number" name="area" value={editFormData.area ?? ''} onChange={handleFormChange} className="w-16 bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
+       <td className="px-4 py-3"><input type="number" name="floor" value={editFormData.floor ?? ''} onChange={handleFormChange} className="w-16 bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
+       <td className="px-4 py-3"><input type="number" name="bathroom_count" value={editFormData.bathroom_count ?? ''} onChange={handleFormChange} className="w-16 bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
        <td className="px-4 py-3 text-right">
          <div className="flex items-center justify-end gap-2">
-           <button onClick={handleSaveEdit} title="Zapisz" className="text-green-400 hover:text-green-300 p-2 rounded-md transition-colors hover:bg-green-500/10"><Save size={16} /></button>
+           <button onClick={handleSaveEdit} disabled={isSaving} title="Zapisz" className="text-green-400 hover:text-green-300 p-2 rounded-md transition-colors hover:bg-green-500/10 disabled:opacity-50">
+             {isSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+           </button>
            <button onClick={handleCancelEdit} title="Anuluj" className="text-slate-400 hover:text-white p-2 rounded-md transition-colors hover:bg-slate-700"><X size={16} /></button>
          </div>
        </td>
@@ -255,26 +287,61 @@ export const UnitsView: React.FC = () => {
               <React.Fragment key={unit.id}>
                 {editingUnitId === unit.id ? renderEditRow(unit) : renderDisplayRow(unit)}
                 
-                {expandedUnitId === unit.id && (
+                {(expandedUnitId === unit.id || editingUnitId === unit.id) && (
                   <tr className="bg-slate-900/70">
                     <td colSpan={10} className="p-0">
-                      <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6 border-t-2 border-indigo-500">
-                        <div className="md:col-span-2">
+                      <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-8 border-t-2 border-indigo-500 animate-in fade-in">
+                        {/* Column for Description */}
+                        <div className="md:col-span-2 min-w-0">
                            <h4 className="text-sm font-bold text-white mb-3">Opis kwatery</h4>
-                           <div className="text-sm prose" dangerouslySetInnerHTML={{ __html: unit.description || '<p class="italic text-slate-500">Brak opisu.</p>' }} />
+                           {editingUnitId === unit.id ? (
+                              <textarea 
+                                name="description"
+                                value={editFormData.description || ''} 
+                                onChange={handleFormChange} 
+                                rows={10}
+                                className="w-full bg-slate-800 border border-border rounded-lg p-3 text-sm text-slate-300 outline-none focus:ring-2 focus:ring-indigo-500 resize-y"
+                              />
+                           ) : (
+                              <div className="text-sm prose" dangerouslySetInnerHTML={{ __html: unit.description || '<p class="italic text-slate-500">Brak opisu.</p>' }} />
+                           )}
                         </div>
+                        {/* Column for Facilities */}
                         <div>
                           <h4 className="text-sm font-bold text-white mb-3">Udogodnienia</h4>
-                          {unit.facilities ? (
-                             <div className="flex flex-wrap gap-2">
-                               {unit.facilities.split(',').map(id => facilitiesMap[id.trim()] ? (
-                                 <span key={id} className="bg-slate-700 text-slate-300 text-xs font-medium px-2 py-1 rounded-full">
-                                   {facilitiesMap[id.trim()]}
-                                 </span>
-                               ) : null)}
-                             </div>
+                          {editingUnitId === unit.id ? (
+                            <div className="space-y-4">
+                              <div className="flex flex-wrap gap-2">
+                                {(editFormData.facilities?.split(',').map(s => s.trim()).filter(Boolean) || []).map(id => (
+                                  <span key={id} className="bg-slate-700 text-slate-300 text-xs font-medium pl-3 pr-1 py-1 rounded-full flex items-center gap-1">
+                                    {facilitiesMap[id] || `ID: ${id}`}
+                                    <button type="button" onClick={() => handleFacilityChange(id, false)} className="text-slate-500 hover:text-white"><X size={14} /></button>
+                                  </span>
+                                ))}
+                              </div>
+                              <select 
+                                onChange={e => handleFacilityChange(e.target.value, true)} 
+                                value=""
+                                className="w-full bg-slate-800 border-border rounded-lg text-white text-sm p-2 outline-none focus:ring-1 focus:ring-indigo-500"
+                              >
+                                <option value="">-- Dodaj udogodnienie --</option>
+                                {Object.entries(facilitiesMap)
+                                  .filter(([id]) => !(editFormData.facilities?.split(',').includes(id)))
+                                  .map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                              </select>
+                            </div>
                           ) : (
-                            <p className="italic text-slate-500 text-sm">Brak danych o udogodnieniach.</p>
+                            unit.facilities ? (
+                              <div className="flex flex-wrap gap-2">
+                                {unit.facilities.split(',').map(id => facilitiesMap[id.trim()] ? (
+                                  <span key={id} className="bg-slate-700 text-slate-300 text-xs font-medium px-2 py-1 rounded-full">
+                                    {facilitiesMap[id.trim()]}
+                                  </span>
+                                ) : null)}
+                              </div>
+                            ) : (
+                              <p className="italic text-slate-500 text-sm">Brak danych o udogodnieniach.</p>
+                            )
                           )}
                         </div>
                       </div>
