@@ -96,14 +96,14 @@ export const Sidebar: React.FC = () => {
   };
 
   const importFromHotres = async (oid: string, propertyId: string) => {
-    // Proxy URL note: In a real production environment, calling HTTP/HTTPS APIs 
-    // without CORS headers from the browser will fail. 
-    // We attempt a direct fetch here. If blocked by CORS, user needs a proxy.
-    const url = `https://panel.hotres.pl/api_rooms?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}`;
+    // We use 'allorigins' proxy to bypass CORS restrictions in the browser. 
+    // Direct call to hotres.pl from a browser web app would be blocked.
+    const targetUrl = `https://panel.hotres.pl/api_rooms?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}`;
+    const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`;
 
     try {
       const response = await fetch(url);
-      if (!response.ok) throw new Error(`Błąd połączenia z API Hotres: ${response.status}`);
+      if (!response.ok) throw new Error(`Błąd połączenia z API (Proxy): ${response.status}`);
       
       const xmlText = await response.text();
       
@@ -112,6 +112,11 @@ export const Sidebar: React.FC = () => {
       const xmlDoc = parser.parseFromString(xmlText, "text/xml");
       
       const rooms = xmlDoc.getElementsByTagName("room");
+      if (rooms.length === 0) {
+          console.warn("Brak pokoi w XML:", xmlText);
+          throw new Error("Nie znaleziono pokoi dla podanego OID w odpowiedzi API.");
+      }
+
       const unitsToInsert = [];
 
       for (let i = 0; i < rooms.length; i++) {
@@ -120,7 +125,7 @@ export const Sidebar: React.FC = () => {
         const capacityStr = room.getElementsByTagName("people")[0]?.textContent || "2";
         const desc = room.getElementsByTagName("room_desc")[0]?.textContent || "";
         
-        // Very basic mapping
+        // Basic mapping
         unitsToInsert.push({
           property_id: propertyId,
           name: name,
@@ -137,7 +142,7 @@ export const Sidebar: React.FC = () => {
 
     } catch (err: any) {
       console.error("Import failed:", err);
-      alert(`Ostrzeżenie: Obiekt utworzono, ale import pokoi nie powiódł się. Powód: ${err.message}. Sprawdź konsolę (często blokada CORS).`);
+      alert(`Ostrzeżenie: Obiekt utworzono, ale import pokoi nie powiódł się. Powód: ${err.message}`);
     }
   };
 
