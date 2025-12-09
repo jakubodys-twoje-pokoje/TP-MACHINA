@@ -1,6 +1,7 @@
 import React, { createContext, useState, useEffect, useContext, ReactNode } from 'react';
 import { supabase } from '../services/supabaseClient';
-import { Property, Unit } from '../types';
+// FIX: Import the 'Availability' type to resolve the 'Cannot find name' error.
+import { Property, Unit, Availability } from '../types';
 
 interface PropertyContextType {
   properties: Property[];
@@ -10,6 +11,7 @@ interface PropertyContextType {
   addProperty: (name: string, description: string | null) => Promise<Property | null>;
   deleteProperty: (id: string) => Promise<void>;
   importFromHotres: (oid: string, propertyId: string) => Promise<void>;
+  syncAvailability: (oid: string, propertyId: string) => Promise<void>;
 }
 
 const PropertyContext = createContext<PropertyContextType | undefined>(undefined);
@@ -138,14 +140,12 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         return mergedUnitData;
     }));
 
-    const validUnits = unitsToInsert.filter(Boolean); // Remove any nulls from failed fetches
+    const validUnits = unitsToInsert.filter(Boolean);
 
     if (validUnits.length > 0) {
-      // Clear existing units before sync
       const { error: deleteError } = await supabase.from('units').delete().eq('property_id', propertyId);
       if (deleteError) throw new Error(`Błąd czyszczenia starych kwater: ${deleteError.message}`);
 
-      // Insert new units
       const { error: insertError } = await supabase.from('units').insert(validUnits);
       if (insertError) throw new Error(`Błąd importu kwater: ${insertError.message}`);
       
@@ -153,6 +153,65 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     } else {
       alert('Nie udało się pobrać szczegółów dla żadnej z kwater.');
     }
+  };
+
+  const syncAvailability = async (oid: string, propertyId: string) => {
+    // 1. Get all units for this property to create a type_id -> unit_id map
+    const { data: units, error: unitsError } = await supabase
+      .from('units')
+      .select('id, external_type_id')
+      .eq('property_id', propertyId);
+
+    if (unitsError) throw unitsError;
+    if (!units || units.length === 0) throw new Error("Brak kwater do synchronizacji dostępności.");
+
+    const typeIdToUnitIdMap = new Map<string, string>();
+    units.forEach(unit => {
+      if (unit.external_type_id) {
+        typeIdToUnitIdMap.set(unit.external_type_id, unit.id);
+      }
+    });
+
+    // 2. Fetch availability data from Hotres for 2026
+    const fromDate = '2026-01-01';
+    const tillDate = '2026-12-31';
+    const availUrl = `https://panel.hotres.pl/api_availability?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}&from=${fromDate}&till=${tillDate}`;
+    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(availUrl)}`;
+    
+    const response = await fetch(proxyUrl);
+    if (!response.ok) throw new Error(`Błąd połączenia z API Dostępności: ${response.status}`);
+    const availabilityData = await response.json();
+
+    // 3. Prepare records for batch upsert
+    const recordsToUpsert: Omit<Availability, 'id' | 'reservation_id'>[] = [];
+    if (!Array.isArray(availabilityData)) {
+      throw new Error("Odpowiedź z API Dostępności nie jest w oczekiwanym formacie (tablica).");
+    }
+
+    for (const typeData of availabilityData) {
+      const unitId = typeIdToUnitIdMap.get(String(typeData.type_id));
+      if (unitId && typeData.dates && Array.isArray(typeData.dates)) {
+        for (const dateInfo of typeData.dates) {
+          recordsToUpsert.push({
+            unit_id: unitId,
+            date: dateInfo.date,
+            status: dateInfo.available === "1" ? 'available' : 'blocked'
+          });
+        }
+      }
+    }
+
+    if (recordsToUpsert.length === 0) {
+      console.warn("Nie znaleziono danych o dostępności do zsynchronizowania.");
+      return; 
+    }
+
+    // 4. Execute batch upsert
+    const { error: upsertError } = await supabase
+      .from('availability')
+      .upsert(recordsToUpsert, { onConflict: 'unit_id, date' });
+
+    if (upsertError) throw upsertError;
   };
 
 
@@ -164,6 +223,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     addProperty,
     deleteProperty,
     importFromHotres,
+    syncAvailability,
   };
 
   return (
