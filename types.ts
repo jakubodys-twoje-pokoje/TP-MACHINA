@@ -22,6 +22,13 @@ export interface Unit {
   beds_double?: number | null;
   beds_sofa?: number | null;
   beds_sofa_single?: number | null;
+  area?: number | null;
+  max_adults?: number | null;
+  bathroom_count?: number | null;
+  floor?: number | null;
+  facilities?: string | null;
+  photos?: any | null;
+  photo_url?: string | null;
 }
 
 export interface Availability {

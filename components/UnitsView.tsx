@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2 } from 'lucide-react';
+import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2, ImageOff } from 'lucide-react';
 import { Unit, Property } from '../types';
 import { useProperties } from '../contexts/PropertyContext';
 
@@ -95,39 +95,51 @@ export const UnitsView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between border-b border-border pb-4">
+      <div className="flex items-start justify-between border-b border-border pb-4 mb-8">
         <div>
           <h2 className="text-2xl font-bold text-white">Kwatery / Pokoje</h2>
           <p className="text-slate-400 text-sm mt-1">Zarządzaj pokojami w tym obiekcie</p>
         </div>
         {isImported && (
-          <button 
-            onClick={handleSync}
-            disabled={isSyncing}
-            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-wait text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors text-sm"
-          >
-            {isSyncing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-            {isSyncing ? 'Synchronizuję...' : 'Synchronizuj z Hotres'}
-          </button>
+          <div className="flex-shrink-0">
+            <button 
+              onClick={handleSync}
+              disabled={isSyncing}
+              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-wait text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors text-sm"
+            >
+              {isSyncing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+              {isSyncing ? 'Synchronizuję...' : 'Synchronizuj z Hotres'}
+            </button>
+          </div>
         )}
       </div>
 
-      <div className="bg-surface rounded-xl border border-border overflow-hidden">
-        <table className="w-full text-left text-sm">
+      <div className="bg-surface rounded-xl border border-border overflow-x-auto">
+        <table className="w-full text-left text-sm whitespace-nowrap">
           <thead className="bg-slate-900/50 text-slate-400 uppercase tracking-wider font-semibold border-b border-border">
             <tr>
-              <th className="px-6 py-4">Nazwa</th>
-              <th className="px-6 py-4">ID Hotres</th>
-              <th className="px-6 py-4">Pojemność</th>
-              <th className="px-6 py-4">Szczegóły łóżek</th>
-              <th className="px-6 py-4 text-right">Akcje</th>
+              <th className="px-4 py-4 w-16">Zdjęcie</th>
+              <th className="px-4 py-4">Nazwa</th>
+              <th className="px-4 py-4">ID Hotres</th>
+              <th className="px-4 py-4">Pojemność</th>
+              <th className="px-4 py-4">Szczegóły łóżek</th>
+              <th className="px-4 py-4 text-right">Akcje</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {units.map(unit => (
                 <tr key={unit.id} className="hover:bg-slate-800/50 transition-colors">
-                  <td className="px-6 py-4 font-medium text-white">{unit.name}</td>
-                  <td className="px-6 py-4 text-slate-400 font-mono text-xs">
+                  <td className="px-4 py-3">
+                    {unit.photo_url ? (
+                      <img src={unit.photo_url} alt={unit.name} className="w-12 h-12 object-cover rounded-md bg-slate-800" />
+                    ) : (
+                      <div className="w-12 h-12 flex items-center justify-center bg-slate-800 rounded-md">
+                        <ImageOff size={20} className="text-slate-600" />
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-4 py-4 font-medium text-white">{unit.name}</td>
+                  <td className="px-4 py-4 text-slate-400 font-mono text-xs">
                     <span className="flex items-center gap-2">
                         <Key size={14}/>
                         <div>
@@ -136,16 +148,16 @@ export const UnitsView: React.FC = () => {
                         </div>
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-slate-300">
+                  <td className="px-4 py-4 text-slate-300">
                     <span className="flex items-center gap-1.5"><Users size={14} className="text-slate-500"/> {unit.capacity}</span>
                   </td>
-                  <td className="px-6 py-4 text-slate-300">
+                  <td className="px-4 py-4 text-slate-300">
                     <BedDetails unit={unit} />
                   </td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-4 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      <button title="Edycja (niedostępna dla importowanych)" disabled className="text-slate-600 p-1 cursor-not-allowed"><Edit2 size={16} /></button>
-                      <button onClick={() => handleDelete(unit.id)} className="text-slate-400 hover:text-red-400 p-1"><Trash2 size={16} /></button>
+                      <button title="Edycja (niedostępna dla importowanych)" disabled className="text-slate-600 p-2 rounded-md cursor-not-allowed"><Edit2 size={16} /></button>
+                      <button onClick={() => handleDelete(unit.id)} className="text-slate-400 hover:text-red-400 p-2 rounded-md transition-colors hover:bg-red-500/10"><Trash2 size={16} /></button>
                     </div>
                   </td>
                 </tr>
@@ -154,14 +166,14 @@ export const UnitsView: React.FC = () => {
             
             {!loading && units.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-6 py-12 text-center text-slate-500 italic">
+                <td colSpan={6} className="px-6 py-12 text-center text-slate-500 italic">
                   {isImported ? "Brak kwater. Użyj przycisku 'Synchronizuj z Hotres', aby je pobrać." : "Brak kwater w tym obiekcie."}
                 </td>
               </tr>
             )}
              {loading && (
               <tr>
-                <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
+                <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
                   <Loader2 className="animate-spin inline-block mr-2" /> Ładowanie kwater...
                 </td>
               </tr>
