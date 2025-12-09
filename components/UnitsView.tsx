@@ -258,7 +258,7 @@ export const UnitsView: React.FC = () => {
       </div>
 
       <div className="bg-surface rounded-xl border border-border overflow-x-auto">
-        <table className="w-full text-left text-sm whitespace-nowrap">
+        <table className="w-full text-left text-sm">
           <thead className="bg-slate-900/50 text-slate-400 uppercase tracking-wider font-semibold border-b border-border">
             <tr>
               <th className="px-4 py-4 w-10"></th>
@@ -295,7 +295,7 @@ export const UnitsView: React.FC = () => {
                                 className="w-full bg-slate-900 border border-border text-white rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none resize-y text-sm"
                               />
                            ) : (
-                             <div className="text-sm prose" dangerouslySetInnerHTML={{ __html: unit.description || '<p class="italic text-slate-500">Brak opisu.</p>' }} />
+                             <div className="text-sm prose break-words" dangerouslySetInnerHTML={{ __html: unit.description || '<p class="italic text-slate-500">Brak opisu.</p>' }} />
                            )}
                         </div>
 
