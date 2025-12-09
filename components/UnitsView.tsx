@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2, ImageOff } from 'lucide-react';
+import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2, ImageOff, Ruler, Layers, Bath } from 'lucide-react';
 import { Unit, Property } from '../types';
 import { useProperties } from '../contexts/PropertyContext';
 
@@ -95,7 +95,7 @@ export const UnitsView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between border-b border-border pb-4 mb-8">
+      <div className="flex items-center justify-between border-b border-border pb-4 mb-8">
         <div>
           <h2 className="text-2xl font-bold text-white">Kwatery / Pokoje</h2>
           <p className="text-slate-400 text-sm mt-1">Zarządzaj pokojami w tym obiekcie</p>
@@ -121,8 +121,11 @@ export const UnitsView: React.FC = () => {
               <th className="px-4 py-4 w-16">Zdjęcie</th>
               <th className="px-4 py-4">Nazwa</th>
               <th className="px-4 py-4">ID Hotres</th>
-              <th className="px-4 py-4">Pojemność</th>
+              <th className="px-4 py-4">Max. Osób</th>
               <th className="px-4 py-4">Szczegóły łóżek</th>
+              <th className="px-4 py-4">Metraż</th>
+              <th className="px-4 py-4">Piętro</th>
+              <th className="px-4 py-4">Łazienki</th>
               <th className="px-4 py-4 text-right">Akcje</th>
             </tr>
           </thead>
@@ -149,11 +152,36 @@ export const UnitsView: React.FC = () => {
                     </span>
                   </td>
                   <td className="px-4 py-4 text-slate-300">
-                    <span className="flex items-center gap-1.5"><Users size={14} className="text-slate-500"/> {unit.capacity}</span>
+                    {unit.max_adults ? (
+                      <span className="flex items-center gap-1.5"><Users size={14} className="text-slate-500"/> {unit.max_adults}</span>
+                    ) : (
+                      <span className="text-slate-500">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-4 text-slate-300">
                     <BedDetails unit={unit} />
                   </td>
+                   <td className="px-4 py-4 text-slate-300">
+                     {unit.area ? (
+                       <span className="flex items-center gap-1.5"><Ruler size={14} className="text-slate-500"/> {unit.area} m²</span>
+                     ) : (
+                       <span className="text-slate-500">—</span>
+                     )}
+                   </td>
+                   <td className="px-4 py-4 text-slate-300">
+                     {unit.floor !== null && unit.floor !== undefined ? (
+                       <span className="flex items-center gap-1.5"><Layers size={14} className="text-slate-500"/> {unit.floor}</span>
+                     ) : (
+                       <span className="text-slate-500">—</span>
+                     )}
+                   </td>
+                   <td className="px-4 py-4 text-slate-300">
+                     {unit.bathroom_count ? (
+                       <span className="flex items-center gap-1.5"><Bath size={14} className="text-slate-500"/> {unit.bathroom_count}</span>
+                     ) : (
+                       <span className="text-slate-500">—</span>
+                     )}
+                   </td>
                   <td className="px-4 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
                       <button title="Edycja (niedostępna dla importowanych)" disabled className="text-slate-600 p-2 rounded-md cursor-not-allowed"><Edit2 size={16} /></button>
@@ -166,14 +194,14 @@ export const UnitsView: React.FC = () => {
             
             {!loading && units.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-6 py-12 text-center text-slate-500 italic">
+                <td colSpan={9} className="px-6 py-12 text-center text-slate-500 italic">
                   {isImported ? "Brak kwater. Użyj przycisku 'Synchronizuj z Hotres', aby je pobrać." : "Brak kwater w tym obiekcie."}
                 </td>
               </tr>
             )}
              {loading && (
               <tr>
-                <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
+                <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
                   <Loader2 className="animate-spin inline-block mr-2" /> Ładowanie kwater...
                 </td>
               </tr>
