@@ -113,7 +113,7 @@ export const CalendarView: React.FC = () => {
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (isAutoSync && intervalSeconds > 0 && propertyId) {
-      timerRef.current = setInterval(handleSync, intervalSeconds * 1000);
+      timerRef.current = window.setInterval(handleSync, intervalSeconds * 1000);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current) };
   }, [isAutoSync, intervalSeconds, propertyId]);

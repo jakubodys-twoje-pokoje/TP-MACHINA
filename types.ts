@@ -53,3 +53,10 @@ export interface Notification {
   is_read: boolean;
   created_at: string;
 }
+
+export interface PushSubscriptionDB {
+  id: string;
+  user_id: string;
+  subscription: any;
+  created_at: string;
+}

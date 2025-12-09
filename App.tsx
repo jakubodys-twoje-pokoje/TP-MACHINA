@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { supabase } from './services/supabaseClient';
+import { supabase, VAPID_PUBLIC_KEY } from './services/supabaseClient';
 import { Auth } from './components/Auth';
 import { Layout } from './components/Layout';
 import { PropertyView } from './components/PropertyView';
 import { UnitsView } from './components/UnitsView';
 import { CalendarView } from './components/CalendarView';
-import { Dashboard } from './components/Dashboard'; // Import Dashboard
+import { Dashboard } from './components/Dashboard';
 import { Loader2 } from 'lucide-react';
 import { PropertyProvider } from './contexts/PropertyContext';
 
@@ -14,6 +14,50 @@ const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Helper to convert VAPID key
+  const urlBase64ToUint8Array = (base64String: string) => {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding)
+      .replace(/\-/g, '+')
+      .replace(/_/g, '/');
+  
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+  
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  };
+
+  const subscribeToPush = async (userId: string) => {
+    if (!('serviceWorker' in navigator)) return;
+    if (VAPID_PUBLIC_KEY === 'YOUR_VAPID_PUBLIC_KEY_HERE') {
+        console.warn("VAPID Key not set in supabaseClient.ts");
+        return;
+    }
+
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+      });
+
+      // Save subscription to DB
+      const { error } = await supabase.from('push_subscriptions').insert({
+        user_id: userId,
+        subscription: subscription
+      });
+
+      if (error) console.error("Error saving subscription:", error);
+      else console.log("Push subscription saved!");
+
+    } catch (error) {
+      console.error("Push subscription failed:", error);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -26,6 +70,12 @@ const App: React.FC = () => {
         }
         if (mounted) {
           setSession(data.session);
+          if (data.session?.user) {
+             // Try to subscribe on load if permission is granted
+             if (Notification.permission === 'granted') {
+                 subscribeToPush(data.session.user.id);
+             }
+          }
         }
       } catch (err: any) {
         console.error("Nieoczekiwany błąd autoryzacji:", err);
@@ -45,6 +95,9 @@ const App: React.FC = () => {
       if (mounted) {
         setSession(session);
         setLoading(false);
+        if (session?.user && Notification.permission === 'granted') {
+            subscribeToPush(session.user.id);
+        }
       }
     });
 
