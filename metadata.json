@@ -1,0 +1,5 @@
+{
+  "name": "Machina Rezerwacji PMS",
+  "description": "A dark-themed Property Management System using Supabase for managing properties, units, pricing, and availability.",
+  "requestFramePermissions": []
+}
