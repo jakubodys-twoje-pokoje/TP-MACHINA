@@ -3,7 +3,7 @@ self.addEventListener('push', function(event) {
   
   const options = {
     body: data.body || 'Nowe powiadomienie w systemie',
-    icon: 'https://cdn-icons-png.flaticon.com/512/2645/2645897.png', // Przykładowa ikona
+    icon: 'https://cdn-icons-png.flaticon.com/512/2645/2645897.png',
     badge: 'https://cdn-icons-png.flaticon.com/512/2645/2645897.png',
     data: {
       url: data.url || '/'

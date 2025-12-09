@@ -7,6 +7,22 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
+// Helper to convert VAPID key
+const urlBase64ToUint8Array = (base64String: string) => {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding)
+    .replace(/\-/g, '+')
+    .replace(/_/g, '/');
+
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+};
+
 export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [userEmail, setUserEmail] = useState<string | null>(null);
 
@@ -21,15 +37,40 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   };
 
   const handleEnablePush = async () => {
-      if (!('serviceWorker' in navigator)) return;
+      if (!('serviceWorker' in navigator)) {
+        alert("Twoja przeglądarka nie obsługuje powiadomień.");
+        return;
+      }
       
-      const permission = await Notification.requestPermission();
-      if (permission === 'granted') {
-          // Re-trigger subscription logic (usually handled in App.tsx but simplified here for direct action)
-          // For now, reloading the page is the simplest way to trigger the App.tsx logic again
-          window.location.reload();
-      } else {
-          alert("Brak zgody na powiadomienia. Zmień ustawienia przeglądarki.");
+      if (VAPID_PUBLIC_KEY === 'YOUR_VAPID_PUBLIC_KEY_HERE') {
+        alert("Błąd konfiguracji: Brak klucza VAPID. Skonfiguruj go w pliku services/supabaseClient.ts");
+        return;
+      }
+
+      try {
+        const permission = await Notification.requestPermission();
+        if (permission === 'granted') {
+            const registration = await navigator.serviceWorker.ready;
+            const subscription = await registration.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+            });
+
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+              const { error } = await supabase.from('push_subscriptions').insert({
+                user_id: user.id,
+                subscription: subscription
+              });
+              if (error) throw error;
+              alert("Powiadomienia zostały włączone!");
+            }
+        } else {
+            alert("Brak zgody na powiadomienia. Zmień ustawienia przeglądarki.");
+        }
+      } catch (e: any) {
+        console.error(e);
+        alert("Błąd podczas włączania powiadomień: " + e.message);
       }
   };
 
