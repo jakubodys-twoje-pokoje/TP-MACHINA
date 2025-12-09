@@ -1,6 +1,5 @@
 import React, { createContext, useState, useEffect, useContext, ReactNode } from 'react';
 import { supabase } from '../services/supabaseClient';
-// FIX: Import the 'Availability' type to resolve the 'Cannot find name' error.
 import { Property, Unit, Availability } from '../types';
 
 interface PropertyContextType {

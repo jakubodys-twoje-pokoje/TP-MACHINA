@@ -41,14 +41,22 @@ export interface Availability {
   reservation_id?: string | null;
 }
 
-export interface Pricing {
-  id: string;
-  unit_id: string;
-  start_date: string; // YYYY-MM-DD
-  end_date: string; // YYYY-MM-DD
-  price_per_night: number;
-  currency: string;
+export interface Season {
+    id: string;
+    property_id: string;
+    name: string;
+    start_date: string;
+    end_date: string;
+    created_at: string;
 }
+
+export interface SeasonalPrice {
+    id: string;
+    unit_id: string;
+    season_id: string;
+    price: number;
+}
+
 
 export interface RouteParams {
   propertyId?: string;
