@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2 } from 'lucide-react';
+import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2, AlertTriangle } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 import { Property } from '../types';
 
 export const Sidebar: React.FC = () => {
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -34,6 +35,7 @@ export const Sidebar: React.FC = () => {
   }, []);
 
   const fetchProperties = async () => {
+    setFetchError(null);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -46,8 +48,9 @@ export const Sidebar: React.FC = () => {
 
       if (error) throw error;
       setProperties(data || []);
-    } catch (err) {
-      console.error('Error fetching properties:', err);
+    } catch (err: any) {
+      console.error('Error fetching properties:', JSON.stringify(err, null, 2));
+      setFetchError('Błąd pobierania danych. Sprawdź konsolę (F12).');
     } finally {
       setLoading(false);
     }
@@ -89,7 +92,7 @@ export const Sidebar: React.FC = () => {
 
     } catch (err: any) {
       alert(`Błąd: ${err.message}`);
-      console.error(err);
+      console.error(JSON.stringify(err, null, 2));
     } finally {
       setIsSubmitting(false);
     }
@@ -184,6 +187,11 @@ export const Sidebar: React.FC = () => {
             <div className="h-10 bg-slate-800 rounded-lg"></div>
             <div className="h-10 bg-slate-800 rounded-lg"></div>
           </div>
+        ) : fetchError ? (
+           <div className="text-xs text-red-400 p-3 border border-red-500/20 bg-red-500/10 rounded-lg mx-2 flex items-start gap-2">
+             <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+             <span>{fetchError}</span>
+           </div>
         ) : properties.length === 0 ? (
           <div className="text-sm text-slate-500 italic py-4 text-center border border-dashed border-slate-700 rounded-lg mx-2">
             Brak obiektów.<br/>Dodaj pierwszy!
