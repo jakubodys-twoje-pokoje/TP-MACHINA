@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2, AlertTriangle } from 'lucide-react';
@@ -50,7 +51,8 @@ export const Sidebar: React.FC = () => {
       setProperties(data || []);
     } catch (err: any) {
       console.error('Error fetching properties:', JSON.stringify(err, null, 2));
-      setFetchError('Błąd pobierania danych. Sprawdź konsolę (F12).');
+      // Display specific error message to help debugging schema issues
+      setFetchError(err.message || 'Błąd pobierania danych.');
     } finally {
       setLoading(false);
     }
@@ -108,233 +110,244 @@ export const Sidebar: React.FC = () => {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`Błąd połączenia z API (Proxy): ${response.status}`);
       
-      const xmlText = await response.text();
-      
-      // Parse XML
-      const parser = new DOMParser();
-      const xmlDoc = parser.parseFromString(xmlText, "text/xml");
-      
-      // Check for parsing errors
-      const parserError = xmlDoc.getElementsByTagName("parsererror");
-      if (parserError.length > 0) {
-        throw new Error("Błąd parsowania XML z Hotres.");
-      }
+      const responseText = await response.text();
+      let unitsToInsert = [];
 
-      const rooms = xmlDoc.getElementsByTagName("room");
-      if (rooms.length === 0) {
-          console.warn("Brak pokoi w XML:", xmlText);
-          throw new Error("API zwróciło poprawną odpowiedź, ale nie znaleziono w niej żadnych pokoi (znacznik <room>). Sprawdź OID.");
-      }
+      // Attempt to parse as JSON first
+      try {
+        const jsonData = JSON.parse(responseText);
+        let roomsList = [];
 
-      const unitsToInsert = [];
-
-      for (let i = 0; i < rooms.length; i++) {
-        const room = rooms[i];
-        const name = room.getElementsByTagName("room_name")[0]?.textContent?.trim() || `Pokój ${i+1}`;
-        const capacityStr = room.getElementsByTagName("people")[0]?.textContent || "2";
-        const desc = room.getElementsByTagName("room_desc")[0]?.textContent?.trim() || "";
+        // Check if it's a single object (has room_id directly)
+        if (jsonData.room_id) {
+             roomsList = [jsonData];
+        } else if (Array.isArray(jsonData)) {
+             roomsList = jsonData;
+        } else {
+             // It might be an object map (id -> room)
+             roomsList = Object.values(jsonData);
+        }
         
-        // Basic mapping
-        unitsToInsert.push({
-          property_id: propertyId,
-          name: name,
-          type: 'room',
-          capacity: parseInt(capacityStr) || 2,
-          description: desc.substring(0, 1000) // Limit description length
-        });
+        console.log("Parsed JSON from Hotres:", roomsList);
+
+        if (roomsList.length > 0) {
+            unitsToInsert = roomsList.map((room: any) => {
+                // Determine capacity
+                let cap = 2; // default
+                
+                // Try to parse "X os." from name (code)
+                if (room.code) {
+                   const match = room.code.match(/(\d+)\s*os/);
+                   if (match && match[1]) cap = parseInt(match[1]);
+                }
+                // Fallback to sum of beds if parsing failed or default logic
+                if (cap === 2) {
+                     const d = parseInt(room.double || '0');
+                     const s = parseInt(room.single || '0');
+                     const sofa = parseInt(room.sofa || '0');
+                     const calculated = (d * 2) + s + sofa;
+                     if (calculated > 0) cap = calculated;
+                }
+
+                return {
+                    property_id: propertyId,
+                    name: room.code || room.room_name || `Pokój ${room.room_id}`,
+                    type: 'room',
+                    capacity: cap,
+                    description: '', 
+                    external_id: room.room_id || null
+                };
+            });
+        }
+      } catch (jsonError) {
+        // Fallback to XML parsing if JSON fails
+        console.log("JSON parse failed, trying XML...", jsonError);
+        
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(responseText, "text/xml");
+        
+        const parserError = xmlDoc.getElementsByTagName("parsererror");
+        if (parserError.length === 0) {
+            const rooms = xmlDoc.getElementsByTagName("room");
+            if (rooms.length > 0) {
+                for (let i = 0; i < rooms.length; i++) {
+                    const room = rooms[i];
+                    const name = room.getElementsByTagName("room_name")[0]?.textContent?.trim() || `Pokój ${i+1}`;
+                    const id = room.getElementsByTagName("room_id")[0]?.textContent?.trim() || null;
+                    const people = room.getElementsByTagName("people")[0]?.textContent?.trim();
+                    
+                    let cap = 2;
+                    if (people) cap = parseInt(people);
+
+                    unitsToInsert.push({
+                        property_id: propertyId,
+                        name: name,
+                        type: 'room',
+                        capacity: cap,
+                        description: '',
+                        external_id: id
+                    });
+                }
+            }
+        }
       }
 
       if (unitsToInsert.length > 0) {
         const { error } = await supabase.from('units').insert(unitsToInsert);
         if (error) throw error;
+        alert(`Pomyślnie zaimportowano ${unitsToInsert.length} kwater.`);
+      } else {
+        alert('Nie znaleziono kwater dla podanego OID w odpowiedzi API.');
+        console.warn('API Response Content:', responseText);
       }
 
     } catch (err: any) {
-      console.error("Import failed:", err);
-      // Property is created, so we just warn about units
-      alert(`Ostrzeżenie: Obiekt utworzono pomyślnie, ale import pokoi nie powiódł się.\n\nPowód: ${err.message}`);
+      console.error('Import error:', err);
+      alert(`Błąd importu: ${err.message}`);
     }
   };
 
   return (
     <>
-    <nav className="flex flex-col h-full overflow-y-auto relative z-10 scrollbar-thin scrollbar-thumb-slate-700">
-      <div className="p-6">
-        <h1 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
-            <Building size={18} className="text-white" />
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="p-6 border-b border-border">
+        <div className="flex items-center gap-3 text-indigo-400 mb-6">
+          <div className="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center">
+            <Building size={20} />
           </div>
-          Machina
-        </h1>
-        <p className="text-xs text-slate-500 mt-1 uppercase tracking-wider font-semibold pl-10">Panel Rezerwacji</p>
-      </div>
+          <span className="font-bold text-lg tracking-tight text-white">Machina</span>
+        </div>
 
-      <div className="px-4 pb-2 flex-1">
-        <div className="flex items-center justify-between mb-4 px-2">
-          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Twoje Obiekty</span>
+        <div className="relative">
           <button 
             onClick={() => setIsModalOpen(true)}
-            className="text-slate-400 hover:text-white transition-all p-1.5 bg-slate-800/50 hover:bg-indigo-600 rounded-md ring-1 ring-slate-700/50 hover:ring-indigo-500"
-            title="Dodaj obiekt"
+            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-900/20 active:scale-95"
           >
-            <Plus size={14} strokeWidth={3} />
+            <Plus size={18} />
+            <span className="font-medium">Nowy Obiekt</span>
           </button>
         </div>
+      </div>
+
+      {/* Properties List */}
+      <div className="flex-1 overflow-y-auto py-4 px-3 space-y-1 custom-scrollbar">
+        <div className="text-xs font-bold text-slate-500 uppercase tracking-wider px-3 mb-2">Twoje Obiekty</div>
         
         {loading ? (
-          <div className="animate-pulse space-y-3 px-2">
-            <div className="h-10 bg-slate-800 rounded-lg"></div>
-            <div className="h-10 bg-slate-800 rounded-lg"></div>
-            <div className="h-10 bg-slate-800 rounded-lg"></div>
-          </div>
+          <div className="flex justify-center py-4"><Loader2 className="animate-spin text-slate-500" /></div>
         ) : fetchError ? (
-           <div className="text-xs text-red-400 p-3 border border-red-500/20 bg-red-500/10 rounded-lg mx-2 flex items-start gap-2">
-             <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
-             <span>{fetchError}</span>
+           <div className="p-3 mx-2 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-xs">
+             <div className="flex items-center gap-2 font-bold mb-1">
+               <AlertTriangle size={14} /> Błąd bazy danych
+             </div>
+             {fetchError}
            </div>
         ) : properties.length === 0 ? (
-          <div className="text-sm text-slate-500 italic py-4 text-center border border-dashed border-slate-700 rounded-lg mx-2">
-            Brak obiektów.<br/>Dodaj pierwszy!
-          </div>
+          <div className="text-slate-500 text-sm text-center py-4 italic">Brak obiektów</div>
         ) : (
-          <ul className="space-y-1">
-            {properties.map((prop) => {
-              const isActive = activePropertyId === prop.id;
-              
-              return (
-                <li key={prop.id}>
-                  <div 
-                    onClick={() => navigate(`/property/${prop.id}/details`)}
-                    className={`
-                      group flex items-center gap-3 px-3 py-2.5 text-sm rounded-lg cursor-pointer transition-all border border-transparent
-                      ${isActive 
-                        ? 'bg-indigo-600/10 text-indigo-400 font-medium border-indigo-500/20' 
-                        : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}
-                    `}
-                  >
-                    <Home size={18} className={`flex-shrink-0 ${isActive ? 'text-indigo-400' : 'text-slate-500 group-hover:text-slate-300'}`} />
-                    <span className="truncate">{prop.name}</span>
-                  </div>
+          properties.map(property => (
+            <div key={property.id} className="space-y-1">
+               <NavLink
+                to={`/property/${property.id}/details`}
+                className={({ isActive }) => {
+                    // Check if this property is active (either details, units, or calendar)
+                    const isParentActive = activePropertyId === property.id;
+                    return `block px-3 py-2.5 rounded-lg text-sm transition-colors ${isParentActive ? 'bg-slate-800 text-white font-medium' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`;
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  <Home size={16} />
+                  <span className="truncate">{property.name}</span>
+                </div>
+              </NavLink>
 
-                  {isActive && (
-                    <div className="ml-5 pl-4 border-l-2 border-slate-800 mt-1 space-y-1 mb-3 animate-in slide-in-from-left-2 duration-200">
-                      <NavLink 
-                        to={`/property/${prop.id}/details`}
-                        className={({ isActive }) => `
-                          flex items-center gap-2 px-3 py-2 text-xs rounded-md transition-colors
-                          ${isActive ? 'text-white bg-slate-800 font-medium' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'}
-                        `}
-                      >
-                        <Settings size={14} />
-                        Ustawienia
-                      </NavLink>
-                      <NavLink 
-                        to={`/property/${prop.id}/units`}
-                        className={({ isActive }) => `
-                          flex items-center gap-2 px-3 py-2 text-xs rounded-md transition-colors
-                          ${isActive ? 'text-white bg-slate-800 font-medium' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'}
-                        `}
-                      >
-                        <BedDouble size={14} />
-                        Kwatery
-                      </NavLink>
-                      <NavLink 
-                        to={`/property/${prop.id}/calendar`}
-                        className={({ isActive }) => `
-                          flex items-center gap-2 px-3 py-2 text-xs rounded-md transition-colors
-                          ${isActive ? 'text-white bg-slate-800 font-medium' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/50'}
-                        `}
-                      >
-                        <Calendar size={14} />
-                        Cennik & Dostępność
-                      </NavLink>
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+              {/* Submenu visible only if this property is active */}
+              {activePropertyId === property.id && (
+                <div className="ml-4 pl-3 border-l border-slate-700 space-y-1 my-1 animate-in slide-in-from-left-2 duration-200">
+                    <NavLink to={`/property/${property.id}/details`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}>
+                        <Settings size={14} /> Ustawienia
+                    </NavLink>
+                    <NavLink to={`/property/${property.id}/units`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}>
+                        <BedDouble size={14} /> Kwatery
+                    </NavLink>
+                    <NavLink to={`/property/${property.id}/calendar`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}>
+                        <Calendar size={14} /> Dostępność
+                    </NavLink>
+                </div>
+              )}
+            </div>
+          ))
         )}
       </div>
-    </nav>
+    </div>
 
-    {/* CREATE PROPERTY MODAL */}
+    {/* New Property Modal */}
     {isModalOpen && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-        <div className="bg-surface border border-slate-700 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 ring-1 ring-white/10">
-          <div className="flex items-center justify-between p-5 border-b border-slate-700 bg-slate-900/80">
-            <h3 className="text-lg font-bold text-white">Dodaj nowy obiekt</h3>
-            <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-white transition-colors bg-slate-800 p-1 rounded-full hover:bg-slate-700">
-              <X size={18} />
-            </button>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <div className="bg-surface border border-border w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+          <div className="p-4 border-b border-border flex justify-between items-center bg-slate-900/50">
+            <h3 className="font-bold text-white">Dodaj nowy obiekt</h3>
+            <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-white"><X size={20} /></button>
           </div>
           
-          <div className="p-6">
-            {/* Tabs */}
-            <div className="flex bg-slate-900 p-1.5 rounded-xl mb-6 ring-1 ring-slate-800">
+          <div className="p-6 space-y-6">
+            {/* Toggle Mode */}
+            <div className="flex bg-slate-900 p-1 rounded-lg border border-border">
               <button 
+                type="button"
                 onClick={() => setModalMode('manual')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium rounded-lg transition-all ${modalMode === 'manual' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'}`}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-md transition-all ${modalMode === 'manual' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
               >
                 <Type size={16} /> Ręcznie
               </button>
               <button 
+                type="button"
                 onClick={() => setModalMode('import')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium rounded-lg transition-all ${modalMode === 'import' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'}`}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-medium rounded-md transition-all ${modalMode === 'import' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
               >
-                <Globe size={16} /> Import Hotres
+                <Globe size={16} /> Hotres (Import)
               </button>
             </div>
 
-            <form onSubmit={handleCreateProperty} className="space-y-5">
+            <form onSubmit={handleCreateProperty} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-400 mb-1.5 uppercase tracking-wide">Nazwa Obiektu</label>
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-1">Nazwa obiektu</label>
                 <input 
-                  type="text" 
+                  autoFocus
                   required
-                  placeholder="np. Apartamenty nad Morzem"
-                  className="w-full bg-slate-900 border border-slate-700 text-white rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all placeholder:text-slate-600"
+                  type="text" 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="np. Willa Nadmorska"
                   value={formData.name}
                   onChange={e => setFormData({...formData, name: e.target.value})}
                 />
               </div>
 
               {modalMode === 'import' && (
-                <div className="animate-in fade-in slide-in-from-top-2 space-y-3 p-4 bg-indigo-900/20 rounded-xl border border-indigo-500/20">
-                  <div>
-                    <label className="block text-xs font-bold text-indigo-300 mb-1.5 uppercase tracking-wide">Hotres OID</label>
-                    <input 
-                      type="text" 
-                      required
-                      placeholder="np. 4268"
-                      className="w-full bg-slate-900 border border-indigo-500/30 text-white rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none font-mono tracking-widest"
-                      value={formData.oid}
-                      onChange={e => setFormData({...formData, oid: e.target.value})}
-                    />
-                  </div>
-                  <p className="text-xs text-indigo-200/70 leading-relaxed">
-                    System połączy się z API Hotres, pobierze listę pokoi (nazwy, opisy, liczby osób) i automatycznie utworzy je w bazie danych.
+                <div className="animate-in slide-in-from-top-2">
+                  <label className="block text-xs font-bold text-slate-400 uppercase mb-1">ID Obiektu (OID)</label>
+                  <input 
+                    required
+                    type="text" 
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500 font-mono"
+                    placeholder="np. 4268"
+                    value={formData.oid}
+                    onChange={e => setFormData({...formData, oid: e.target.value})}
+                  />
+                  <p className="text-[10px] text-slate-500 mt-2">
+                    System automatycznie pobierze listę pokoi z Hotres i doda je do bazy.
                   </p>
                 </div>
               )}
 
-              <div className="pt-4 flex justify-end gap-3 border-t border-slate-800 mt-6">
-                <button 
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors hover:bg-slate-800 rounded-lg"
-                >
-                  Anuluj
-                </button>
-                <button 
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium flex items-center gap-2 transition-all shadow-lg shadow-indigo-900/20 disabled:opacity-70 disabled:cursor-not-allowed"
-                >
-                  {isSubmitting && <Loader2 className="animate-spin" size={16} />}
-                  {modalMode === 'import' ? 'Importuj i Utwórz' : 'Utwórz Obiekt'}
-                </button>
-              </div>
+              <button 
+                disabled={isSubmitting}
+                className="w-full bg-green-600 hover:bg-green-500 text-white py-3 rounded-xl font-medium shadow-lg shadow-green-900/20 transition-all active:scale-95 flex items-center justify-center gap-2 mt-4"
+              >
+                {isSubmitting ? <Loader2 className="animate-spin" /> : <Plus size={18} />}
+                {modalMode === 'import' ? 'Importuj i Utwórz' : 'Utwórz Obiekt'}
+              </button>
             </form>
           </div>
         </div>

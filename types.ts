@@ -1,3 +1,4 @@
+
 export interface Property {
   id: string;
   user_id: string;
@@ -15,6 +16,7 @@ export interface Unit {
   type: string;
   capacity: number;
   description: string | null;
+  external_id?: string | null;
 }
 
 export interface Availability {
