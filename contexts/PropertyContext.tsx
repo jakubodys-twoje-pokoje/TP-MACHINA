@@ -111,13 +111,16 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         let capacity = (double * 2) + single + (sofa * 2) + sofa_single;
         if (capacity === 0) capacity = parseInt(roomDetails.max_adults || '2');
 
+        const floorValue = roomDetails.floor;
+        const parsedFloor = parseInt(floorValue, 10);
+
         // Merge data from both APIs
         const mergedUnitData = {
           property_id: propertyId,
           name: roomDetails.title || room.code || `Pokój ${room.room_id}`,
           type: roomDetails.category || 'room',
           capacity,
-          description: roomDetails.advert || `ID z Hotres: ${room.room_id}`, 
+          description: roomDetails.description || roomDetails.advert || `ID z Hotres: ${room.room_id}`, 
           external_id: room.room_id || null,
           external_type_id: room.type_id || null,
           beds_single: single,
@@ -127,7 +130,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
           area: parseInt(roomDetails.area) || null,
           max_adults: parseInt(roomDetails.max_adults) || null,
           bathroom_count: parseInt(roomDetails.bathroom_cnt) || null,
-          floor: parseInt(roomDetails.floor) || null,
+          floor: !isNaN(parsedFloor) ? parsedFloor : null,
           facilities: roomDetails.facilities || null,
           photos: roomDetails.photos || null,
           photo_url: roomDetails.photo || null,

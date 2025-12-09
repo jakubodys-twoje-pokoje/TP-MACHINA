@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2, ImageOff, Ruler, Layers, Bath } from 'lucide-react';
+import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2, ImageOff, Ruler, Layers, Bath, ChevronDown } from 'lucide-react';
 import { Unit, Property } from '../types';
 import { useProperties } from '../contexts/PropertyContext';
 
@@ -33,6 +33,7 @@ export const UnitsView: React.FC = () => {
   const [property, setProperty] = useState<Property | null>(null);
   const [loading, setLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [expandedUnitId, setExpandedUnitId] = useState<string | null>(null);
   const { importFromHotres } = useProperties();
 
   useEffect(() => {
@@ -83,7 +84,8 @@ export const UnitsView: React.FC = () => {
     }
   }
 
-  const handleDelete = async (unitId: string) => {
+  const handleDelete = async (e: React.MouseEvent, unitId: string) => {
+    e.stopPropagation(); // Prevent row from expanding when clicking delete
     if (!confirm('Usunąć kwaterę? Ta akcja jest nieodwracalna.')) return;
     const { error } = await supabase.from('units').delete().eq('id', unitId);
     if (!error) {
@@ -91,11 +93,15 @@ export const UnitsView: React.FC = () => {
     }
   };
 
+  const handleToggleRow = (unitId: string) => {
+    setExpandedUnitId(currentId => (currentId === unitId ? null : unitId));
+  };
+  
   const isImported = property?.description?.includes('Hotres OID');
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between border-b border-border pb-4 mb-8">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-4 mb-8">
         <div>
           <h2 className="text-2xl font-bold text-white">Kwatery / Pokoje</h2>
           <p className="text-slate-400 text-sm mt-1">Zarządzaj pokojami w tym obiekcie</p>
@@ -118,6 +124,7 @@ export const UnitsView: React.FC = () => {
         <table className="w-full text-left text-sm whitespace-nowrap">
           <thead className="bg-slate-900/50 text-slate-400 uppercase tracking-wider font-semibold border-b border-border">
             <tr>
+              <th className="px-4 py-4 w-10"></th>
               <th className="px-4 py-4 w-16">Zdjęcie</th>
               <th className="px-4 py-4">Nazwa</th>
               <th className="px-4 py-4">ID Hotres</th>
@@ -131,7 +138,11 @@ export const UnitsView: React.FC = () => {
           </thead>
           <tbody className="divide-y divide-border">
             {units.map(unit => (
-                <tr key={unit.id} className="hover:bg-slate-800/50 transition-colors">
+              <React.Fragment key={unit.id}>
+                <tr onClick={() => handleToggleRow(unit.id)} className="hover:bg-slate-800/50 transition-colors cursor-pointer">
+                  <td className="px-4 py-3 text-center">
+                    <ChevronDown size={16} className={`text-slate-600 transition-transform duration-200 ${expandedUnitId === unit.id ? 'rotate-180' : ''}`} />
+                  </td>
                   <td className="px-4 py-3">
                     {unit.photo_url ? (
                       <img src={unit.photo_url} alt={unit.name} className="w-12 h-12 object-cover rounded-md bg-slate-800" />
@@ -185,23 +196,34 @@ export const UnitsView: React.FC = () => {
                   <td className="px-4 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
                       <button title="Edycja (niedostępna dla importowanych)" disabled className="text-slate-600 p-2 rounded-md cursor-not-allowed"><Edit2 size={16} /></button>
-                      <button onClick={() => handleDelete(unit.id)} className="text-slate-400 hover:text-red-400 p-2 rounded-md transition-colors hover:bg-red-500/10"><Trash2 size={16} /></button>
+                      <button onClick={(e) => handleDelete(e, unit.id)} className="text-slate-400 hover:text-red-400 p-2 rounded-md transition-colors hover:bg-red-500/10"><Trash2 size={16} /></button>
                     </div>
                   </td>
                 </tr>
+                {expandedUnitId === unit.id && (
+                  <tr className="bg-slate-900/70">
+                    <td colSpan={10} className="p-0">
+                      <div className="p-6 border-t-2 border-indigo-500">
+                        <h4 className="text-sm font-bold text-white mb-3">Opis kwatery</h4>
+                        <div className="text-sm prose" dangerouslySetInnerHTML={{ __html: unit.description || '<p class="italic text-slate-500">Brak opisu.</p>' }} />
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
               )
             )}
             
             {!loading && units.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-6 py-12 text-center text-slate-500 italic">
+                <td colSpan={10} className="px-6 py-12 text-center text-slate-500 italic">
                   {isImported ? "Brak kwater. Użyj przycisku 'Synchronizuj z Hotres', aby je pobrać." : "Brak kwater w tym obiekcie."}
                 </td>
               </tr>
             )}
              {loading && (
               <tr>
-                <td colSpan={9} className="px-6 py-12 text-center text-slate-500">
+                <td colSpan={10} className="px-6 py-12 text-center text-slate-500">
                   <Loader2 className="animate-spin inline-block mr-2" /> Ładowanie kwater...
                 </td>
               </tr>
