@@ -13,7 +13,7 @@ interface PropertyContextType {
   addProperty: (name: string, description: string | null) => Promise<Property | null>;
   deleteProperty: (id: string) => Promise<void>;
   importFromHotres: (oid: string, propertyId: string) => Promise<void>;
-  syncAvailability: (oid: string, propertyId: string) => Promise<void>;
+  syncAvailability: (oid: string, propertyId: string) => Promise<number>;
   fetchNotifications: () => Promise<void>;
   markNotificationAsRead: (id: string) => Promise<void>;
   markAllNotificationsAsRead: () => Promise<void>;
@@ -125,7 +125,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   };
   
   const importFromHotres = async (oid: string, propertyId: string) => {
-    // Step 1: Get the list of rooms
     const roomsListUrl = `https://panel.hotres.pl/api_rooms?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}`;
     const proxyRoomsUrl = `https://corsproxy.io/?${encodeURIComponent(roomsListUrl)}`;
     
@@ -140,7 +139,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       return;
     }
 
-    // Step 2: Fetch details for each room and create a combined unit object
     const unitsToInsert = await Promise.all(roomsList.map(async (room: any) => {
         const roomDetailsUrl = `https://panel.hotres.pl/api_roomtype?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}&type_id=${room.type_id}&lang=pl`;
         const proxyDetailsUrl = `https://corsproxy.io/?${encodeURIComponent(roomDetailsUrl)}`;
@@ -148,11 +146,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const detailsResponse = await fetch(proxyDetailsUrl);
         if (!detailsResponse.ok) {
             console.warn(`Nie udało się pobrać szczegółów dla type_id: ${room.type_id}`);
-            return null; // Skip if details fail
+            return null;
         }
         const roomDetails = await detailsResponse.json();
 
-        // Calculate capacity from the main rooms list
         const single = parseInt(room.single || '0');
         const double = parseInt(room.double || '0');
         const sofa = parseInt(room.sofa || '0');
@@ -163,12 +160,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const floorValue = roomDetails.floor;
         const parsedFloor = parseInt(floorValue, 10);
         
-        // Translate facility IDs to names
         const facilityIds = (roomDetails.facilities || '').split(',').map((id: string) => id.trim()).filter(Boolean);
         const facilityNames = facilityIds.map((id: string) => facilitiesMap[id] || id).join(', ');
 
 
-        // Merge data from both APIs
         const mergedUnitData = {
           property_id: propertyId,
           name: roomDetails.title || room.code || `Pokój ${room.room_id}`,
@@ -207,14 +202,13 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   };
 
-  const syncAvailability = async (oid: string, propertyId: string) => {
+  const syncAvailability = async (oid: string, propertyId: string): Promise<number> => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Brak użytkownika");
 
       const property = properties.find(p => p.id === propertyId);
       if (!property) throw new Error("Nie znaleziono obiektu");
 
-      // 1. Get all units for this property for mapping
       const { data: units, error: unitsError } = await supabase.from('units').select('id, name, external_type_id').eq('property_id', propertyId);
       if (unitsError) throw unitsError;
       if (!units || units.length === 0) throw new Error("Brak kwater do synchronizacji.");
@@ -224,12 +218,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
           if (unit.external_type_id) typeIdToUnitMap.set(unit.external_type_id, { id: unit.id, name: unit.name });
       });
 
-      // 2. Get current availability from DB
       const { data: currentAvailData } = await supabase.from('availability').select('unit_id, date, status').in('unit_id', units.map(u => u.id));
       const currentAvailMap = new Map<string, 'available' | 'blocked'>();
       currentAvailData?.forEach(a => currentAvailMap.set(`${a.unit_id}-${a.date}`, a.status as any));
       
-      // 3. Fetch availability data from Hotres
       const fromDate = '2026-01-01';
       const tillDate = '2026-12-31';
       const availUrl = `https://panel.hotres.pl/api_availability?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}&from=${fromDate}&till=${tillDate}`;
@@ -240,7 +232,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       const newAvailData = await response.json();
       if (!Array.isArray(newAvailData)) throw new Error("API Dostępności: Zły format danych.");
 
-      // 4. Compare and find changes
       const allChanges: { unitId: string, unitName: string, date: string, newStatus: 'available' | 'blocked' }[] = [];
       const recordsToUpsert: Omit<Availability, 'id' | 'reservation_id'>[] = [];
 
@@ -252,14 +243,13 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                   recordsToUpsert.push({ unit_id: unit.id, date: dateInfo.date, status: newStatus });
 
                   const oldStatus = currentAvailMap.get(`${unit.id}-${dateInfo.date}`);
-                  if (oldStatus !== newStatus) {
+                  if (oldStatus && oldStatus !== newStatus) { // Only log changes, not initial state
                       allChanges.push({ unitId: unit.id, unitName: unit.name, date: dateInfo.date, newStatus });
                   }
               }
           }
       }
 
-      // 5. Group changes and create notifications
       const notificationsToInsert: Omit<Notification, 'id' | 'created_at' | 'is_read' | 'user_id'>[] = [];
       const changesByUnit = allChanges.reduce((acc, change) => {
           (acc[change.unitId] = acc[change.unitId] || []).push(change);
@@ -286,7 +276,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
           notificationsToInsert.push({ property_id: propertyId, property_name: property.name, unit_id: unitId, unit_name: unitChanges[0].unitName, ...group });
       }
 
-      // 6. Execute DB operations
       if (recordsToUpsert.length > 0) {
           const { error: upsertError } = await supabase.from('availability').upsert(recordsToUpsert, { onConflict: 'unit_id, date' });
           if (upsertError) throw upsertError;
@@ -294,8 +283,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       if (notificationsToInsert.length > 0) {
           const { error: notifError } = await supabase.from('notifications').insert(notificationsToInsert.map(n => ({...n, user_id: user.id })));
           if (notifError) throw notifError;
-          await fetchNotifications(); // Refresh notifications in UI
+          await fetchNotifications();
       }
+      
+      return notificationsToInsert.length;
   };
 
   const value = {

@@ -23,7 +23,7 @@ export const CalendarView: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isAutoSync, setIsAutoSync] = useState(false);
   const [intervalSeconds, setIntervalSeconds] = useState(3600);
-  const [lastSync, setLastSync] = useState<Date | null>(null);
+  const [lastSyncMessage, setLastSyncMessage] = useState<string>('Naciśnij, aby pobrać dane.');
   const timerRef = useRef<number | null>(null);
   
   const { syncAvailability } = useProperties();
@@ -91,12 +91,20 @@ export const CalendarView: React.FC = () => {
     
     setIsSyncing(true);
     try {
-      await syncAvailability(oidMatch[1], property.id);
+      const changesCount = await syncAvailability(oidMatch[1], property.id);
       await fetchAvailabilityForMonth();
-      setLastSync(new Date());
+      
+      const syncTime = new Date().toLocaleTimeString();
+      if (changesCount > 0) {
+        setLastSyncMessage(`OK (${syncTime}). Wykryto ${changesCount} nowych zmian.`);
+      } else {
+        setLastSyncMessage(`OK (${syncTime}). Brak nowych zmian.`);
+      }
       alert('Synchronizacja dostępności zakończona pomyślnie.');
+
     } catch (err: any) {
       alert(`Błąd synchronizacji: ${err.message}`);
+      setLastSyncMessage(`Błąd: ${err.message}`);
     } finally {
       setIsSyncing(false);
     }
@@ -207,7 +215,7 @@ export const CalendarView: React.FC = () => {
               {isSyncing ? 'Synchronizuję dane...' : 'Synchronizuj teraz'}
             </button>
             <p className="text-xs text-slate-500 text-center">
-              {lastSync ? `Ostatnia synchronizacja: ${lastSync.toLocaleTimeString()}` : 'Naciśnij, aby pobrać dane.'}
+              {lastSyncMessage}
             </p>
           </div>
           <div className="bg-slate-900/50 p-4 rounded-lg border border-border space-y-4">

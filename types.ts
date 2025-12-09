@@ -1,5 +1,6 @@
 
 
+
 export interface Property {
   id: string;
   user_id: string;
@@ -42,22 +43,6 @@ export interface Availability {
   reservation_id?: string | null;
 }
 
-export interface Season {
-    id: string;
-    property_id: string;
-    name: string;
-    start_date: string;
-    end_date: string;
-    created_at: string;
-}
-
-export interface SeasonalPrice {
-    id: string;
-    unit_id: string;
-    season_id: string;
-    price: number;
-}
-
 export interface Notification {
   id: string;
   user_id: string;
@@ -70,4 +55,19 @@ export interface Notification {
   end_date: string;
   is_read: boolean;
   created_at: string;
+}
+// FIX: Add missing Season and SeasonalPrice interfaces
+export interface Season {
+  id: string;
+  property_id: string;
+  name: string;
+  start_date: string;
+  end_date: string;
+}
+
+export interface SeasonalPrice {
+  id: string;
+  unit_id: string;
+  season_id: string;
+  price: number;
 }
