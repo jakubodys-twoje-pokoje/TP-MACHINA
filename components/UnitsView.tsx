@@ -4,15 +4,7 @@ import { supabase } from '../services/supabaseClient';
 import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2, ImageOff, Ruler, Layers, Bath, ChevronDown, Save, X, Plus } from 'lucide-react';
 import { Unit, Property } from '../types';
 import { useProperties } from '../contexts/PropertyContext';
-
-const facilitiesMap: { [key: string]: string } = {
-  '1': 'Wi-Fi', '2': 'Parking', '3': 'Aneks kuchenny', '4': 'Lodówka',
-  '5': 'Telewizor', '6': 'Balkon / Taras', '9': 'Czajnik', '10': 'Naczynia i sztućce',
-  '17': 'Ręczniki', '19': 'Płyta kuchenna', '22': 'Łazienka w pokoju', '23': 'Szafa / Garderoba',
-  '24': 'Zestaw do parzenia kawy i herbaty', '67': 'Taras', '70': 'Grill', '74': 'Meble ogrodowe',
-  '76': 'Pościel', '77': 'Stół',
-};
-
+// No local map needed, data from DB is already translated
 
 const BedDetails: React.FC<{ unit: Unit }> = ({ unit }) => {
   const details = [
@@ -77,17 +69,7 @@ export const UnitsView: React.FC = () => {
   
   const handleEditClick = (unit: Unit) => {
     setEditingUnitId(unit.id);
-    
-    // Translate facility IDs to names for editing
-    const facilityString = unit.facilities || '';
-    const translatedFacilities = facilityString
-      .split(',')
-      .map(id => id.trim())
-      .filter(Boolean)
-      .map(id => facilitiesMap[id] || id) // Translate ID to name, or keep as is if not found
-      .join(', ');
-
-    setEditFormData({ ...unit, facilities: translatedFacilities });
+    setEditFormData({ ...unit }); // The data from DB is already correct (text)
     setExpandedUnitId(unit.id); // Automatically expand when editing
   };
 
@@ -112,7 +94,7 @@ export const UnitsView: React.FC = () => {
   };
   
   const handleFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value, type } = e.target;
+    const { name, value } = e.target;
     // @ts-ignore
     const isNumber = e.target.type === 'number';
     setEditFormData(prev => ({
@@ -341,9 +323,9 @@ export const UnitsView: React.FC = () => {
                           ) : (
                             unit.facilities ? (
                               <div className="flex flex-wrap gap-2">
-                                {unit.facilities.split(',').map(id => facilitiesMap[id.trim()] || id.trim()).map(name => (
+                                {unit.facilities.split(',').map(name => (
                                   <span key={name} className="bg-slate-700 text-slate-300 text-xs font-medium px-2.5 py-1.5 rounded-full">
-                                    {name}
+                                    {name.trim()}
                                   </span>
                                 ))}
                               </div>

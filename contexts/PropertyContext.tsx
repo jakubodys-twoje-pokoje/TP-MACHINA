@@ -1,6 +1,7 @@
 import React, { createContext, useState, useEffect, useContext, ReactNode } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { Property, Unit, Availability } from '../types';
+import { facilitiesMap } from '../data/facilities';
 
 interface PropertyContextType {
   properties: Property[];
@@ -114,6 +115,11 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
         const floorValue = roomDetails.floor;
         const parsedFloor = parseInt(floorValue, 10);
+        
+        // Translate facility IDs to names
+        const facilityIds = (roomDetails.facilities || '').split(',').map((id: string) => id.trim()).filter(Boolean);
+        const facilityNames = facilityIds.map((id: string) => facilitiesMap[id] || id).join(', ');
+
 
         // Merge data from both APIs
         const mergedUnitData = {
@@ -132,7 +138,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
           max_adults: parseInt(roomDetails.max_adults) || null,
           bathroom_count: parseInt(roomDetails.bathroom_cnt) || null,
           floor: !isNaN(parsedFloor) ? parsedFloor : null,
-          facilities: roomDetails.facilities || null,
+          facilities: facilityNames,
           photos: roomDetails.photos || null,
           photo_url: roomDetails.photo || null,
         };
