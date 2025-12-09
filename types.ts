@@ -53,19 +53,3 @@ export interface Notification {
   is_read: boolean;
   created_at: string;
 }
-
-// FIX: Add Season and SeasonalPrice types to resolve import errors in components/PricingView.tsx
-export interface Season {
-  id: string;
-  property_id: string;
-  name: string;
-  start_date: string;
-  end_date: string;
-}
-
-export interface SeasonalPrice {
-  id: string;
-  unit_id: string;
-  season_id: string;
-  price: number;
-}

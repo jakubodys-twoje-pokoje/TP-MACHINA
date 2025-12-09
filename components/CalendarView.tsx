@@ -100,7 +100,7 @@ export const CalendarView: React.FC = () => {
       } else {
         setLastSyncMessage(`OK (${syncTime}). Brak nowych zmian.`);
       }
-      alert('Synchronizacja dostępności zakończona pomyślnie.');
+      alert(`Synchronizacja dostępności zakończona. Wykryto ${changesCount} zmian.`);
 
     } catch (err: any) {
       alert(`Błąd synchronizacji: ${err.message}`);

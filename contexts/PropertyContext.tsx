@@ -226,7 +226,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       
       const fromDate = '2026-01-01';
       const tillDate = '2026-12-31';
-      const availUrl = `https://panel.hotres.pl/api_availability?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}&from=${fromDate}&till=${tillDate}`;
+      const availUrl = `https://panel.hotres.pl/api_availability?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}&from=${fromDate}&till=${tillDate}&t=${Date.now()}`;
       const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(availUrl)}`;
       
       const response = await fetch(proxyUrl);
@@ -246,7 +246,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
                   const oldStatus = currentAvailMap.get(`${unit.id}-${dateInfo.date}`);
                   // Only create notifications if there's a previous state in the DB (not the first sync) AND the status has actually changed.
-                  if (currentAvailMap.size > 0 && oldStatus !== newStatus) {
+                  if (currentAvailMap.size > 0 && oldStatus && oldStatus !== newStatus) {
                       allChanges.push({ unitId: unit.id, unitName: unit.name, date: dateInfo.date, newStatus });
                   }
               }
