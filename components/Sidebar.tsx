@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2, AlertTriangle } from 'lucide-react';
-import { supabase } from '../services/supabaseClient';
 import { useProperties } from '../contexts/PropertyContext';
 
 export const Sidebar: React.FC = () => {
-  const { properties, loading, error, addProperty } = useProperties();
+  const { properties, loading, error, addProperty, importFromHotres } = useProperties();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -35,65 +34,13 @@ export const Sidebar: React.FC = () => {
       setIsModalOpen(false);
       setFormData({ name: '', oid: '' });
       setModalMode('manual');
-      navigate(`/property/${newProperty.id}/details`);
+      navigate(`/property/${newProperty.id}/units`); // Navigate to units after import
 
     } catch (err: any) {
       alert(`Błąd: ${err.message}`);
       console.error(JSON.stringify(err, null, 2));
     } finally {
       setIsSubmitting(false);
-    }
-  };
-
-  const importFromHotres = async (oid: string, propertyId: string) => {
-    const targetUrl = `https://panel.hotres.pl/api_rooms?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}`;
-    const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}&t=${Date.now()}`;
-
-    try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`Błąd połączenia z API (Proxy): ${response.status}`);
-      
-      const responseText = await response.text();
-      let unitsToInsert = [];
-
-      const jsonData = JSON.parse(responseText);
-      console.log("Hotres Raw JSON:", jsonData);
-      
-      const roomsList = Array.isArray(jsonData) ? jsonData : (jsonData.room_id ? [jsonData] : Object.values(jsonData));
-      
-      if (roomsList.length > 0) {
-        unitsToInsert = roomsList.map((room: any) => {
-          const single = parseInt(room.single || '0');
-          const double = parseInt(room.double || '0');
-          const sofa = parseInt(room.sofa || '0');
-          const sofa_single = parseInt(room.sofa_single || '0');
-          
-          let capacity = (double * 2) + single + (sofa * 2) + sofa_single;
-          if (capacity === 0) capacity = 2; // Domyślna pojemność
-
-          return {
-            property_id: propertyId,
-            name: room.code || `Pokój ${room.room_id}`,
-            type: 'room',
-            capacity: capacity,
-            description: `ID z Hotres: ${room.room_id}`, 
-            external_id: room.room_id || null,
-            external_type_id: room.type_id || null,
-          };
-        });
-      }
-
-      if (unitsToInsert.length > 0) {
-        const { error } = await supabase.from('units').insert(unitsToInsert);
-        if (error) throw error;
-        alert(`Pomyślnie zaimportowano ${unitsToInsert.length} kwater.`);
-      } else {
-        alert('Nie znaleziono kwater dla podanego OID lub odpowiedź API jest pusta.');
-      }
-
-    } catch (err: any) {
-      console.error('Błąd importu:', err);
-      alert(`Błąd importu: ${err.message}. Sprawdź konsolę (F12) po więcej informacji.`);
     }
   };
 

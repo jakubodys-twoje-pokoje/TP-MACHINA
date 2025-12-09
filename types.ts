@@ -17,7 +17,11 @@ export interface Unit {
   capacity: number;
   description: string | null;
   external_id?: string | null;
-  external_type_id?: string | null; // Nowe pole
+  external_type_id?: string | null;
+  beds_single?: number | null;
+  beds_double?: number | null;
+  beds_sofa?: number | null;
+  beds_sofa_single?: number | null;
 }
 
 export interface Availability {

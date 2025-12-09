@@ -1,21 +1,52 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { Plus, Trash2, Edit2, Check, X, Users } from 'lucide-react';
-import { Unit } from '../types';
+import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2 } from 'lucide-react';
+import { Unit, Property } from '../types';
+import { useProperties } from '../contexts/PropertyContext';
+
+const BedDetails: React.FC<{ unit: Unit }> = ({ unit }) => {
+  const details = [
+    { count: unit.beds_double, icon: Bed, label: 'Podwójne' },
+    { count: unit.beds_single, icon: Bed, label: 'Pojedyncze' },
+    { count: unit.beds_sofa, icon: Sofa, label: 'Sofa' },
+    { count: unit.beds_sofa_single, icon: Sofa, label: 'Sofa poj.' },
+  ].filter(d => d.count && d.count > 0);
+
+  if (details.length === 0) return <span className="text-slate-500">—</span>;
+
+  return (
+    <div className="flex items-center gap-3 text-xs">
+      {details.map((d, i) => (
+        <span key={i} className="flex items-center gap-1 text-slate-400" title={`${d.count} x ${d.label}`}>
+          <d.icon size={14} />
+          {d.count}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 export const UnitsView: React.FC = () => {
   const { id: propertyId } = useParams<{ id: string }>();
   const [units, setUnits] = useState<Unit[]>([]);
+  const [property, setProperty] = useState<Property | null>(null);
   const [loading, setLoading] = useState(true);
-  
-  // Edit/Add state
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<Partial<Unit>>({});
+  const [isSyncing, setIsSyncing] = useState(false);
+  const { importFromHotres } = useProperties();
 
   useEffect(() => {
-    if (propertyId) fetchUnits();
+    if (propertyId) {
+      fetchProperty();
+      fetchUnits();
+    }
   }, [propertyId]);
+
+  const fetchProperty = async () => {
+    if (!propertyId) return;
+    const { data } = await supabase.from('properties').select('*').eq('id', propertyId).single();
+    setProperty(data);
+  }
 
   const fetchUnits = async () => {
     if (!propertyId) return;
@@ -30,75 +61,55 @@ export const UnitsView: React.FC = () => {
     setLoading(false);
   };
 
-  const handleAddNew = () => {
-    setEditForm({
-      name: '',
-      type: 'room',
-      capacity: 2,
-      description: ''
-    });
-    setEditingId('new');
-  };
-
-  const handleEdit = (unit: Unit) => {
-    setEditForm(unit);
-    setEditingId(unit.id);
-  };
-
-  const handleCancel = () => {
-    setEditingId(null);
-    setEditForm({});
-  };
-
-  const handleSave = async () => {
-    if (!propertyId || !editForm.name) return;
-
-    try {
-      if (editingId === 'new') {
-        const { data, error } = await supabase
-          .from('units')
-          .insert([{ ...editForm, property_id: propertyId }])
-          .select()
-          .single();
-        if (error) throw error;
-        setUnits([...units, data]);
-      } else {
-        const { error } = await supabase
-          .from('units')
-          .update(editForm)
-          .eq('id', editingId);
-        if (error) throw error;
-        setUnits(units.map(u => u.id === editingId ? { ...u, ...editForm } as Unit : u));
-      }
-      setEditingId(null);
-    } catch (err) {
-      alert('Błąd zapisu kwatery');
-      console.error(err);
+  const handleSync = async () => {
+    if (!property || !property.description) {
+      alert("Brak OID w opisie obiektu. Nie można zsynchronizować.");
+      return;
     }
-  };
+    const oidMatch = property.description.match(/OID: (\d+)/);
+    if (!oidMatch || !oidMatch[1]) {
+      alert("Nie znaleziono OID w opisie obiektu.");
+      return;
+    }
+    
+    setIsSyncing(true);
+    try {
+      await importFromHotres(oidMatch[1], property.id);
+      await fetchUnits(); // Refresh the list
+    } catch (err: any) {
+      alert(`Błąd synchronizacji: ${err.message}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  }
 
   const handleDelete = async (unitId: string) => {
-    if (!confirm('Usunąć kwaterę?')) return;
+    if (!confirm('Usunąć kwaterę? Ta akcja jest nieodwracalna.')) return;
     const { error } = await supabase.from('units').delete().eq('id', unitId);
     if (!error) {
       setUnits(units.filter(u => u.id !== unitId));
     }
   };
 
+  const isImported = property?.description?.includes('Hotres OID');
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between border-b border-border pb-4">
+      <div className="flex items-start justify-between border-b border-border pb-4">
         <div>
           <h2 className="text-2xl font-bold text-white">Kwatery / Pokoje</h2>
-          <p className="text-slate-400 text-sm">Zarządzaj pokojami w tym obiekcie</p>
+          <p className="text-slate-400 text-sm mt-1">Zarządzaj pokojami w tym obiekcie</p>
         </div>
-        <button 
-          onClick={handleAddNew}
-          disabled={editingId !== null}
-          className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors text-sm"
-        >
-          <Plus size={16} /> Dodaj kwaterę
-        </button>
+        {isImported && (
+          <button 
+            onClick={handleSync}
+            disabled={isSyncing}
+            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-wait text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors text-sm"
+          >
+            {isSyncing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+            {isSyncing ? 'Synchronizuję...' : 'Synchronizuj z Hotres'}
+          </button>
+        )}
       </div>
 
       <div className="bg-surface rounded-xl border border-border overflow-hidden">
@@ -106,85 +117,52 @@ export const UnitsView: React.FC = () => {
           <thead className="bg-slate-900/50 text-slate-400 uppercase tracking-wider font-semibold border-b border-border">
             <tr>
               <th className="px-6 py-4">Nazwa</th>
-              <th className="px-6 py-4">Typ</th>
+              <th className="px-6 py-4">ID Hotres</th>
               <th className="px-6 py-4">Pojemność</th>
+              <th className="px-6 py-4">Szczegóły łóżek</th>
               <th className="px-6 py-4 text-right">Akcje</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {/* ADD NEW ROW */}
-            {editingId === 'new' && (
-               <tr className="bg-indigo-900/10 animate-in fade-in">
-                <td className="px-6 py-4">
-                  <input autoFocus className="bg-slate-900 border border-slate-600 rounded p-1 w-full text-white" placeholder="Np. Pokój 101" value={editForm.name || ''} onChange={e => setEditForm({...editForm, name: e.target.value})} />
-                </td>
-                <td className="px-6 py-4">
-                   <select className="bg-slate-900 border border-slate-600 rounded p-1 w-full text-white" value={editForm.type} onChange={e => setEditForm({...editForm, type: e.target.value})}>
-                      <option value="room">Pokój</option>
-                      <option value="apartment">Apartament</option>
-                      <option value="house">Domek</option>
-                   </select>
-                </td>
-                <td className="px-6 py-4">
-                   <input type="number" className="bg-slate-900 border border-slate-600 rounded p-1 w-20 text-white" value={editForm.capacity} onChange={e => setEditForm({...editForm, capacity: parseInt(e.target.value)})} />
-                </td>
-                <td className="px-6 py-4 text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    <button onClick={handleSave} className="p-1 bg-green-600 text-white rounded hover:bg-green-700"><Check size={16} /></button>
-                    <button onClick={handleCancel} className="p-1 bg-slate-600 text-white rounded hover:bg-slate-700"><X size={16} /></button>
-                  </div>
-                </td>
-               </tr>
-            )}
-
-            {units.map(unit => {
-              const isEditing = editingId === unit.id;
-              return (
+            {units.map(unit => (
                 <tr key={unit.id} className="hover:bg-slate-800/50 transition-colors">
-                  <td className="px-6 py-4 font-medium text-white">
-                    {isEditing ? (
-                      <input className="bg-slate-900 border border-slate-600 rounded p-1 w-full text-white" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} />
-                    ) : unit.name}
+                  <td className="px-6 py-4 font-medium text-white">{unit.name}</td>
+                  <td className="px-6 py-4 text-slate-400 font-mono text-xs">
+                    <span className="flex items-center gap-2">
+                        <Key size={14}/>
+                        <div>
+                            <div>{unit.external_id} <span className="text-slate-600">(pokój)</span></div>
+                            <div className="mt-1">{unit.external_type_id} <span className="text-slate-600">(typ)</span></div>
+                        </div>
+                    </span>
                   </td>
                   <td className="px-6 py-4 text-slate-300">
-                    {isEditing ? (
-                       <select className="bg-slate-900 border border-slate-600 rounded p-1 w-full text-white" value={editForm.type} onChange={e => setEditForm({...editForm, type: e.target.value})}>
-                        <option value="room">Pokój</option>
-                        <option value="apartment">Apartament</option>
-                        <option value="house">Domek</option>
-                     </select>
-                    ) : (
-                      <span className="bg-slate-700 text-slate-200 text-xs px-2 py-1 rounded-full">{unit.type}</span>
-                    )}
+                    <span className="flex items-center gap-1.5"><Users size={14} className="text-slate-500"/> {unit.capacity}</span>
                   </td>
                   <td className="px-6 py-4 text-slate-300">
-                     {isEditing ? (
-                       <input type="number" className="bg-slate-900 border border-slate-600 rounded p-1 w-20 text-white" value={editForm.capacity} onChange={e => setEditForm({...editForm, capacity: parseInt(e.target.value)})} />
-                     ) : (
-                       <span className="flex items-center gap-1"><Users size={14} className="text-slate-500"/> {unit.capacity}</span>
-                     )}
+                    <BedDetails unit={unit} />
                   </td>
                   <td className="px-6 py-4 text-right">
-                    {isEditing ? (
-                      <div className="flex items-center justify-end gap-2">
-                         <button onClick={handleSave} className="p-1 bg-green-600 text-white rounded hover:bg-green-700"><Check size={16} /></button>
-                         <button onClick={handleCancel} className="p-1 bg-slate-600 text-white rounded hover:bg-slate-700"><X size={16} /></button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-end gap-2">
-                        <button onClick={() => handleEdit(unit)} className="text-slate-400 hover:text-indigo-400 p-1"><Edit2 size={16} /></button>
-                        <button onClick={() => handleDelete(unit.id)} className="text-slate-400 hover:text-red-400 p-1"><Trash2 size={16} /></button>
-                      </div>
-                    )}
+                    <div className="flex items-center justify-end gap-2">
+                      <button title="Edycja (niedostępna dla importowanych)" disabled className="text-slate-600 p-1 cursor-not-allowed"><Edit2 size={16} /></button>
+                      <button onClick={() => handleDelete(unit.id)} className="text-slate-400 hover:text-red-400 p-1"><Trash2 size={16} /></button>
+                    </div>
                   </td>
                 </tr>
               )
-            })}
+            )}
             
-            {!loading && units.length === 0 && editingId !== 'new' && (
+            {!loading && units.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-6 py-12 text-center text-slate-500">
-                  Brak kwater w tym obiekcie. Dodaj pierwszą kwaterę powyżej.
+                <td colSpan={5} className="px-6 py-12 text-center text-slate-500 italic">
+                  {isImported ? "Brak kwater. Użyj przycisku 'Synchronizuj z Hotres', aby je pobrać." : "Brak kwater w tym obiekcie."}
+                </td>
+              </tr>
+            )}
+             {loading && (
+              <tr>
+                <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
+                  <Loader2 className="animate-spin inline-block mr-2" /> Ładowanie kwater...
                 </td>
               </tr>
             )}
