@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2, AlertTriangle } from 'lucide-react';
@@ -51,7 +50,6 @@ export const Sidebar: React.FC = () => {
       setProperties(data || []);
     } catch (err: any) {
       console.error('Error fetching properties:', JSON.stringify(err, null, 2));
-      // Display specific error message to help debugging schema issues
       setFetchError(err.message || 'Błąd pobierania danych.');
     } finally {
       setLoading(false);
@@ -90,6 +88,7 @@ export const Sidebar: React.FC = () => {
       setIsModalOpen(false);
       setFormData({ name: '', oid: '' });
       setModalMode('manual');
+      setFetchError(null); // Clear errors on success
       navigate(`/property/${propertyData.id}/details`);
 
     } catch (err: any) {
@@ -102,7 +101,6 @@ export const Sidebar: React.FC = () => {
 
   const importFromHotres = async (oid: string, propertyId: string) => {
     // We use 'allorigins' proxy to bypass CORS restrictions in the browser.
-    // Added timestamp to prevent caching.
     const targetUrl = `https://panel.hotres.pl/api_rooms?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}`;
     const url = `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}&t=${Date.now()}`;
 
@@ -113,36 +111,31 @@ export const Sidebar: React.FC = () => {
       const responseText = await response.text();
       let unitsToInsert = [];
 
-      // Attempt to parse as JSON first
       try {
+        // Try parsing as JSON first
         const jsonData = JSON.parse(responseText);
-        console.log("Hotres Raw JSON:", jsonData); // DEBUG LOG
+        console.log("Hotres Raw JSON:", jsonData);
 
         let roomsList = [];
 
-        // Check if it's a single object (has room_id directly)
+        // Check if single object or array or object map
         if (jsonData.room_id) {
              roomsList = [jsonData];
         } else if (Array.isArray(jsonData)) {
              roomsList = jsonData;
         } else {
-             // It might be an object map (id -> room)
              roomsList = Object.values(jsonData);
         }
         
-        console.log("Processed Room List:", roomsList);
-
         if (roomsList.length > 0) {
             unitsToInsert = roomsList.map((room: any) => {
-                // Determine capacity
                 let cap = 2; // default
                 
-                // Try to parse "X os." from name (code)
+                // Parse capacity
                 if (room.code) {
                    const match = room.code.match(/(\d+)\s*os/);
                    if (match && match[1]) cap = parseInt(match[1]);
                 }
-                // Fallback to sum of beds if parsing failed or default logic
                 if (cap === 2) {
                      const d = parseInt(room.double || '0');
                      const s = parseInt(room.single || '0');
@@ -156,13 +149,13 @@ export const Sidebar: React.FC = () => {
                     name: room.code || room.room_name || `Pokój ${room.room_id}`,
                     type: 'room',
                     capacity: cap,
-                    description: '', 
+                    description: `ID z Hotres: ${room.room_id}`, 
                     external_id: room.room_id || null
                 };
             });
         }
       } catch (jsonError) {
-        // Fallback to XML parsing if JSON fails
+        // Fallback to XML parsing
         console.log("JSON parse failed, trying XML...", jsonError);
         
         const parser = new DOMParser();
@@ -186,7 +179,7 @@ export const Sidebar: React.FC = () => {
                         name: name,
                         type: 'room',
                         capacity: cap,
-                        description: '',
+                        description: `ID z Hotres: ${id}`,
                         external_id: id
                     });
                 }
@@ -195,12 +188,15 @@ export const Sidebar: React.FC = () => {
       }
 
       if (unitsToInsert.length > 0) {
-        const { error } = await supabase.from('units').insert(unitsToInsert);
-        if (error) throw error;
-        alert(`Pomyślnie zaimportowano ${unitsToInsert.length} kwater.`);
+        // Filter out items without name or invalid structure before insert
+        const validUnits = unitsToInsert.filter((u: any) => u.name);
+        if (validUnits.length > 0) {
+            const { error } = await supabase.from('units').insert(validUnits);
+            if (error) throw error;
+            alert(`Pomyślnie zaimportowano ${validUnits.length} kwater.`);
+        }
       } else {
-        alert('Nie znaleziono kwater dla podanego OID w odpowiedzi API.');
-        console.warn('API Response Content:', responseText);
+        alert('Nie znaleziono kwater dla podanego OID. Sprawdź poprawność danych.');
       }
 
     } catch (err: any) {
@@ -244,6 +240,7 @@ export const Sidebar: React.FC = () => {
                <AlertTriangle size={14} /> Błąd bazy danych
              </div>
              {fetchError}
+             <div className="mt-2 text-[10px] text-slate-500">Spróbuj odświeżyć stronę po naprawie bazy SQL.</div>
            </div>
         ) : properties.length === 0 ? (
           <div className="text-slate-500 text-sm text-center py-4 italic">Brak obiektów</div>
@@ -253,7 +250,6 @@ export const Sidebar: React.FC = () => {
                <NavLink
                 to={`/property/${property.id}/details`}
                 className={({ isActive }) => {
-                    // Check if this property is active (either details, units, or calendar)
                     const isParentActive = activePropertyId === property.id;
                     return `block px-3 py-2.5 rounded-lg text-sm transition-colors ${isParentActive ? 'bg-slate-800 text-white font-medium' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`;
                 }}
@@ -264,7 +260,6 @@ export const Sidebar: React.FC = () => {
                 </div>
               </NavLink>
 
-              {/* Submenu visible only if this property is active */}
               {activePropertyId === property.id && (
                 <div className="ml-4 pl-3 border-l border-slate-700 space-y-1 my-1 animate-in slide-in-from-left-2 duration-200">
                     <NavLink to={`/property/${property.id}/details`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}>
@@ -294,7 +289,6 @@ export const Sidebar: React.FC = () => {
           </div>
           
           <div className="p-6 space-y-6">
-            {/* Toggle Mode */}
             <div className="flex bg-slate-900 p-1 rounded-lg border border-border">
               <button 
                 type="button"
