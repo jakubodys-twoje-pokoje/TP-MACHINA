@@ -116,6 +116,8 @@ export const Sidebar: React.FC = () => {
       // Attempt to parse as JSON first
       try {
         const jsonData = JSON.parse(responseText);
+        console.log("Hotres Raw JSON:", jsonData); // DEBUG LOG
+
         let roomsList = [];
 
         // Check if it's a single object (has room_id directly)
@@ -128,7 +130,7 @@ export const Sidebar: React.FC = () => {
              roomsList = Object.values(jsonData);
         }
         
-        console.log("Parsed JSON from Hotres:", roomsList);
+        console.log("Processed Room List:", roomsList);
 
         if (roomsList.length > 0) {
             unitsToInsert = roomsList.map((room: any) => {
