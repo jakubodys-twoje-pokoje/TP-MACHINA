@@ -221,7 +221,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       const { data: currentAvailData, error: currentAvailError } = await supabase.from('availability').select('unit_id, date, status').in('unit_id', units.map(u => u.id));
       if (currentAvailError) throw currentAvailError;
       
-      const currentAvailMap = new Map<string, 'available' | 'blocked'>();
+      const currentAvailMap = new Map<string, 'available' | 'blocked' | 'booked'>();
       currentAvailData?.forEach(a => currentAvailMap.set(`${a.unit_id}-${a.date}`, a.status as any));
       
       const fromDate = '2026-01-01';
@@ -244,9 +244,11 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                   const newStatus = dateInfo.available === "1" ? 'available' : 'blocked';
                   recordsToUpsert.push({ unit_id: unit.id, date: dateInfo.date, status: newStatus });
 
-                  const oldStatus = currentAvailMap.get(`${unit.id}-${dateInfo.date}`);
-                  // Only create notifications if there's a previous state in the DB (not the first sync) AND the status has actually changed.
-                  if (currentAvailMap.size > 0 && oldStatus && oldStatus !== newStatus) {
+                  // Treat a status not in DB as 'available'
+                  const oldStatus = currentAvailMap.get(`${unit.id}-${dateInfo.date}`) ?? 'available';
+                  
+                  // Only create notifications if it's not the first sync AND the status has actually changed.
+                  if (currentAvailMap.size > 0 && oldStatus !== newStatus) {
                       allChanges.push({ unitId: unit.id, unitName: unit.name, date: dateInfo.date, newStatus });
                   }
               }

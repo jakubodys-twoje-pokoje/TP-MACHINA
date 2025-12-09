@@ -1,3 +1,6 @@
+// Fix: Add Deno types reference to resolve 'Deno' not found error.
+/// <reference types="https://esm.sh/v135/@supabase/functions-js@2.4.1/src/edge-runtime.d.ts" />
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1'
 import webpush from "https://esm.sh/web-push@3.6.3"
@@ -14,8 +17,10 @@ serve(async (req) => {
 
   try {
     const supabase = createClient(
-      (Deno as any).env.get('SUPABASE_URL') ?? '',
-      (Deno as any).env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+      // Fix: Remove '(Deno as any)' cast as types are now available.
+      Deno.env.get('SUPABASE_URL') ?? '',
+      // Fix: Remove '(Deno as any)' cast as types are now available.
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
     const { record } = await req.json()
@@ -23,8 +28,10 @@ serve(async (req) => {
     // Configure web-push
     webpush.setVapidDetails(
       'mailto:admin@example.com',
-      (Deno as any).env.get('VAPID_PUBLIC_KEY') ?? '',
-      (Deno as any).env.get('VAPID_PRIVATE_KEY') ?? ''
+      // Fix: Remove '(Deno as any)' cast as types are now available.
+      Deno.env.get('VAPID_PUBLIC_KEY') ?? '',
+      // Fix: Remove '(Deno as any)' cast as types are now available.
+      Deno.env.get('VAPID_PRIVATE_KEY') ?? ''
     )
 
     // Get subscriptions for the user
