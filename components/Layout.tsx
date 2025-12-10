@@ -37,8 +37,12 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   };
 
   const handleEnablePush = async () => {
-      if (!('serviceWorker' in navigator)) {
-        alert("Twoja przeglądarka nie obsługuje powiadomień.");
+      if (!('serviceWorker' in navigator) || !window.PushManager) {
+        if (!window.isSecureContext) {
+             alert("Powiadomienia Push wymagają bezpiecznego połączenia (HTTPS) lub działania na localhost.");
+        } else {
+             alert("Twoja przeglądarka nie obsługuje powiadomień Push.");
+        }
         return;
       }
       
@@ -66,7 +70,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
               alert("Powiadomienia zostały włączone!");
             }
         } else {
-            alert("Brak zgody na powiadomienia. Zmień ustawienia przeglądarki.");
+            alert("Brak zgody na powiadomienia. Zmień ustawienia przeglądarki, jeśli chcesz je włączyć.");
         }
       } catch (e: any) {
         console.error(e);

@@ -32,9 +32,10 @@ const App: React.FC = () => {
   };
 
   const subscribeToPush = async (userId: string) => {
-    if (!('serviceWorker' in navigator)) return;
+    if (!('serviceWorker' in navigator) || !window.PushManager) return;
+    
     if (VAPID_PUBLIC_KEY === 'YOUR_VAPID_PUBLIC_KEY_HERE') {
-        console.warn("VAPID Key not set in supabaseClient.ts");
+        console.warn("Klucz VAPID nie jest skonfigurowany. Pomijam subskrypcję push.");
         return;
     }
 
@@ -51,11 +52,11 @@ const App: React.FC = () => {
         subscription: subscription
       });
 
-      if (error) console.error("Error saving subscription:", error);
-      else console.log("Push subscription saved!");
+      if (error) console.error("Błąd zapisu subskrypcji:", error);
+      else console.log("Subskrypcja Push zapisana!");
 
     } catch (error) {
-      console.error("Push subscription failed:", error);
+      console.error("Subskrypcja Push nie powiodła się:", error);
     }
   };
 
@@ -71,7 +72,6 @@ const App: React.FC = () => {
         if (mounted) {
           setSession(data.session);
           if (data.session?.user) {
-             // Try to subscribe on load if permission is granted
              if (Notification.permission === 'granted') {
                  subscribeToPush(data.session.user.id);
              }

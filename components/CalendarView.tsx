@@ -91,16 +91,25 @@ export const CalendarView: React.FC = () => {
     
     setIsSyncing(true);
     try {
-      const changesCount = await syncAvailability(oidMatch[1], property.id);
+      const resultMessage = await syncAvailability(oidMatch[1], property.id);
       await fetchAvailabilityForMonth();
       
       const syncTime = new Date().toLocaleTimeString();
-      if (changesCount > 0) {
-        setLastSyncMessage(`OK (${syncTime}). Wykryto ${changesCount} nowych zmian.`);
+      let alertMessage = '';
+      if (resultMessage === "First sync complete") {
+          alertMessage = "Pierwsza synchronizacja zakończona pomyślnie. Powiadomienia będą generowane od teraz.";
+          setLastSyncMessage(`OK (${syncTime}). Pierwsza synchronizacja.`);
       } else {
-        setLastSyncMessage(`OK (${syncTime}). Brak nowych zmian.`);
+          const changesCount = parseInt(resultMessage.split(' ')[1]) || 0;
+          if (changesCount > 0) {
+            alertMessage = `Synchronizacja zakończona. Wykryto ${changesCount} nowych zmian.`;
+            setLastSyncMessage(`OK (${syncTime}). Wykryto ${changesCount} zmian.`);
+          } else {
+            alertMessage = `Synchronizacja zakończona. Brak nowych zmian.`;
+            setLastSyncMessage(`OK (${syncTime}). Brak nowych zmian.`);
+          }
       }
-      alert(`Synchronizacja dostępności zakończona. Wykryto ${changesCount} zmian.`);
+      alert(alertMessage);
 
     } catch (err: any) {
       alert(`Błąd synchronizacji: ${err.message}`);

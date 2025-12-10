@@ -13,7 +13,7 @@ interface PropertyContextType {
   addProperty: (name: string, description: string | null) => Promise<Property | null>;
   deleteProperty: (id: string) => Promise<void>;
   importFromHotres: (oid: string, propertyId: string) => Promise<void>;
-  syncAvailability: (oid: string, propertyId: string) => Promise<number>;
+  syncAvailability: (oid: string, propertyId: string) => Promise<string>;
   fetchNotifications: () => Promise<void>;
   markNotificationAsRead: (id: string) => Promise<void>;
   markAllNotificationsAsRead: () => Promise<void>;
@@ -202,12 +202,14 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   };
 
-  const syncAvailability = async (oid: string, propertyId: string): Promise<number> => {
+  const syncAvailability = async (oid: string, propertyId: string): Promise<string> => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Brak użytkownika");
 
-      const property = properties.find(p => p.id === propertyId);
-      if (!property) throw new Error("Nie znaleziono obiektu");
+      const { data: property, error: propError } = await supabase.from('properties').select('id, name, availability_last_synced_at').eq('id', propertyId).single();
+      if (propError || !property) throw new Error("Nie znaleziono obiektu");
+      
+      const isFirstSync = !property.availability_last_synced_at;
 
       const { data: units, error: unitsError } = await supabase.from('units').select('id, name, external_type_id').eq('property_id', propertyId);
       if (unitsError) throw unitsError;
@@ -221,7 +223,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       const { data: currentAvailData, error: currentAvailError } = await supabase.from('availability').select('unit_id, date, status').in('unit_id', units.map(u => u.id));
       if (currentAvailError) throw currentAvailError;
       
-      const currentAvailMap = new Map<string, 'available' | 'blocked' | 'booked'>();
+      const currentAvailMap = new Map<string, 'available' | 'booked' | 'blocked'>();
       currentAvailData?.forEach(a => currentAvailMap.set(`${a.unit_id}-${a.date}`, a.status as any));
       
       const fromDate = '2026-01-01';
@@ -244,11 +246,9 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                   const newStatus = dateInfo.available === "1" ? 'available' : 'blocked';
                   recordsToUpsert.push({ unit_id: unit.id, date: dateInfo.date, status: newStatus });
 
-                  // Treat a status not in DB as 'available'
                   const oldStatus = currentAvailMap.get(`${unit.id}-${dateInfo.date}`) ?? 'available';
                   
-                  // Only create notifications if it's not the first sync AND the status has actually changed.
-                  if (currentAvailMap.size > 0 && oldStatus !== newStatus) {
+                  if (!isFirstSync && oldStatus !== newStatus) {
                       allChanges.push({ unitId: unit.id, unitName: unit.name, date: dateInfo.date, newStatus });
                   }
               }
@@ -285,13 +285,19 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
           const { error: upsertError } = await supabase.from('availability').upsert(recordsToUpsert, { onConflict: 'unit_id, date' });
           if (upsertError) throw upsertError;
       }
+      
+      // Update sync timestamp
+      const { error: updatePropError } = await supabase.from('properties').update({ availability_last_synced_at: new Date().toISOString() }).eq('id', propertyId);
+      if (updatePropError) throw updatePropError;
+
       if (notificationsToInsert.length > 0) {
           const { error: notifError } = await supabase.from('notifications').insert(notificationsToInsert.map(n => ({...n, user_id: user.id })));
           if (notifError) throw notifError;
           await fetchNotifications();
       }
       
-      return notificationsToInsert.length;
+      if(isFirstSync) return "First sync complete";
+      return `Found ${notificationsToInsert.length} changes`;
   };
 
   const value = {

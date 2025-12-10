@@ -7,6 +7,7 @@ export interface Property {
   contact_info: string | null;
   maps_link?: string | null;
   amenities?: string | null;
+  availability_last_synced_at?: string | null;
   created_at: string;
 }
 
