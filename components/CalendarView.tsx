@@ -45,6 +45,10 @@ export const CalendarView: React.FC = () => {
     setLoadingUnits(true);
     const { data: propData } = await supabase.from('properties').select('*').eq('id', propertyId).single();
     setProperty(propData);
+    if(propData) {
+        setIsAutoSync(propData.auto_sync_enabled || false);
+        setIntervalSeconds(propData.auto_sync_interval || 3600);
+    }
 
     const { data: unitsData } = await supabase.from('units').select('*').eq('property_id', propertyId).order('name');
     setUnits(unitsData || []);
@@ -89,33 +93,14 @@ export const CalendarView: React.FC = () => {
       return;
     }
     
-    // Prevent multiple clicks if already syncing locally (fallback check)
     if (isSyncing) return;
 
     setIsSyncing(true);
     try {
       const resultMessage = await syncAvailability(oidMatch[1], property.id);
       await fetchAvailabilityForMonth();
-      
       const syncTime = new Date().toLocaleTimeString();
-      let alertMessage = '';
-      if (resultMessage === "First sync complete") {
-          alertMessage = "Pierwsza synchronizacja zakończona pomyślnie. Powiadomienia będą generowane od teraz.";
-          setLastSyncMessage(`OK (${syncTime}). Pierwsza synchronizacja.`);
-      } else {
-          const changesCountMatch = resultMessage.match(/Znaleziono (\d+)/);
-          const changesCount = changesCountMatch ? parseInt(changesCountMatch[1]) : 0;
-          
-          if (changesCount > 0) {
-            alertMessage = `Synchronizacja zakończona. Wykryto ${changesCount} nowych zmian.`;
-            setLastSyncMessage(`OK (${syncTime}). Wykryto ${changesCount} zmian.`);
-          } else {
-            alertMessage = `Synchronizacja zakończona. Brak nowych zmian.`;
-            setLastSyncMessage(`OK (${syncTime}). Brak nowych zmian.`);
-          }
-      }
-      // alert(alertMessage); // Optional: remove alert to be less intrusive on auto-sync
-
+      setLastSyncMessage(`OK (${syncTime}). ${resultMessage}`);
     } catch (err: any) {
       alert(`Błąd synchronizacji: ${err.message}`);
       setLastSyncMessage(`Błąd: ${err.message}`);
@@ -123,6 +108,22 @@ export const CalendarView: React.FC = () => {
       setIsSyncing(false);
     }
   };
+
+  // Update DB when toggling auto-sync
+  const toggleAutoSync = async () => {
+      const newState = !isAutoSync;
+      setIsAutoSync(newState);
+      if(propertyId) {
+          await supabase.from('properties').update({ auto_sync_enabled: newState }).eq('id', propertyId);
+      }
+  }
+
+  const changeInterval = async (val: number) => {
+      setIntervalSeconds(val);
+      if(propertyId) {
+          await supabase.from('properties').update({ auto_sync_interval: val }).eq('id', propertyId);
+      }
+  }
 
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -240,7 +241,7 @@ export const CalendarView: React.FC = () => {
                 </label>
                  <button
                     id="auto-sync-toggle"
-                    onClick={() => setIsAutoSync(!isAutoSync)}
+                    onClick={toggleAutoSync}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isAutoSync ? 'bg-green-600' : 'bg-slate-700'}`}
                 >
                     <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isAutoSync ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -251,7 +252,7 @@ export const CalendarView: React.FC = () => {
                  <input 
                     type="number" 
                     value={intervalSeconds}
-                    onChange={(e) => setIntervalSeconds(Number(e.target.value))}
+                    onChange={(e) => changeInterval(Number(e.target.value))}
                     disabled={!isAutoSync}
                     className="w-full bg-slate-800 border border-slate-700 rounded-md p-2 text-white text-sm outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
                  />

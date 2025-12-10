@@ -6,5 +6,4 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Wstawiony klucz publiczny
 export const VAPID_PUBLIC_KEY = 'BN2aUXcVI8Dtbf0-7cLLa10fztOAVVMX-gXrl6ddWfGTqferHXXXXau1WblUAE3_g9QfqUbRLdqbqsr42ARFwHs';

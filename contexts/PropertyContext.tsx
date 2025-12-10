@@ -34,7 +34,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     setLoading(true);
     setError(null);
     try {
-      // Usunięto filtrowanie po user_id, aby pobrać wszystkie obiekty (Współdzielona baza)
       const { data, error: dbError } = await supabase
         .from('properties')
         .select('*')
@@ -55,7 +54,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     const { data, error } = await supabase
       .from('notifications')
       .select('*')
-      .eq('user_id', user.id) // Powiadomienia pozostają prywatne
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false });
     
     if (error) {
@@ -83,7 +82,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       }
     );
     
-    // Initial fetch for logged in user on mount
     supabase.auth.getSession().then(({ data: { session } }) => {
         if(session) {
             setLoading(true);
@@ -93,7 +91,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             setLoading(false);
         }
     });
-
 
     return () => {
       authListener.subscription.unsubscribe();
@@ -117,7 +114,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   const deleteAllReadNotifications = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if(!user) return;
-    // Usuń wszystkie powiadomienia tego usera, które są przeczytane (is_read = true)
     const { error } = await supabase.from('notifications').delete().eq('user_id', user.id).eq('is_read', true);
     if (error) throw error;
     await fetchNotifications();
@@ -129,7 +125,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       await fetchNotifications();
   };
 
-
   const addProperty = async (name: string, description: string | null, email: string | null, phone: string | null): Promise<Property | null> => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Użytkownik nie jest zalogowany");
@@ -139,7 +134,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       .select()
       .single();
     if (insertError) throw insertError;
-    // Refresh to see if sorting or other user adds happened
     fetchProperties();
     return data;
   };
@@ -189,7 +183,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const facilityIds = (roomDetails.facilities || '').split(',').map((id: string) => id.trim()).filter(Boolean);
         const facilityNames = facilityIds.map((id: string) => facilitiesMap[id] || id).join(', ');
 
-
         const mergedUnitData = {
           property_id: propertyId,
           name: roomDetails.title || room.code || `Pokój ${room.room_id}`,
@@ -232,10 +225,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Brak użytkownika");
 
-      // 1. Check & Set Lock
+      // 1. Mutex Check
       const { data: propCheck } = await supabase.from('properties').select('name, availability_sync_in_progress, availability_last_synced_at').eq('id', propertyId).single();
       if (propCheck?.availability_sync_in_progress) {
-          throw new Error("Synchronizacja już trwa. Spróbuj za chwilę.");
+          throw new Error("Synchronizacja w toku. Spróbuj później.");
       }
       await supabase.from('properties').update({ availability_sync_in_progress: true }).eq('id', propertyId);
 
@@ -244,14 +237,15 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
           const { data: units, error: unitsError } = await supabase.from('units').select('id, name, external_type_id').eq('property_id', propertyId);
           if (unitsError) throw unitsError;
-          if (!units || units.length === 0) throw new Error("Brak kwater do synchronizacji.");
+          if (!units || units.length === 0) throw new Error("Brak kwater.");
 
           const typeIdToUnitMap = new Map<string, { id: string; name: string }>();
           units.forEach(unit => {
               if (unit.external_type_id) typeIdToUnitMap.set(unit.external_type_id, { id: unit.id, name: unit.name });
           });
 
-          const { data: currentAvailData, error: currentAvailError } = await supabase.from('availability').select('unit_id, date, status').in('unit_id', units.map(u => u.id));
+          // Fetch ALL existing availability (limit increased to avoid loops)
+          const { data: currentAvailData, error: currentAvailError } = await supabase.from('availability').select('unit_id, date, status').in('unit_id', units.map(u => u.id)).limit(10000);
           if (currentAvailError) throw currentAvailError;
           
           const currentAvailMap = new Map<string, 'available' | 'booked' | 'blocked'>();
@@ -259,14 +253,13 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
           
           const fromDate = '2026-01-01';
           const tillDate = '2026-12-31';
-          // Cache busting added
           const availUrl = `https://panel.hotres.pl/api_availability?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}&from=${fromDate}&till=${tillDate}&t=${Date.now()}`;
           const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(availUrl)}`;
           
           const response = await fetch(proxyUrl);
           if (!response.ok) throw new Error(`API Dostępności: ${response.status}`);
           const newAvailData = await response.json();
-          if (!Array.isArray(newAvailData)) throw new Error("API Dostępności: Zły format danych.");
+          if (!Array.isArray(newAvailData)) throw new Error("API Dostępności: Zły format.");
 
           const allChanges: { unitId: string, unitName: string, date: string, newStatus: 'available' | 'blocked' }[] = [];
           const recordsToUpsert: Omit<Availability, 'id' | 'reservation_id'>[] = [];
@@ -278,24 +271,24 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                       const newStatus = dateInfo.available === "1" ? 'available' : 'blocked';
                       recordsToUpsert.push({ unit_id: unit.id, date: dateInfo.date, status: newStatus });
 
-                      const oldStatus = currentAvailMap.get(`${unit.id}-${dateInfo.date}`) ?? 'available'; // Default to available if not in DB
+                      const oldStatus = currentAvailMap.get(`${unit.id}-${dateInfo.date}`);
                       
-                      // INTELLIGENT CHANGE DETECTION: Only log if status ACTUALLY changed
-                      if (oldStatus !== newStatus) {
-                          console.log(`Status change detected for unit ${unit.name} on ${dateInfo.date}: ${oldStatus} -> ${newStatus}`);
+                      // Notify only if record existed AND changed, OR if new booking appears on previously empty date
+                      // Assuming empty date = available
+                      const effectiveOldStatus = oldStatus || 'available';
+
+                      if (effectiveOldStatus !== newStatus) {
                           allChanges.push({ unitId: unit.id, unitName: unit.name, date: dateInfo.date, newStatus });
                       }
                   }
               }
           }
           
-          // Perform Upsert
           if (recordsToUpsert.length > 0) {
               const { error: upsertError } = await supabase.from('availability').upsert(recordsToUpsert, { onConflict: 'unit_id, date' });
               if (upsertError) throw upsertError;
           }
 
-          // Generate Notifications ONLY if NOT first sync and changes exist
           if (!isFirstSync && allChanges.length > 0) {
               const notificationsToInsert: Omit<Notification, 'id' | 'created_at' | 'is_read' | 'user_id'>[] = [];
               const changesByUnit = allChanges.reduce((acc, change) => {
@@ -326,7 +319,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
               if (notificationsToInsert.length > 0) {
                   const { error: notifError } = await supabase.from('notifications').insert(notificationsToInsert.map(n => ({...n, user_id: user.id })));
                   if (notifError) throw notifError;
-                  await fetchNotifications(); // Refresh notifications in context
+                  await fetchNotifications();
               }
           }
           
@@ -335,7 +328,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       } catch (e) {
           throw e;
       } finally {
-          // Release Lock & Update timestamp
           await supabase.from('properties').update({ availability_sync_in_progress: false, availability_last_synced_at: new Date().toISOString() }).eq('id', propertyId);
       }
   };

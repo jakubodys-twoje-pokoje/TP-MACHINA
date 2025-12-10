@@ -23,7 +23,7 @@ export const Sidebar: React.FC = () => {
 
     try {
       const description = modalMode === 'import' ? `Zaimportowano z Hotres OID: ${formData.oid}` : null;
-      const newProperty = await addProperty(formData.name, description);
+      const newProperty = await addProperty(formData.name, description, null, null);
       
       if (!newProperty) throw new Error("Nie udało się utworzyć obiektu");
 
@@ -34,7 +34,7 @@ export const Sidebar: React.FC = () => {
       setIsModalOpen(false);
       setFormData({ name: '', oid: '' });
       setModalMode('manual');
-      navigate(`/property/${newProperty.id}/units`); // Navigate to units after import
+      navigate(`/property/${newProperty.id}/units`);
 
     } catch (err: any) {
       alert(`Błąd: ${err.message}`);

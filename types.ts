@@ -4,12 +4,14 @@ export interface Property {
   name: string;
   description: string | null;
   address: string | null;
-  email: string | null; // Changed from contact_info
-  phone: string | null; // Changed from contact_info
+  email: string | null;
+  phone: string | null;
   maps_link?: string | null;
   amenities?: string | null;
   availability_last_synced_at?: string | null;
   availability_sync_in_progress?: boolean;
+  auto_sync_enabled?: boolean;
+  auto_sync_interval?: number;
   created_at: string;
 }
 

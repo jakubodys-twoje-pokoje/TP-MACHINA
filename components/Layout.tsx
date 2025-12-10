@@ -7,7 +7,6 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
-// Helper to convert VAPID key
 const urlBase64ToUint8Array = (base64String: string) => {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
   const base64 = (base64String + padding)
@@ -39,7 +38,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const handleEnablePush = async () => {
       if (!('serviceWorker' in navigator) || !window.PushManager) {
         if (!window.isSecureContext) {
-             alert("Powiadomienia Push wymagają bezpiecznego połączenia (HTTPS) lub działania na localhost.");
+             alert("Powiadomienia Push wymagają HTTPS lub localhost.");
         } else {
              alert("Twoja przeglądarka nie obsługuje powiadomień Push.");
         }
@@ -65,23 +64,20 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
               alert("Powiadomienia zostały włączone!");
             }
         } else {
-            alert("Brak zgody na powiadomienia. Zmień ustawienia przeglądarki, jeśli chcesz je włączyć.");
+            alert("Brak zgody na powiadomienia.");
         }
       } catch (e: any) {
         console.error(e);
-        alert("Błąd podczas włączania powiadomień: " + e.message);
+        alert("Błąd: " + e.message);
       }
   };
 
   return (
     <div className="flex h-screen w-full bg-background text-slate-100 overflow-hidden font-sans">
-      {/* Sidebar */}
       <div className="w-64 flex-shrink-0 border-r border-border bg-surface flex flex-col justify-between">
         <div className="flex-1 overflow-y-auto">
             <Sidebar />
         </div>
-        
-        {/* User Footer */}
         <div className="p-4 border-t border-border bg-slate-900/50 space-y-2">
           <button 
             onClick={handleEnablePush}
@@ -104,7 +100,6 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         </div>
       </div>
 
-      {/* Main Content */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
         <main className="flex-1 overflow-y-auto py-16 px-6 sm:px-8 mt-4">
             <div className="max-w-6xl mx-auto">
