@@ -10,7 +10,7 @@ interface PropertyContextType {
   loading: boolean;
   error: string | null;
   fetchProperties: () => Promise<void>;
-  addProperty: (name: string, description: string | null) => Promise<Property | null>;
+  addProperty: (name: string, description: string | null, email: string | null, phone: string | null) => Promise<Property | null>;
   deleteProperty: (id: string) => Promise<void>;
   importFromHotres: (oid: string, propertyId: string) => Promise<void>;
   syncAvailability: (oid: string, propertyId: string) => Promise<string>;
@@ -130,12 +130,12 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   };
 
 
-  const addProperty = async (name: string, description: string | null): Promise<Property | null> => {
+  const addProperty = async (name: string, description: string | null, email: string | null, phone: string | null): Promise<Property | null> => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Użytkownik nie jest zalogowany");
     const { data, error: insertError } = await supabase
       .from('properties')
-      .insert([{ name, description, user_id: user.id }])
+      .insert([{ name, description, email, phone, user_id: user.id }])
       .select()
       .single();
     if (insertError) throw insertError;
@@ -282,6 +282,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                       
                       // INTELLIGENT CHANGE DETECTION: Only log if status ACTUALLY changed
                       if (oldStatus !== newStatus) {
+                          console.log(`Status change detected for unit ${unit.name} on ${dateInfo.date}: ${oldStatus} -> ${newStatus}`);
                           allChanges.push({ unitId: unit.id, unitName: unit.name, date: dateInfo.date, newStatus });
                       }
                   }
