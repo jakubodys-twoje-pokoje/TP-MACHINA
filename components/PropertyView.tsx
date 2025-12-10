@@ -68,7 +68,8 @@ export const PropertyView: React.FC = () => {
           name: property.name,
           address: property.address,
           description: property.description,
-          contact_info: property.contact_info,
+          email: property.email, // Updated field
+          phone: property.phone, // Updated field
           maps_link: property.maps_link,
           amenities: property.amenities,
         })
@@ -136,15 +137,27 @@ export const PropertyView: React.FC = () => {
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-400 mb-1">Dane kontaktowe</label>
-            <input
-              type="text"
-              value={property.contact_info || ''}
-              onChange={(e) => setProperty({...property, contact_info: e.target.value})}
-              placeholder="Telefon, Email dla gości"
-              className="w-full bg-slate-900 border border-border text-white rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none"
-            />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">Email kontaktowy</label>
+              <input
+                type="email"
+                value={property.email || ''}
+                onChange={(e) => setProperty({...property, email: e.target.value})}
+                placeholder="email@example.com"
+                className="w-full bg-slate-900 border border-border text-white rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">Numer telefonu</label>
+              <input
+                type="tel"
+                value={property.phone || ''}
+                onChange={(e) => setProperty({...property, phone: e.target.value})}
+                placeholder="+48 123 456 789"
+                className="w-full bg-slate-900 border border-border text-white rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+            </div>
           </div>
           
           <div>

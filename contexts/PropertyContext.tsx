@@ -17,6 +17,7 @@ interface PropertyContextType {
   fetchNotifications: () => Promise<void>;
   markNotificationAsRead: (id: string) => Promise<void>;
   markAllNotificationsAsRead: () => Promise<void>;
+  deleteAllReadNotifications: () => Promise<void>;
   deleteNotification: (id: string) => Promise<void>;
 }
 
@@ -109,6 +110,15 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     const { data: { user } } = await supabase.auth.getUser();
     if(!user) return;
     const { error } = await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('is_read', false);
+    if (error) throw error;
+    await fetchNotifications();
+  };
+
+  const deleteAllReadNotifications = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if(!user) return;
+    // Usuń wszystkie powiadomienia tego usera, które są przeczytane (is_read = true)
+    const { error } = await supabase.from('notifications').delete().eq('user_id', user.id).eq('is_read', true);
     if (error) throw error;
     await fetchNotifications();
   };
@@ -343,6 +353,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     fetchNotifications,
     markNotificationAsRead,
     markAllNotificationsAsRead,
+    deleteAllReadNotifications,
     deleteNotification
   };
 

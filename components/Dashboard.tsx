@@ -49,7 +49,7 @@ const NotificationItem: React.FC<{ notification: Notification; onMarkRead: (id: 
 
 
 export const Dashboard: React.FC = () => {
-  const { notifications, loading, markNotificationAsRead, markAllNotificationsAsRead, deleteNotification } = useProperties();
+  const { notifications, loading, markNotificationAsRead, markAllNotificationsAsRead, deleteAllReadNotifications, deleteNotification } = useProperties();
 
   const unreadNotifications = notifications.filter(n => !n.is_read);
   const readNotifications = notifications.filter(n => n.is_read).slice(0, 20); // Show last 20 read
@@ -94,7 +94,15 @@ export const Dashboard: React.FC = () => {
           {/* Read Notifications */}
           {readNotifications.length > 0 && (
             <section>
-              <h3 className="text-lg font-bold text-white mb-4">Ostatnio odczytane</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-bold text-white">Ostatnio odczytane</h3>
+                <button 
+                  onClick={deleteAllReadNotifications}
+                  className="text-sm flex items-center gap-2 px-3 py-1.5 text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
+                >
+                  <Trash2 size={16} /> Usuń wszystkie przeczytane
+                </button>
+              </div>
                <div className="space-y-3 opacity-60">
                 {readNotifications.map(n => <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onDelete={deleteNotification} />)}
               </div>

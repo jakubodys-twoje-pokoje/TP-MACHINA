@@ -4,7 +4,8 @@ export interface Property {
   name: string;
   description: string | null;
   address: string | null;
-  contact_info: string | null;
+  email: string | null; // Changed from contact_info
+  phone: string | null; // Changed from contact_info
   maps_link?: string | null;
   amenities?: string | null;
   availability_last_synced_at?: string | null;
