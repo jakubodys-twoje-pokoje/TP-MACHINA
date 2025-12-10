@@ -46,8 +46,6 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         return;
       }
       
-      // FIX: Removed a check for a placeholder VAPID key which caused a TypeScript error.
-      // The hardcoded key constant made the comparison against a placeholder string redundant and invalid.
       try {
         const permission = await Notification.requestPermission();
         if (permission === 'granted') {
@@ -108,7 +106,7 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-        <main className="flex-1 overflow-y-auto py-12 px-6 sm:px-8">
+        <main className="flex-1 overflow-y-auto py-16 px-6 sm:px-8 mt-4">
             <div className="max-w-6xl mx-auto">
                 {children}
             </div>

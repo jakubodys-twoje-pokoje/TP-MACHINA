@@ -33,7 +33,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     setLoading(true);
     setError(null);
     try {
-      // Usunięto filtrowanie po user_id, aby pobrać wszystkie obiekty
+      // Usunięto filtrowanie po user_id, aby pobrać wszystkie obiekty (Współdzielona baza)
       const { data, error: dbError } = await supabase
         .from('properties')
         .select('*')
@@ -129,7 +129,8 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       .select()
       .single();
     if (insertError) throw insertError;
-    setProperties(prev => [data, ...prev]);
+    // Refresh to see if sorting or other user adds happened
+    fetchProperties();
     return data;
   };
 
@@ -221,108 +222,111 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Brak użytkownika");
 
-      const { data: property, error: propError } = await supabase.from('properties').select('id, name, availability_last_synced_at').eq('id', propertyId).single();
-      if (propError || !property) throw new Error("Nie znaleziono obiektu");
-      
-      const isFirstSync = !property.availability_last_synced_at;
+      // 1. Check & Set Lock
+      const { data: propCheck } = await supabase.from('properties').select('name, availability_sync_in_progress, availability_last_synced_at').eq('id', propertyId).single();
+      if (propCheck?.availability_sync_in_progress) {
+          throw new Error("Synchronizacja już trwa. Spróbuj za chwilę.");
+      }
+      await supabase.from('properties').update({ availability_sync_in_progress: true }).eq('id', propertyId);
 
-      const { data: units, error: unitsError } = await supabase.from('units').select('id, name, external_type_id').eq('property_id', propertyId);
-      if (unitsError) throw unitsError;
-      if (!units || units.length === 0) throw new Error("Brak kwater do synchronizacji.");
+      try {
+          const isFirstSync = !propCheck?.availability_last_synced_at;
 
-      const typeIdToUnitMap = new Map<string, { id: string; name: string }>();
-      units.forEach(unit => {
-          if (unit.external_type_id) typeIdToUnitMap.set(unit.external_type_id, { id: unit.id, name: unit.name });
-      });
+          const { data: units, error: unitsError } = await supabase.from('units').select('id, name, external_type_id').eq('property_id', propertyId);
+          if (unitsError) throw unitsError;
+          if (!units || units.length === 0) throw new Error("Brak kwater do synchronizacji.");
 
-      const { data: currentAvailData, error: currentAvailError } = await supabase.from('availability').select('unit_id, date, status').in('unit_id', units.map(u => u.id));
-      if (currentAvailError) throw currentAvailError;
-      
-      const currentAvailMap = new Map<string, 'available' | 'booked' | 'blocked'>();
-      currentAvailData?.forEach(a => currentAvailMap.set(`${a.unit_id}-${a.date}`, a.status as any));
-      
-      const fromDate = '2026-01-01';
-      const tillDate = '2026-12-31';
-      const availUrl = `https://panel.hotres.pl/api_availability?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}&from=${fromDate}&till=${tillDate}&t=${Date.now()}`;
-      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(availUrl)}`;
-      
-      const response = await fetch(proxyUrl);
-      if (!response.ok) throw new Error(`API Dostępności: ${response.status}`);
-      const newAvailData = await response.json();
-      if (!Array.isArray(newAvailData)) throw new Error("API Dostępności: Zły format danych.");
+          const typeIdToUnitMap = new Map<string, { id: string; name: string }>();
+          units.forEach(unit => {
+              if (unit.external_type_id) typeIdToUnitMap.set(unit.external_type_id, { id: unit.id, name: unit.name });
+          });
 
-      const allChanges: { unitId: string, unitName: string, date: string, newStatus: 'available' | 'blocked' }[] = [];
-      const recordsToUpsert: Omit<Availability, 'id' | 'reservation_id'>[] = [];
+          const { data: currentAvailData, error: currentAvailError } = await supabase.from('availability').select('unit_id, date, status').in('unit_id', units.map(u => u.id));
+          if (currentAvailError) throw currentAvailError;
+          
+          const currentAvailMap = new Map<string, 'available' | 'booked' | 'blocked'>();
+          currentAvailData?.forEach(a => currentAvailMap.set(`${a.unit_id}-${a.date}`, a.status as any));
+          
+          const fromDate = '2026-01-01';
+          const tillDate = '2026-12-31';
+          // Cache busting added
+          const availUrl = `https://panel.hotres.pl/api_availability?user=admin%40twojepokoje.com.pl&password=Admin123%40%40&oid=${oid}&from=${fromDate}&till=${tillDate}&t=${Date.now()}`;
+          const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(availUrl)}`;
+          
+          const response = await fetch(proxyUrl);
+          if (!response.ok) throw new Error(`API Dostępności: ${response.status}`);
+          const newAvailData = await response.json();
+          if (!Array.isArray(newAvailData)) throw new Error("API Dostępności: Zły format danych.");
 
-      for (const typeData of newAvailData) {
-          const unit = typeIdToUnitMap.get(String(typeData.type_id));
-          if (unit && typeData.dates && Array.isArray(typeData.dates)) {
-              for (const dateInfo of typeData.dates) {
-                  const newStatus = dateInfo.available === "1" ? 'available' : 'blocked';
-                  recordsToUpsert.push({ unit_id: unit.id, date: dateInfo.date, status: newStatus });
+          const allChanges: { unitId: string, unitName: string, date: string, newStatus: 'available' | 'blocked' }[] = [];
+          const recordsToUpsert: Omit<Availability, 'id' | 'reservation_id'>[] = [];
 
-                  const oldStatus = currentAvailMap.get(`${unit.id}-${dateInfo.date}`) ?? 'available';
-                  
-                  if (oldStatus !== newStatus) {
-                      allChanges.push({ unitId: unit.id, unitName: unit.name, date: dateInfo.date, newStatus });
+          for (const typeData of newAvailData) {
+              const unit = typeIdToUnitMap.get(String(typeData.type_id));
+              if (unit && typeData.dates && Array.isArray(typeData.dates)) {
+                  for (const dateInfo of typeData.dates) {
+                      const newStatus = dateInfo.available === "1" ? 'available' : 'blocked';
+                      recordsToUpsert.push({ unit_id: unit.id, date: dateInfo.date, status: newStatus });
+
+                      const oldStatus = currentAvailMap.get(`${unit.id}-${dateInfo.date}`) ?? 'available'; // Default to available if not in DB
+                      
+                      // INTELLIGENT CHANGE DETECTION: Only log if status ACTUALLY changed
+                      if (oldStatus !== newStatus) {
+                          allChanges.push({ unitId: unit.id, unitName: unit.name, date: dateInfo.date, newStatus });
+                      }
                   }
               }
           }
-      }
-      
-      // If it's the first sync, don't generate notifications to avoid spam.
-      if (isFirstSync && allChanges.length > 0) {
-        if (recordsToUpsert.length > 0) {
-            const { error: upsertError } = await supabase.from('availability').upsert(recordsToUpsert, { onConflict: 'unit_id, date' });
-            if (upsertError) throw upsertError;
-        }
-        const { error: updatePropError } = await supabase.from('properties').update({ availability_last_synced_at: new Date().toISOString() }).eq('id', propertyId);
-        if (updatePropError) throw updatePropError;
-        return "First sync complete";
-      }
+          
+          // Perform Upsert
+          if (recordsToUpsert.length > 0) {
+              const { error: upsertError } = await supabase.from('availability').upsert(recordsToUpsert, { onConflict: 'unit_id, date' });
+              if (upsertError) throw upsertError;
+          }
 
+          // Generate Notifications ONLY if NOT first sync and changes exist
+          if (!isFirstSync && allChanges.length > 0) {
+              const notificationsToInsert: Omit<Notification, 'id' | 'created_at' | 'is_read' | 'user_id'>[] = [];
+              const changesByUnit = allChanges.reduce((acc, change) => {
+                  (acc[change.unitId] = acc[change.unitId] || []).push(change);
+                  return acc;
+              }, {} as Record<string, typeof allChanges>);
 
-      const notificationsToInsert: Omit<Notification, 'id' | 'created_at' | 'is_read' | 'user_id'>[] = [];
-      const changesByUnit = allChanges.reduce((acc, change) => {
-          (acc[change.unitId] = acc[change.unitId] || []).push(change);
-          return acc;
-      }, {} as Record<string, typeof allChanges>);
+              for (const unitId in changesByUnit) {
+                  const unitChanges = changesByUnit[unitId].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+                  if (unitChanges.length === 0) continue;
 
-      for (const unitId in changesByUnit) {
-          const unitChanges = changesByUnit[unitId].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-          if (unitChanges.length === 0) continue;
+                  let group = { change_type: unitChanges[0].newStatus, start_date: unitChanges[0].date, end_date: unitChanges[0].date };
+                  for (let i = 1; i < unitChanges.length; i++) {
+                      const prevDate = new Date(unitChanges[i - 1].date);
+                      const currentDate = new Date(unitChanges[i].date);
+                      const diffDays = (currentDate.getTime() - prevDate.getTime()) / (1000 * 3600 * 24);
 
-          let group = { change_type: unitChanges[0].newStatus, start_date: unitChanges[0].date, end_date: unitChanges[0].date };
-          for (let i = 1; i < unitChanges.length; i++) {
-              const prevDate = new Date(unitChanges[i - 1].date);
-              const currentDate = new Date(unitChanges[i].date);
-              const diffDays = (currentDate.getTime() - prevDate.getTime()) / (1000 * 3600 * 24);
+                      if (unitChanges[i].newStatus === group.change_type && diffDays === 1) {
+                          group.end_date = unitChanges[i].date;
+                      } else {
+                          notificationsToInsert.push({ property_id: propertyId, property_name: propCheck?.name || 'Obiekt', unit_id: unitId, unit_name: unitChanges[0].unitName, ...group });
+                          group = { change_type: unitChanges[i].newStatus, start_date: unitChanges[i].date, end_date: unitChanges[i].date };
+                      }
+                  }
+                  notificationsToInsert.push({ property_id: propertyId, property_name: propCheck?.name || 'Obiekt', unit_id: unitId, unit_name: unitChanges[0].unitName, ...group });
+              }
 
-              if (unitChanges[i].newStatus === group.change_type && diffDays === 1) {
-                  group.end_date = unitChanges[i].date;
-              } else {
-                  notificationsToInsert.push({ property_id: propertyId, property_name: property.name, unit_id: unitId, unit_name: unitChanges[0].unitName, ...group });
-                  group = { change_type: unitChanges[i].newStatus, start_date: unitChanges[i].date, end_date: unitChanges[i].date };
+              if (notificationsToInsert.length > 0) {
+                  const { error: notifError } = await supabase.from('notifications').insert(notificationsToInsert.map(n => ({...n, user_id: user.id })));
+                  if (notifError) throw notifError;
+                  await fetchNotifications(); // Refresh notifications in context
               }
           }
-          notificationsToInsert.push({ property_id: propertyId, property_name: property.name, unit_id: unitId, unit_name: unitChanges[0].unitName, ...group });
-      }
+          
+          return isFirstSync ? "First sync complete" : `Znaleziono ${allChanges.length} zmian.`;
 
-      if (recordsToUpsert.length > 0) {
-          const { error: upsertError } = await supabase.from('availability').upsert(recordsToUpsert, { onConflict: 'unit_id, date' });
-          if (upsertError) throw upsertError;
+      } catch (e) {
+          throw e;
+      } finally {
+          // Release Lock & Update timestamp
+          await supabase.from('properties').update({ availability_sync_in_progress: false, availability_last_synced_at: new Date().toISOString() }).eq('id', propertyId);
       }
-      
-      const { error: updatePropError } = await supabase.from('properties').update({ availability_last_synced_at: new Date().toISOString() }).eq('id', propertyId);
-      if (updatePropError) throw updatePropError;
-
-      if (notificationsToInsert.length > 0) {
-          const { error: notifError } = await supabase.from('notifications').insert(notificationsToInsert.map(n => ({...n, user_id: user.id })));
-          if (notifError) throw notifError;
-          await fetchNotifications();
-      }
-      
-      return `Found ${notificationsToInsert.length} changes`;
   };
 
   const value = {

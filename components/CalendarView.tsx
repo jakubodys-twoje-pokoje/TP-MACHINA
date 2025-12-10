@@ -89,6 +89,9 @@ export const CalendarView: React.FC = () => {
       return;
     }
     
+    // Prevent multiple clicks if already syncing locally (fallback check)
+    if (isSyncing) return;
+
     setIsSyncing(true);
     try {
       const resultMessage = await syncAvailability(oidMatch[1], property.id);
@@ -100,7 +103,9 @@ export const CalendarView: React.FC = () => {
           alertMessage = "Pierwsza synchronizacja zakończona pomyślnie. Powiadomienia będą generowane od teraz.";
           setLastSyncMessage(`OK (${syncTime}). Pierwsza synchronizacja.`);
       } else {
-          const changesCount = parseInt(resultMessage.split(' ')[1]) || 0;
+          const changesCountMatch = resultMessage.match(/Znaleziono (\d+)/);
+          const changesCount = changesCountMatch ? parseInt(changesCountMatch[1]) : 0;
+          
           if (changesCount > 0) {
             alertMessage = `Synchronizacja zakończona. Wykryto ${changesCount} nowych zmian.`;
             setLastSyncMessage(`OK (${syncTime}). Wykryto ${changesCount} zmian.`);
@@ -109,7 +114,7 @@ export const CalendarView: React.FC = () => {
             setLastSyncMessage(`OK (${syncTime}). Brak nowych zmian.`);
           }
       }
-      alert(alertMessage);
+      // alert(alertMessage); // Optional: remove alert to be less intrusive on auto-sync
 
     } catch (err: any) {
       alert(`Błąd synchronizacji: ${err.message}`);

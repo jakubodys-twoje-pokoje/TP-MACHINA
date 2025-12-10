@@ -34,8 +34,6 @@ const App: React.FC = () => {
   const subscribeToPush = async (userId: string) => {
     if (!('serviceWorker' in navigator) || !window.PushManager) return;
     
-    // FIX: Removed a check for a placeholder VAPID key which caused a TypeScript error.
-    // The hardcoded key constant made the comparison against a placeholder string redundant and invalid.
     try {
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.subscribe({

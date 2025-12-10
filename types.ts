@@ -8,6 +8,7 @@ export interface Property {
   maps_link?: string | null;
   amenities?: string | null;
   availability_last_synced_at?: string | null;
+  availability_sync_in_progress?: boolean;
   created_at: string;
 }
 
