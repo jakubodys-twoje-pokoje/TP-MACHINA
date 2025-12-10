@@ -30,17 +30,13 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [error, setError] = useState<string | null>(null);
 
   const fetchProperties = async () => {
+    setLoading(true);
     setError(null);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        setProperties([]);
-        return;
-      }
+      // Usunięto filtrowanie po user_id, aby pobrać wszystkie obiekty
       const { data, error: dbError } = await supabase
         .from('properties')
         .select('*')
-        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
       if (dbError) throw dbError;
       setProperties(data || []);
@@ -52,9 +48,13 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   };
 
   const fetchNotifications = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if(!user) return;
+
     const { data, error } = await supabase
       .from('notifications')
       .select('*')
+      .eq('user_id', user.id) // Powiadomienia pozostają prywatne
       .order('created_at', { ascending: false });
     
     if (error) {
@@ -67,18 +67,33 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   };
   
   useEffect(() => {
-    fetchProperties();
-    fetchNotifications();
-
     const { data: authListener } = supabase.auth.onAuthStateChange(
-      (event) => {
-        if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
+      (event, session) => {
+        if (event === 'SIGNED_IN') {
            setLoading(true);
            fetchProperties();
            fetchNotifications();
         }
+        if (event === 'SIGNED_OUT') {
+           setProperties([]);
+           setNotifications([]);
+           setUnreadCount(0);
+        }
       }
     );
+    
+    // Initial fetch for logged in user on mount
+    supabase.auth.getSession().then(({ data: { session } }) => {
+        if(session) {
+            setLoading(true);
+            fetchProperties();
+            fetchNotifications();
+        } else {
+            setLoading(false);
+        }
+    });
+
+
     return () => {
       authListener.subscription.unsubscribe();
     };
@@ -248,12 +263,24 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
                   const oldStatus = currentAvailMap.get(`${unit.id}-${dateInfo.date}`) ?? 'available';
                   
-                  if (!isFirstSync && oldStatus !== newStatus) {
+                  if (oldStatus !== newStatus) {
                       allChanges.push({ unitId: unit.id, unitName: unit.name, date: dateInfo.date, newStatus });
                   }
               }
           }
       }
+      
+      // If it's the first sync, don't generate notifications to avoid spam.
+      if (isFirstSync && allChanges.length > 0) {
+        if (recordsToUpsert.length > 0) {
+            const { error: upsertError } = await supabase.from('availability').upsert(recordsToUpsert, { onConflict: 'unit_id, date' });
+            if (upsertError) throw upsertError;
+        }
+        const { error: updatePropError } = await supabase.from('properties').update({ availability_last_synced_at: new Date().toISOString() }).eq('id', propertyId);
+        if (updatePropError) throw updatePropError;
+        return "First sync complete";
+      }
+
 
       const notificationsToInsert: Omit<Notification, 'id' | 'created_at' | 'is_read' | 'user_id'>[] = [];
       const changesByUnit = allChanges.reduce((acc, change) => {
@@ -286,7 +313,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
           if (upsertError) throw upsertError;
       }
       
-      // Update sync timestamp
       const { error: updatePropError } = await supabase.from('properties').update({ availability_last_synced_at: new Date().toISOString() }).eq('id', propertyId);
       if (updatePropError) throw updatePropError;
 
@@ -296,7 +322,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
           await fetchNotifications();
       }
       
-      if(isFirstSync) return "First sync complete";
       return `Found ${notificationsToInsert.length} changes`;
   };
 

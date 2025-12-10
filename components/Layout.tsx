@@ -46,11 +46,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         return;
       }
       
-      if (VAPID_PUBLIC_KEY === 'YOUR_VAPID_PUBLIC_KEY_HERE') {
-        alert("Błąd konfiguracji: Brak klucza VAPID. Skonfiguruj go w pliku services/supabaseClient.ts");
-        return;
-      }
-
+      // FIX: Removed a check for a placeholder VAPID key which caused a TypeScript error.
+      // The hardcoded key constant made the comparison against a placeholder string redundant and invalid.
       try {
         const permission = await Notification.requestPermission();
         if (permission === 'granted') {

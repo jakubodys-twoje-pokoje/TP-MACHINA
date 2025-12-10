@@ -34,11 +34,8 @@ const App: React.FC = () => {
   const subscribeToPush = async (userId: string) => {
     if (!('serviceWorker' in navigator) || !window.PushManager) return;
     
-    if (VAPID_PUBLIC_KEY === 'YOUR_VAPID_PUBLIC_KEY_HERE') {
-        console.warn("Klucz VAPID nie jest skonfigurowany. Pomijam subskrypcję push.");
-        return;
-    }
-
+    // FIX: Removed a check for a placeholder VAPID key which caused a TypeScript error.
+    // The hardcoded key constant made the comparison against a placeholder string redundant and invalid.
     try {
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.subscribe({

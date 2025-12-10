@@ -1,6 +1,5 @@
-// FIX: The referenced type definition file could not be found because the URL was outdated.
-// This was replaced with the stable, version-less URL for Supabase Edge Functions, which resolves the 'Cannot find name Deno' errors.
-/// <reference types="https://esm.sh/@supabase/functions-js/src/edge-runtime.d.ts" />
+// FIX: Corrected the Supabase Edge Functions type reference URL to resolve 'Cannot find name Deno' errors.
+/// <reference types="https://esm.sh/@supabase/functions-js/edge-runtime.d.ts" />
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1'
