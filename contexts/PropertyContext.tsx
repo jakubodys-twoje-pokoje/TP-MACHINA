@@ -240,54 +240,38 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     await supabase.from('properties').update({ availability_sync_in_progress: true }).eq('id', propertyId);
 
     try {
-        // Oblicz zakres dat: od dziś do końca przyszłego roku (bezpieczny zakres)
-        const today = new Date().toISOString().split('T')[0];
-        const nextYear = new Date();
-        nextYear.setFullYear(nextYear.getFullYear() + 1);
-        const tillDate = nextYear.toISOString().split('T')[0];
-
-        // Dane uwierzytelniające
         const apiUser = "admin@twojepokoje.com.pl";
         const apiPass = "Admin123@@";
 
-        // Nowy URL API JSON
-        // Używamy encodeURIComponent dla parametrów, aby znaki specjalne (jak @ w haśle) nie psuły URL
-        const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${today}&till=${tillDate}`;
+        // TWARDA DATA: Cały rok 2026 (dokładnie 365 dni)
+        const fromDate = '2026-01-01';
+        const tillDate = '2026-12-31';
+
+        const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`;
         
-        // Pobieramy surowy tekst przez proxy
+        console.log(`Fetching availability for fixed range: ${fromDate} to ${tillDate}`);
+
         const rawResponse = await fetchWithProxy(targetUrl);
-        
-        // Czyszczenie odpowiedzi (usuwanie BOM, białych znaków)
         const jsonText = rawResponse.trim().replace(/^\uFEFF/, '');
         
-        console.log("Hotres Raw Response:", jsonText.substring(0, 500) + "..."); // Log for debugging
-
         let jsonData: any;
         try {
             jsonData = JSON.parse(jsonText);
         } catch (e) {
-            console.error("Failed to parse JSON", jsonText);
-            throw new Error("Otrzymano nieprawidłowy format danych (błąd parsowania JSON).");
+            console.error("JSON Parse Error", jsonText);
+            throw new Error("Błąd parsowania JSON z Hotres.");
         }
 
-        // Walidacja struktury
         if (!Array.isArray(jsonData)) {
-            // Obsługa błędu zwróconego jako obiekt JSON
-            if (jsonData && typeof jsonData === 'object') {
-                if ('error' in jsonData) {
-                     throw new Error(`Hotres API Error: ${jsonData.error}`);
-                }
-                // Jeśli to obiekt ale nie ma pola error, spróbujmy przekonwertować go na tablicę (czasami PHP tak zwraca tablice)
-                const values = Object.values(jsonData);
-                if (values.length > 0 && typeof values[0] === 'object') {
-                    console.log("Converted object to array automatically");
-                    jsonData = values;
-                } else {
-                     console.error("Hotres Unexpected Object:", jsonData);
-                     throw new Error(`Otrzymano obiekt zamiast tablicy: ${JSON.stringify(jsonData).substring(0, 100)}...`);
-                }
+            if (jsonData && typeof jsonData === 'object' && 'error' in jsonData) {
+                throw new Error(`Hotres API Error: ${jsonData.error}`);
+            }
+            // Try object conversion
+            const values = Object.values(jsonData);
+            if (values.length > 0 && typeof values[0] === 'object') {
+                jsonData = values;
             } else {
-                throw new Error("Otrzymano nieprawidłową strukturę danych (nie jest tablicą ani obiektem).");
+                throw new Error(`Zły format danych (nie jest tablicą)`);
             }
         }
 
@@ -323,11 +307,13 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             const datesToFree: string[] = [];
             
             // Pobierz aktualny stan dla tego unitu z bazy, aby zrobić diff
+            // Pobieramy tylko dla analizowanego okresu (2026)
             const { data: currentDbAvailability } = await supabase
                 .from('availability')
                 .select('date, status')
                 .eq('unit_id', unit.id)
-                .gte('date', today);
+                .gte('date', fromDate)
+                .lte('date', tillDate);
             
             const currentDbMap = new Map<string, string>(); 
             currentDbAvailability?.forEach(row => currentDbMap.set(row.date, row.status));
@@ -419,7 +405,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             availability_sync_in_progress: false
         }).eq('id', propertyId);
 
-        return `Zaktualizowano (JSON). Wykryto zmian: ${changesCount}.`;
+        return `Zaktualizowano 2026. Wykryto zmian: ${changesCount}.`;
 
     } catch (e: any) {
         await supabase.from('properties').update({ availability_sync_in_progress: false }).eq('id', propertyId);
