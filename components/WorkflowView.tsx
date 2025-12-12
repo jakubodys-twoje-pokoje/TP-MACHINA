@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { useProperties } from '../contexts/PropertyContext';
 import { WorkflowTask, WorkflowStatus, WorkflowEntry } from '../types';
-import { Plus, X, Loader2, Save, Trash2, Settings, MessageSquare } from 'lucide-react';
+import { Plus, X, Loader2, Save, Trash2, Settings, MessageSquare, RefreshCw } from 'lucide-react';
 
 const COLORS = [
   { label: 'Szary', class: 'bg-slate-600' },
@@ -38,7 +38,44 @@ export const WorkflowView: React.FC = () => {
 
   useEffect(() => {
     fetchWorkflowData();
+
+    // Realtime Subscriptions
+    const channels = supabase.channel('workflow-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => {
+          fetchTasks();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => {
+          fetchStatuses();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, (payload) => {
+          handleEntryRealtime(payload);
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channels);
+    };
   }, []);
+
+  const fetchTasks = async () => {
+      const { data } = await supabase.from('workflow_tasks').select('*').order('created_at', { ascending: true });
+      if (data) setTasks(data);
+  }
+
+  const fetchStatuses = async () => {
+      const { data } = await supabase.from('workflow_statuses').select('*').order('created_at', { ascending: true });
+      if (data) setStatuses(data);
+  }
+
+  const handleEntryRealtime = (payload: any) => {
+      if (payload.eventType === 'INSERT') {
+          setEntries(prev => [...prev, payload.new]);
+      } else if (payload.eventType === 'UPDATE') {
+          setEntries(prev => prev.map(e => e.id === payload.new.id ? payload.new : e));
+      } else if (payload.eventType === 'DELETE') {
+          setEntries(prev => prev.filter(e => e.id !== payload.old.id));
+      }
+  }
 
   const fetchWorkflowData = async () => {
     setLoading(true);
@@ -73,13 +110,13 @@ export const WorkflowView: React.FC = () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const { data, error } = await supabase.from('workflow_tasks').insert({
+    // Insert only. Realtime will update the UI.
+    const { error } = await supabase.from('workflow_tasks').insert({
       title: newTaskTitle,
       user_id: user.id
-    }).select().single();
+    });
 
-    if (!error && data) {
-      setTasks([...tasks, data]);
+    if (!error) {
       setNewTaskTitle('');
       setIsTaskModalOpen(false);
     }
@@ -87,8 +124,8 @@ export const WorkflowView: React.FC = () => {
 
   const handleDeleteTask = async (id: string) => {
     if (!confirm("Usunąć to zadanie (kolumnę)? Wszystkie wpisy w niej zostaną usunięte.")) return;
-    const { error } = await supabase.from('workflow_tasks').delete().eq('id', id);
-    if (!error) setTasks(tasks.filter(t => t.id !== id));
+    await supabase.from('workflow_tasks').delete().eq('id', id);
+    // UI update handled by realtime
   };
 
   const handleAddStatus = async () => {
@@ -96,22 +133,20 @@ export const WorkflowView: React.FC = () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const { data, error } = await supabase.from('workflow_statuses').insert({
+    const { error } = await supabase.from('workflow_statuses').insert({
       label: newStatus.label,
       color: newStatus.color,
       user_id: user.id
-    }).select().single();
+    });
 
-    if (!error && data) {
-      setStatuses([...statuses, data]);
+    if (!error) {
       setNewStatus({ label: '', color: 'bg-slate-600' });
     }
   };
 
   const handleDeleteStatus = async (id: string) => {
     if (!confirm("Usunąć ten status?")) return;
-    const { error } = await supabase.from('workflow_statuses').delete().eq('id', id);
-    if (!error) setStatuses(statuses.filter(s => s.id !== id));
+    await supabase.from('workflow_statuses').delete().eq('id', id);
   };
 
   const handleAddProperty = async () => {
@@ -145,28 +180,21 @@ export const WorkflowView: React.FC = () => {
     
     if (existing) {
       // Update
-      const { data, error } = await supabase.from('workflow_entries').update({
+      await supabase.from('workflow_entries').update({
         status_id: cellForm.statusId || null,
         comment: cellForm.comment,
         updated_at: new Date().toISOString()
-      }).eq('id', existing.id).select().single();
-
-      if (!error && data) {
-        setEntries(entries.map(e => e.id === data.id ? data : e));
-      }
+      }).eq('id', existing.id);
     } else {
       // Create
-      const { data, error } = await supabase.from('workflow_entries').insert({
+      await supabase.from('workflow_entries').insert({
         property_id: selectedCell.propId,
         task_id: selectedCell.taskId,
         status_id: cellForm.statusId || null,
         comment: cellForm.comment
-      }).select().single();
-
-      if (!error && data) {
-        setEntries([...entries, data]);
-      }
+      });
     }
+    // UI updated via realtime
     setIsCellModalOpen(false);
   };
 
@@ -181,20 +209,22 @@ export const WorkflowView: React.FC = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center border-b border-border pb-4">
         <div>
-           <h2 className="text-2xl font-bold text-white flex items-center gap-2"><Settings size={24} className="text-indigo-400"/> Workflow</h2>
-           <p className="text-slate-400 text-sm">Zarządzaj statusem zadań dla każdego obiektu</p>
+           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+             <RefreshCw size={24} className="text-indigo-400"/> Workflow Zespołowy
+           </h2>
+           <p className="text-slate-400 text-sm">Wspólna tablica zadań dla wszystkich obiektów</p>
         </div>
         <div className="flex gap-2">
             <button onClick={() => setIsStatusModalOpen(true)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-slate-700">
                 <Settings size={16} /> Statusy
             </button>
             <button onClick={() => setIsTaskModalOpen(true)} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
-                <Plus size={16} /> Dodaj kolumnę (Zadanie)
+                <Plus size={16} /> Dodaj kolumnę
             </button>
         </div>
       </div>
 
-      <div className="overflow-x-auto bg-surface rounded-xl border border-border shadow-xl">
+      <div className="overflow-x-auto bg-surface rounded-xl border border-border shadow-xl pb-2">
         <table className="w-full text-left border-collapse">
           <thead>
             <tr>
@@ -202,7 +232,7 @@ export const WorkflowView: React.FC = () => {
                 Obiekt
               </th>
               {tasks.map(task => (
-                <th key={task.id} className="p-4 bg-slate-900/80 text-white font-bold text-sm border-b border-border border-l border-slate-800 min-w-[180px] group relative">
+                <th key={task.id} className="p-4 bg-slate-900/80 text-white font-bold text-sm border-b border-border border-l border-slate-800 min-w-[200px] group relative">
                    <div className="flex justify-between items-center">
                        {task.title}
                        <button onClick={() => handleDeleteTask(task.id)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity">
@@ -211,13 +241,13 @@ export const WorkflowView: React.FC = () => {
                    </div>
                 </th>
               ))}
-              {tasks.length === 0 && <th className="p-4 text-slate-500 italic font-normal text-sm border-b border-border">Dodaj zadania, aby zacząć</th>}
+              {tasks.length === 0 && <th className="p-4 text-slate-500 italic font-normal text-sm border-b border-border">Dodaj kolumny zadań</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {properties.map(property => (
               <tr key={property.id} className="hover:bg-slate-800/30 transition-colors">
-                <td className="p-4 font-medium text-white sticky left-0 bg-surface z-10 border-r border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.3)]">
+                <td className="p-4 font-medium text-white sticky left-0 bg-surface z-10 border-r border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.3)] align-top">
                   {property.name}
                 </td>
                 {tasks.map(task => {
@@ -226,14 +256,20 @@ export const WorkflowView: React.FC = () => {
                   return (
                     <td 
                         key={task.id} 
-                        className="p-2 border-l border-slate-800 cursor-pointer relative group"
+                        className="p-2 border-l border-slate-800 cursor-pointer relative group align-top"
                         onClick={() => openCellModal(property.id, task.id)}
                     >
-                      <div className={`w-full h-10 rounded flex items-center px-3 justify-between transition-all ${status ? status.color : 'bg-slate-900/50 hover:bg-slate-800'} ${status ? 'text-white shadow-sm' : 'text-slate-500'}`}>
-                         <span className="text-sm font-medium truncate">
-                             {status ? status.label : <span className="opacity-30 text-xs">Brak statusu</span>}
-                         </span>
-                         {entry?.comment && <MessageSquare size={14} className={status ? 'text-white/80' : 'text-slate-600'} />}
+                      <div className={`w-full min-h-[42px] rounded flex flex-col justify-center px-3 py-2 transition-all gap-1 ${status ? status.color : 'bg-slate-900/50 hover:bg-slate-800'} ${status ? 'text-white shadow-sm' : 'text-slate-500'}`}>
+                         <div className="flex items-center justify-between">
+                             <span className="text-sm font-medium truncate">
+                                 {status ? status.label : <span className="opacity-30 text-xs">Brak</span>}
+                             </span>
+                         </div>
+                         {entry?.comment && (
+                             <div className={`text-xs mt-1 break-words font-normal leading-snug whitespace-pre-wrap ${status ? 'text-white/90' : 'text-slate-400 italic'}`}>
+                                 {entry.comment}
+                             </div>
+                         )}
                       </div>
                     </td>
                   );
@@ -249,7 +285,7 @@ export const WorkflowView: React.FC = () => {
         
         <div className="p-4 border-t border-border bg-slate-900/30">
             <button onClick={() => setIsPropertyModalOpen(true)} className="text-sm text-indigo-400 hover:text-white flex items-center gap-2 transition-colors">
-                <Plus size={16} /> Dodaj nowy obiekt (rząd)
+                <Plus size={16} /> Dodaj nowy obiekt
             </button>
         </div>
       </div>
@@ -261,7 +297,7 @@ export const WorkflowView: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
           <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">
              <h3 className="font-bold text-white text-lg">Nowe Zadanie (Kolumna)</h3>
-             <input autoFocus value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} placeholder="np. Sprzątanie, Płatność, Check-in" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" />
+             <input autoFocus value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} placeholder="np. Sprzątanie" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" />
              <div className="flex justify-end gap-2">
                  <button onClick={() => setIsTaskModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white">Anuluj</button>
                  <button onClick={handleAddTask} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg">Dodaj</button>
@@ -360,7 +396,7 @@ export const WorkflowView: React.FC = () => {
         </div>
       )}
 
-      {/* Add Property Modal (Simplified) */}
+      {/* Add Property Modal */}
       {isPropertyModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
           <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">
