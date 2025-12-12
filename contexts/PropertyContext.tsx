@@ -324,32 +324,44 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             // Przetwarzanie dat z JSON
             item.dates.forEach((dateObj: any) => {
                 const dateStr = dateObj.date; // "YYYY-MM-DD"
-                const isAvailable = String(dateObj.available) === "1" || dateObj.available === true;
+                
+                // ROZSZERZONA LOGIKA WYKRYWANIA DOSTĘPNOŚCI
+                // Hotres zwraca available jako string "1"/"0" lub boolean true/false
+                // Czasami też jako number 1/0
+                const rawAvail = dateObj.available;
+                const isAvailable = String(rawAvail) === "1" || rawAvail === true || rawAvail === 1;
                 
                 const currentEntry = currentDbMap.get(dateStr);
                 const currentStatus = currentEntry?.status;
                 const currentId = currentEntry?.id;
                 const currentReservationId = currentEntry?.reservation_id;
 
-                // DIAGNOSTYKA DLA 11 STYCZNIA 2026
-                if (dateStr === '2026-01-11') {
-                    console.log(`[DEBUG 2026-01-11] Unit: ${unit.name} (ID: ${typeId}). API says Available? ${isAvailable}. DB Status: ${currentStatus}. DB ID: ${currentId}`);
-                }
-
                 let newStatus: 'available' | 'booked' | 'blocked' | null = null;
 
                 if (!isAvailable) {
-                    // API: Zajęty
+                    // API: Zajęty (blokada lub rezerwacja w Hotres)
+                    // Jeśli w bazie jest 'available' -> zmieniamy na 'booked'
+                    // Jeśli w bazie jest 'blocked' (blokada ręczna) -> nadpisujemy 'booked' (Hotres ważniejszy)
                     if (currentStatus !== 'booked') {
                         newStatus = 'booked';
                         datesToBlock.push(dateStr);
                     }
                 } else {
                     // API: Wolny
+                    // Jeśli w bazie jest zajęte -> zwalniamy
                     if (currentStatus === 'booked' || currentStatus === 'blocked') {
                         newStatus = 'available';
                         datesToFree.push(dateStr);
                     }
+                }
+
+                // DIAGNOSTYKA DLA 11 STYCZNIA 2026 - LOGOWANIE DECYZJI
+                if (dateStr === '2026-01-11') {
+                    console.log(`[DEBUG 2026-01-11] Unit: ${unit.name} (ID: ${typeId}). 
+                      API Raw Available: ${rawAvail} (Type: ${typeof rawAvail}). 
+                      Interpreted as Available? ${isAvailable}. 
+                      DB Status: ${currentStatus || 'NULL'}. 
+                      Decision: ${newStatus ? `CHANGE TO ${newStatus}` : 'NO CHANGE'}`);
                 }
 
                 // Jeśli status się zmienia, dodajemy do listy zadań
@@ -358,15 +370,18 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                         unit_id: unit.id,
                         date: dateStr,
                         status: newStatus,
-                        reservation_id: currentReservationId // Zachowujemy reservation_id przy update
+                        // KLUCZOWE: Jeśli undefined, zamień na null. Supabase nie lubi undefined w obiektach
+                        reservation_id: currentReservationId || null 
                     };
 
                     if (currentId) {
                         // REKORD ISTNIEJE - ROBIMY UPDATE PO ID
                         rowsToUpdate.push({ ...payload, id: currentId });
+                        if(dateStr === '2026-01-11') console.log("[DEBUG 2026-01-11] Pushed to rowsToUpdate:", { ...payload, id: currentId });
                     } else {
                         // REKORD NIE ISTNIEJE - ROBIMY INSERT
                         rowsToInsert.push(payload);
+                        if(dateStr === '2026-01-11') console.log("[DEBUG 2026-01-11] Pushed to rowsToInsert:", payload);
                     }
                 }
             });
@@ -406,7 +421,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             } else {
                  // Pierwszy import - inserty dla stanów zajętych, których nie ma w bazie
                  item.dates.forEach((dateObj: any) => {
-                     const isAv = String(dateObj.available) === "1" || dateObj.available === true;
+                     const isAv = String(dateObj.available) === "1" || dateObj.available === true || dateObj.available === 1;
                      const dStr = dateObj.date;
                      if (!isAv && !currentDbMap.has(dStr)) {
                          // Unikamy duplikatów jeśli już dodaliśmy wyżej
@@ -430,11 +445,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             if (insertError) console.error("Insert error chunk", i, insertError);
         }
 
-        // Wykonanie UPDATEÓW (niestety Supabase nie wspiera batch update w jednym zapytaniu bez funkcji po stronie SQL, 
-        // ale upsert z ID zadziała jako update).
+        // Wykonanie UPDATEÓW
         for (let i = 0; i < rowsToUpdate.length; i += BATCH_SIZE) {
             const batch = rowsToUpdate.slice(i, i + BATCH_SIZE);
-            // Upsert z podanym ID działa jak UPDATE
+            // Upsert z podanym ID działa jak UPDATE. Ważne: payload ma ID.
             const { error: updateError } = await supabase.from('availability').upsert(batch);
             if (updateError) console.error("Update error chunk", i, updateError);
         }
