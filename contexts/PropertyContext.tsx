@@ -114,20 +114,23 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   };
 
   const fetchWithProxy = async (targetUrl: string): Promise<string> => {
+    // Dodajemy timestamp, aby uniknąć cache'owania przez proxy
+    const noCacheUrl = `${targetUrl}&_t=${Date.now()}`;
+    
     const proxies = [
       async () => {
-        const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`);
+        const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(noCacheUrl)}`);
         if (!res.ok) throw new Error(`AllOrigins status: ${res.status}`);
         const data = await res.json();
         return data.contents; 
       },
       async () => {
-        const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`);
+        const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(noCacheUrl)}`);
         if (!res.ok) throw new Error(`CodeTabs status: ${res.status}`);
         return await res.text();
       },
       async () => {
-         const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`);
+         const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(noCacheUrl)}`);
          if (!res.ok) throw new Error(`CorsProxy status: ${res.status}`);
          return await res.text();
       }
@@ -249,7 +252,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         }
 
         if (!Array.isArray(jsonData)) {
-             // Obsługa dziwnych formatów (np. obiekt zamiast tablicy)
              const values = Object.values(jsonData);
              if (values.length > 0 && typeof values[0] === 'object') {
                  jsonData = values;
@@ -259,7 +261,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         let changesCount = 0;
         let matchedUnitsCount = 0;
         
-        // 1. Pobierz kwatery i przygotuj mapę
         const { data: units } = await supabase.from('units').select('id, name, external_id').eq('property_id', propertyId);
         if (!units) throw new Error("Nie znaleziono kwater w bazie.");
 
@@ -274,15 +275,11 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const rowsToUpdate: any[] = [];
         const newNotifications: any[] = [];
 
-        // Iteracja po kwaterach z Hotres
         for (const item of jsonData) {
             const typeId = String(item.type_id).trim();
             const unit = unitMap.get(typeId);
 
-            if (!unit) {
-                // Jeśli nie ma ID w naszej bazie, pomijamy
-                continue;
-            }
+            if (!unit) continue;
             matchedUnitsCount++;
 
             if (!item.dates || !Array.isArray(item.dates)) continue;
@@ -290,7 +287,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             const datesToBlock: string[] = [];
             const datesToFree: string[] = [];
             
-            // Pobierz aktualne wpisy z bazy (aby nadpisać)
             const { data: currentDbAvailability } = await supabase
                 .from('availability')
                 .select('id, date, status, reservation_id')
@@ -299,38 +295,35 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                 .lte('date', tillDate);
             
             const currentDbMap = new Map<string, { id: string, status: string, reservation_id: any }>(); 
-            currentDbAvailability?.forEach(row => currentDbMap.set(row.date, row));
+            currentDbAvailability?.forEach(row => {
+                // Bezpieczne przycięcie daty do YYYY-MM-DD, aby klucze się zgadzały
+                const cleanDate = row.date.substring(0, 10);
+                currentDbMap.set(cleanDate, row);
+            });
 
             item.dates.forEach((dateObj: any) => {
                 const dateStr = dateObj.date;
                 const rawVal = dateObj.available;
 
-                // --- UPROSZCZONA LOGIKA ---
-                // Traktujemy "0" jako ZAJĘTE (booked). Wszystko inne jako WOLNE.
-                // Ignorujemy "reception".
-                const isHotresBooked = String(rawVal) === "0" || rawVal === 0 || rawVal === false;
+                // LOGIKA: '0' = BOOKED, reszta AVAILABLE.
+                // Usuwamy białe znaki jeśli string
+                const valToCheck = typeof rawVal === 'string' ? rawVal.trim() : rawVal;
+                const isHotresBooked = String(valToCheck) === "0" || valToCheck === 0 || valToCheck === false;
                 
                 const targetStatus = isHotresBooked ? 'booked' : 'available';
 
-                // Stan obecny w bazie
                 const dbEntry = currentDbMap.get(dateStr);
                 const currentStatus = dbEntry?.status;
                 const currentId = dbEntry?.id;
-                const currentResId = dbEntry?.reservation_id || null; // Nullable
+                const currentResId = dbEntry?.reservation_id || null;
 
-                // DEBUGOWANIE KRYTYCZNEJ DATY
-                if (dateStr === '2026-01-11') {
-                    console.log(`[DEBUG 2026-01-11] 
-                      Raw Hotres Value: ${rawVal} (type: ${typeof rawVal})
-                      Detected as: ${isHotresBooked ? 'BOOKED (0)' : 'AVAILABLE (1)'}
-                      DB currently is: ${currentStatus || 'NULL'}
-                      Action: ${currentStatus !== targetStatus ? 'UPDATE' : 'SKIP'}`);
+                // DIAGNOSTYKA
+                if (dateStr === '2026-01-11' || isHotresBooked) {
+                    // Logujemy tylko ciekawe przypadki (blokady lub konkretną datę)
+                    console.log(`[SYNC DEBUG] ${dateStr} Unit ${unit.id}: HotresVal=${valToCheck} -> Target=${targetStatus}. DB=${currentStatus}. ID=${currentId}`);
                 }
 
-                // Jeśli status w bazie jest inny niż w Hotres -> AKTUALIZACJA
-                // Nadpisujemy nawet manualne 'blocked' (zakładamy, że Hotres wie lepiej)
                 if (currentStatus !== targetStatus) {
-                    
                     if (targetStatus === 'booked') datesToBlock.push(dateStr);
                     else datesToFree.push(dateStr);
 
@@ -338,7 +331,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                         unit_id: unit.id,
                         date: dateStr,
                         status: targetStatus,
-                        reservation_id: currentResId // Przepisujemy istniejące ID rezerwacji
+                        reservation_id: currentResId
                     };
 
                     if (currentId) {
@@ -349,7 +342,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                 }
             });
 
-            // Przygotowanie powiadomień
             if (propCheck?.availability_last_synced_at) {
                 const blockRanges = groupDatesIntoRanges(datesToBlock);
                 const freeRanges = groupDatesIntoRanges(datesToFree);
@@ -381,10 +373,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                          is_read: false
                     });
                 });
-            } else {
-                 // Pierwszy import - dodajemy tylko inserty dla zajętych, których nie ma w bazie
-                 // Logika powyżej już to załatwiła, ale dla pewności przy czystym starcie:
-                 // Jeśli nie mamy last_synced_at, nie generujemy powiadomień, po prostu wypełniamy bazę.
             }
 
             changesCount += datesToBlock.length + datesToFree.length;
@@ -392,7 +380,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
         console.log(`DB Operations: Inserts=${rowsToInsert.length}, Updates=${rowsToUpdate.length}`);
         
-        // Wykonanie INSERTÓW
         const BATCH_SIZE = 1000;
         for (let i = 0; i < rowsToInsert.length; i += BATCH_SIZE) {
             const batch = rowsToInsert.slice(i, i + BATCH_SIZE);
@@ -400,10 +387,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             if (insertError) console.error("Insert error chunk", i, insertError);
         }
 
-        // Wykonanie UPDATEÓW
         for (let i = 0; i < rowsToUpdate.length; i += BATCH_SIZE) {
             const batch = rowsToUpdate.slice(i, i + BATCH_SIZE);
-            const { error: updateError } = await supabase.from('availability').upsert(batch);
+            // Upsert z explicit ID.
+            const { error: updateError } = await supabase.from('availability').upsert(batch, { onConflict: 'id' });
             if (updateError) console.error("Update error chunk", i, updateError);
         }
 
