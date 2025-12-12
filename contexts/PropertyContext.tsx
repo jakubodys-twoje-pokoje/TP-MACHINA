@@ -1,4 +1,3 @@
-
 import React, { createContext, useState, useEffect, useContext, ReactNode } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { Property, Unit, Availability, Notification } from '../types';
@@ -34,7 +33,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     setLoading(true);
     setError(null);
     try {
-      // Usunięto filtr eq('user_id', ...) aby obsługiwać współdzieloną bazę
+      // Pobieramy wszystkie properties (współdzielona baza)
       const { data, error: dbError } = await supabase
         .from('properties')
         .select('*')
@@ -196,10 +195,9 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Brak autoryzacji");
 
-    // Check if sync is already in progress to avoid double-firing
+    // Check if sync is already in progress
     const { data: propCheck } = await supabase.from('properties').select('availability_sync_in_progress, availability_last_synced_at').eq('id', propertyId).single();
     if (propCheck?.availability_sync_in_progress) {
-        // Opcjonalnie: można rzucić błąd lub po prostu wyjść, ale jeśli to auto-sync, lepiej wyjść cicho
         console.warn("Synchronizacja już trwa.");
         return "Pominięto (inna synchronizacja w toku)";
     }
@@ -221,12 +219,12 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const { data: units } = await supabase.from('units').select('id, name, external_id').eq('property_id', propertyId);
         if (!units) throw new Error("Nie znaleziono kwater");
 
+        // Use correct typing for unitMap
         const unitMap = new Map<string, { id: string; name: string; external_id: string }>();
         units.forEach((u: any) => {
             if (u.external_id) unitMap.set(u.external_id, u);
         });
 
-        // Zmienne do batch insertu
         const availabilityUpserts: any[] = [];
         const newNotifications: any[] = [];
 
@@ -238,7 +236,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             const unit = unitMap.get(extId);
             if (!unit) continue;
 
-            // Pobierz zajętości z XML
             const terminZajetyNodes = Array.from(room.getElementsByTagName("termin_zajety"));
             const newBookedDatesSet = new Set<string>();
 
@@ -256,36 +253,32 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                 }
             });
 
-            // 2. Pobierz OBECNY stan z bazy dla tego unitu (tylko od dzisiaj w przyszłość, optymalizacja)
+            // 2. Pobierz OBECNY stan z bazy
             const { data: currentDbAvailability } = await supabase
                 .from('availability')
                 .select('date, status')
                 .eq('unit_id', unit.id)
                 .gte('date', today);
             
-            const currentDbMap = new Map<string, string>(); // Date -> Status
+            const currentDbMap = new Map<string, string>(); 
             currentDbAvailability?.forEach(row => currentDbMap.set(row.date, row.status));
 
-            // 3. Logika Diffing (Porównywanie)
+            // 3. Logika Diffing
             const datesToBlock: string[] = [];
             const datesToFree: string[] = [];
 
-            // Sprawdź daty, które przyszły z XML (mają być BOOKED)
+            // Sprawdź daty z XML
             newBookedDatesSet.forEach(date => {
                 if (date >= today) {
                     const currentStatus = currentDbMap.get(date);
-                    // Jeśli w bazie nie ma (null) lub jest available, a w XML jest booked -> Zmiana na BOOKED
-                    // ALE: Jeśli to pierwsza synchronizacja (last_synced_at jest null), nie chcemy spamu.
                     if (currentStatus !== 'booked' && currentStatus !== 'blocked') {
                         datesToBlock.push(date);
                         availabilityUpserts.push({ unit_id: unit.id, date: date, status: 'booked' });
-                    } else if (currentStatus === 'booked' || currentStatus === 'blocked') {
-                         // Już jest zajęte, nic nie rób (nie nadpisuj, żeby nie triggerować zmian bez sensu)
                     }
                 }
             });
 
-            // Sprawdź daty, które są w bazie jako BOOKED, ale nie ma ich w XML (mają być AVAILABLE)
+            // Sprawdź daty, które powinny być wolne
             currentDbMap.forEach((status, date) => {
                 if ((status === 'booked' || status === 'blocked') && !newBookedDatesSet.has(date)) {
                     datesToFree.push(date);
@@ -293,9 +286,8 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                 }
             });
 
-            // 4. Generowanie powiadomień (Tylko jeśli to nie jest pierwszy import)
+            // 4. Generowanie powiadomień (jeśli nie pierwszy import)
             if (propCheck?.availability_last_synced_at) {
-                // Grupuj daty w zakresy
                 const blockRanges = groupDatesIntoRanges(datesToBlock);
                 const freeRanges = groupDatesIntoRanges(datesToFree);
 
@@ -304,7 +296,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                         user_id: user.id,
                         property_id: propertyId,
                         unit_id: unit.id,
-                        property_name: "Twój Obiekt", // Placeholder, zostanie nadpisane w DB trigger lub frontendzie
+                        property_name: "Twój Obiekt", 
                         unit_name: unit.name,
                         change_type: 'blocked',
                         start_date: range.start,
@@ -327,9 +319,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                     });
                 });
             } else {
-                // Jeśli to pierwszy import, po prostu zapisujemy dane bez powiadomień, ale musimy zapisać wszystko co jest w XML
-                // Wcześniejsza pętla availabilityUpserts obsługuje różnice, ale przy pierwszym imporcie 'currentDbMap' może być puste.
-                // Więc musimy upewnić się, że wszystko z newBookedDatesSet trafi do bazy.
+                // Pierwszy import - zapisz wszystko, brak powiadomień
                 newBookedDatesSet.forEach(date => {
                     if (date >= today && !currentDbMap.has(date)) {
                         availabilityUpserts.push({ unit_id: unit.id, date: date, status: 'booked' });
@@ -341,7 +331,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         }
 
         // 5. Wykonaj operacje na bazie (Batch)
-        // Dzielimy upsert na mniejsze paczki, bo Supabase/Postgres ma limity parametrów
         const BATCH_SIZE = 1000;
         for (let i = 0; i < availabilityUpserts.length; i += BATCH_SIZE) {
             const batch = availabilityUpserts.slice(i, i + BATCH_SIZE);
@@ -350,14 +339,11 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         }
 
         if (newNotifications.length > 0) {
-             // Pobierz nazwę property raz, żeby nie robić tego w pętli
              const { data: propName } = await supabase.from('properties').select('name').eq('id', propertyId).single();
              const fixedNotifications = newNotifications.map(n => ({...n, property_name: propName?.name || 'Obiekt' }));
-             
              await supabase.from('notifications').insert(fixedNotifications);
         }
 
-        // 6. Zaktualizuj timestamp
         await supabase.from('properties').update({ 
             availability_last_synced_at: new Date().toISOString(),
             availability_sync_in_progress: false
@@ -366,7 +352,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         return `Zaktualizowano. Wykryto zmian: ${changesCount}.`;
 
     } catch (e: any) {
-        // Zawsze zdejmij flagę in_progress w razie błędu
         await supabase.from('properties').update({ availability_sync_in_progress: false }).eq('id', propertyId);
         console.error(e);
         throw e;
@@ -374,7 +359,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   };
 
   const markNotificationAsRead = async (id: string) => {
-    // Optimistic update
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
     setUnreadCount(prev => Math.max(0, prev - 1));
     await supabase.from('notifications').update({ is_read: true }).eq('id', id);

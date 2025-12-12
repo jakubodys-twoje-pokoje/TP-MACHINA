@@ -4,7 +4,6 @@ import { supabase } from '../services/supabaseClient';
 import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2, ImageOff, Ruler, Layers, Bath, ChevronDown, Save, X, Plus } from 'lucide-react';
 import { Unit, Property } from '../types';
 import { useProperties } from '../contexts/PropertyContext';
-// No local map needed, data from DB is already translated
 
 const BedDetails: React.FC<{ unit: Unit }> = ({ unit }) => {
   const details = [
@@ -69,8 +68,8 @@ export const UnitsView: React.FC = () => {
   
   const handleEditClick = (unit: Unit) => {
     setEditingUnitId(unit.id);
-    setEditFormData({ ...unit }); // The data from DB is already correct (text)
-    setExpandedUnitId(unit.id); // Automatically expand when editing
+    setEditFormData({ ...unit }); 
+    setExpandedUnitId(unit.id); 
   };
 
   const handleCancelEdit = () => {
@@ -88,15 +87,15 @@ export const UnitsView: React.FC = () => {
     if (error) {
       alert('Błąd zapisu: ' + error.message);
     } else {
-      setUnits(units.map(u => u.id === editingUnitId ? { ...u, ...editFormData } : u));
+      setUnits(units.map(u => u.id === editingUnitId ? { ...u, ...editFormData } as Unit : u));
       handleCancelEdit();
     }
   };
   
   const handleFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    // @ts-ignore
-    const isNumber = e.target.type === 'number';
+    const { name, value, type } = e.target;
+    // Bezpieczne sprawdzanie typu
+    const isNumber = type === 'number';
     setEditFormData(prev => ({
       ...prev,
       [name]: isNumber ? (value === '' ? null : Number(value)) : value

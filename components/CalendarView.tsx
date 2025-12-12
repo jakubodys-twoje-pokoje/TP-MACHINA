@@ -1,8 +1,8 @@
-import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
+import { useParams, Link } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { Property, Availability, Unit } from '../types';
-import { RefreshCw, Loader2, Power, Timer, ChevronLeft, ChevronRight } from 'lucide-react';
+import { RefreshCw, Loader2, Power, Timer, ChevronLeft, ChevronRight, Settings } from 'lucide-react';
 import { useProperties } from '../contexts/PropertyContext';
 
 // Calendar Generation Logic
@@ -82,32 +82,38 @@ export const CalendarView: React.FC = () => {
     setLoadingAvailability(false);
   };
 
-  const handleSync = async () => {
-    if (!property || !property.description) {
-      alert("Brak OID w opisie obiektu. Nie można zsynchronizować.");
-      return;
-    }
-    const oidMatch = property.description.match(/OID: (\d+)/);
+  const handleSync = useCallback(async () => {
+    if (!property) return;
+
+    // Lepsze sprawdzanie OID (ignoruje wielkość liter i spacje)
+    const oidMatch = property.description?.match(/OID:\s*(\d+)/i);
+    
     if (!oidMatch || !oidMatch[1]) {
-      alert("Nie znaleziono OID w opisie obiektu.");
+      setLastSyncMessage("BŁĄD: Brak 'OID' w opisie obiektu.");
+      alert("Aby synchronizacja działała, przejdź do Ustawień obiektu i w opisie dodaj: 'OID: 1234' (gdzie 1234 to Twój numer ID z Hotres).");
       return;
     }
     
-    if (isSyncing) return;
-
+    setIsSyncing(prev => {
+        if (prev) return true; 
+        return true;
+    });
     setIsSyncing(true);
+
     try {
       const resultMessage = await syncAvailability(oidMatch[1], property.id);
+      
       await fetchAvailabilityForMonth();
+      
       const syncTime = new Date().toLocaleTimeString();
       setLastSyncMessage(`OK (${syncTime}). ${resultMessage}`);
     } catch (err: any) {
-      alert(`Błąd synchronizacji: ${err.message}`);
+      console.error(err);
       setLastSyncMessage(`Błąd: ${err.message}`);
     } finally {
       setIsSyncing(false);
     }
-  };
+  }, [property, propertyId, selectedUnitId, currentDate, syncAvailability]); 
 
   // Update DB when toggling auto-sync
   const toggleAutoSync = async () => {
@@ -127,11 +133,14 @@ export const CalendarView: React.FC = () => {
 
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
+    
     if (isAutoSync && intervalSeconds > 0 && propertyId) {
-      timerRef.current = window.setInterval(handleSync, intervalSeconds * 1000);
+      timerRef.current = window.setInterval(() => {
+          handleSync();
+      }, intervalSeconds * 1000);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current) };
-  }, [isAutoSync, intervalSeconds, propertyId]);
+  }, [isAutoSync, intervalSeconds, propertyId, handleSync]); 
 
   const calendarGrid = useMemo(() => {
     const year = currentDate.getFullYear();
@@ -217,19 +226,26 @@ export const CalendarView: React.FC = () => {
 
       {/* SYNC PANEL */}
       <div className="bg-surface rounded-xl border border-border p-6 shadow-lg">
-        <h3 className="text-lg font-bold text-white mb-2">Synchronizacja z Hotres</h3>
+        <div className="flex items-center justify-between mb-2">
+           <h3 className="text-lg font-bold text-white">Synchronizacja z Hotres</h3>
+           {propertyId && (
+               <Link to={`/property/${propertyId}/details`} className="text-xs text-indigo-400 hover:underline flex items-center gap-1">
+                   <Settings size={12} /> Ustawienia OID
+               </Link>
+           )}
+        </div>
         <p className="text-sm text-slate-400 mb-6">Pobierz i zaktualizuj stany dostępności dla wszystkich kwater w tym obiekcie na rok 2026.</p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
           <div className="space-y-4">
              <button 
               onClick={handleSync}
-              disabled={isSyncing || !property?.description?.includes('OID')}
+              disabled={isSyncing}
               className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-wait text-white px-4 py-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors text-base"
             >
               {isSyncing ? <Loader2 size={20} className="animate-spin" /> : <RefreshCw size={20} />}
               {isSyncing ? 'Synchronizuję dane...' : 'Synchronizuj teraz'}
             </button>
-            <p className="text-xs text-slate-500 text-center">
+            <p className={`text-xs text-center ${lastSyncMessage.includes('BŁĄD') ? 'text-red-400 font-bold' : 'text-slate-500'}`}>
               {lastSyncMessage}
             </p>
           </div>
