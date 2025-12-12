@@ -85,12 +85,10 @@ export const CalendarView: React.FC = () => {
   const handleSync = useCallback(async () => {
     if (!property) return;
 
-    // Lepsze sprawdzanie OID (ignoruje wielkość liter i spacje)
-    const oidMatch = property.description?.match(/OID:\s*(\d+)/i);
-    
-    if (!oidMatch || !oidMatch[1]) {
-      setLastSyncMessage("BŁĄD: Brak 'OID' w opisie obiektu.");
-      alert("Aby synchronizacja działała, przejdź do Ustawień obiektu i w opisie dodaj: 'OID: 1234' (gdzie 1234 to Twój numer ID z Hotres).");
+    // Bezpośrednie użycie kolumny hotres_id
+    if (!property.hotres_id) {
+      setLastSyncMessage("BŁĄD: Brak 'OID' w ustawieniach obiektu.");
+      alert("Aby synchronizacja działała, przejdź do Ustawień obiektu i wypełnij pole 'ID Hotres (OID)'.");
       return;
     }
     
@@ -101,7 +99,7 @@ export const CalendarView: React.FC = () => {
     setIsSyncing(true);
 
     try {
-      const resultMessage = await syncAvailability(oidMatch[1], property.id);
+      const resultMessage = await syncAvailability(property.hotres_id, property.id);
       
       await fetchAvailabilityForMonth();
       

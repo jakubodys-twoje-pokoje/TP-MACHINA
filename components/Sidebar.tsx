@@ -22,8 +22,11 @@ export const Sidebar: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      const description = modalMode === 'import' ? `Zaimportowano z Hotres OID: ${formData.oid}` : null;
-      const newProperty = await addProperty(formData.name, description, null, null);
+      const description = modalMode === 'import' ? `Zaimportowano z Hotres` : null;
+      // Przekazujemy OID do nowej kolumny, jeśli tryb importu
+      const hotresId = modalMode === 'import' ? formData.oid : null;
+      
+      const newProperty = await addProperty(formData.name, description, null, null, hotresId);
       
       if (!newProperty) throw new Error("Nie udało się utworzyć obiektu");
 

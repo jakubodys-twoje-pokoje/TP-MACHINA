@@ -6,6 +6,7 @@ export interface Property {
   address: string | null;
   email: string | null;
   phone: string | null;
+  hotres_id?: string | null; // Nowe pole
   maps_link?: string | null;
   amenities?: string | null;
   availability_last_synced_at?: string | null;

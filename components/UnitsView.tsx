@@ -122,19 +122,17 @@ export const UnitsView: React.FC = () => {
 
 
   const handleSync = async () => {
-    if (!property || !property.description) {
-      alert("Brak OID w opisie obiektu. Nie można zsynchronizować.");
-      return;
-    }
-    const oidMatch = property.description.match(/OID: (\d+)/);
-    if (!oidMatch || !oidMatch[1]) {
-      alert("Nie znaleziono OID w opisie obiektu.");
+    if (!property) return;
+    
+    // Bezpośrednie użycie hotres_id
+    if (!property.hotres_id) {
+      alert("Nie znaleziono OID w ustawieniach obiektu. Przejdź do 'Ustawień' i wpisz ID Hotres.");
       return;
     }
     
     setIsSyncing(true);
     try {
-      await importFromHotres(oidMatch[1], property.id);
+      await importFromHotres(property.hotres_id, property.id);
       await fetchUnits();
     } catch (err: any) {
       alert(`Błąd synchronizacji: ${err.message}`);
@@ -157,7 +155,7 @@ export const UnitsView: React.FC = () => {
     setExpandedUnitId(currentId => (currentId === unitId ? null : unitId));
   };
   
-  const isImported = property?.description?.includes('Hotres OID');
+  const isImported = !!property?.hotres_id; // Sprawdzamy czy OID istnieje w nowym polu
 
   const renderDisplayRow = (unit: Unit) => (
     <tr onClick={() => handleToggleRow(unit.id)} className="hover:bg-slate-800/50 transition-colors cursor-pointer">

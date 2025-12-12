@@ -9,7 +9,7 @@ interface PropertyContextType {
   loading: boolean;
   error: string | null;
   fetchProperties: () => Promise<void>;
-  addProperty: (name: string, description: string | null, email: string | null, phone: string | null) => Promise<Property | null>;
+  addProperty: (name: string, description: string | null, email: string | null, phone: string | null, hotresId: string | null) => Promise<Property | null>;
   deleteProperty: (id: string) => Promise<void>;
   importFromHotres: (oid: string, propertyId: string) => Promise<void>;
   syncAvailability: (oid: string, propertyId: string) => Promise<string>;
@@ -86,7 +86,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     };
   }, []);
 
-  const addProperty = async (name: string, description: string | null, email: string | null, phone: string | null) => {
+  const addProperty = async (name: string, description: string | null, email: string | null, phone: string | null, hotresId: string | null) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Musisz być zalogowany");
 
@@ -97,7 +97,8 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         name, 
         description,
         email,
-        phone
+        phone,
+        hotres_id: hotresId
       }])
       .select()
       .single();

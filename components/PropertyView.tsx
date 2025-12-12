@@ -15,9 +15,6 @@ export const PropertyView: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [newAmenity, setNewAmenity] = useState('');
   
-  // Dedykowany stan dla OID
-  const [hotresId, setHotresId] = useState('');
-
   useEffect(() => {
     if (id) fetchProperty(id);
   }, [id]);
@@ -32,13 +29,6 @@ export const PropertyView: React.FC = () => {
 
     if (!error && data) {
       setProperty(data);
-      // Wyciągnij OID z opisu przy ładowaniu
-      if (data.description) {
-        const match = data.description.match(/OID:\s*(\d+)/i);
-        if (match && match[1]) {
-            setHotresId(match[1]);
-        }
-      }
     }
     setLoading(false);
   };
@@ -72,40 +62,22 @@ export const PropertyView: React.FC = () => {
     setSaving(true);
 
     try {
-      // Logika wstrzykiwania OID do opisu
-      let finalDescription = property.description || '';
-      const oidPattern = /OID:\s*(\d+)/i;
-
-      if (hotresId.trim()) {
-        if (oidPattern.test(finalDescription)) {
-            // Jeśli OID już jest, podmień go
-            finalDescription = finalDescription.replace(oidPattern, `OID: ${hotresId.trim()}`);
-        } else {
-            // Jeśli nie ma, dopisz na końcu (lub na początku jeśli opis pusty)
-            finalDescription = finalDescription ? `${finalDescription}\n\nOID: ${hotresId.trim()}` : `OID: ${hotresId.trim()}`;
-        }
-      } else {
-        // Jeśli użytkownik wyczyścił pole OID, usuń frazę z opisu
-        finalDescription = finalDescription.replace(oidPattern, '').trim();
-      }
-
       const { error } = await supabase
         .from('properties')
         .update({
           name: property.name,
           address: property.address,
-          description: finalDescription, // Zapisujemy zaktualizowany opis
+          description: property.description,
           email: property.email,
           phone: property.phone,
           maps_link: property.maps_link,
           amenities: property.amenities,
+          hotres_id: property.hotres_id, // Zapis nowej kolumny
         })
         .eq('id', id);
 
       if (error) throw error;
       
-      // Zaktualizuj lokalny stan property z nowym opisem, żeby UI był spójny
-      setProperty({ ...property, description: finalDescription });
       alert('Zapisano zmiany');
     } catch (err) {
       alert('Błąd zapisu');
@@ -164,8 +136,8 @@ export const PropertyView: React.FC = () => {
                 </label>
                 <input
                 type="text"
-                value={hotresId}
-                onChange={(e) => setHotresId(e.target.value)}
+                value={property.hotres_id || ''}
+                onChange={(e) => setProperty({...property, hotres_id: e.target.value})}
                 placeholder="np. 1234"
                 className="w-full bg-slate-900 border border-indigo-500/50 text-white font-mono rounded-lg p-3 focus:ring-2 focus:ring-indigo-500 outline-none placeholder:text-slate-600"
                 title="Wpisz numer ID z systemu Hotres"
@@ -250,7 +222,6 @@ export const PropertyView: React.FC = () => {
 
           <div>
             <label className="block text-sm font-medium text-slate-400 mb-1">Opis</label>
-            <p className="text-xs text-slate-500 mb-2">Numer OID zostanie automatycznie dodany do opisu po zapisaniu.</p>
             <textarea
               value={property.description || ''}
               onChange={(e) => setProperty({...property, description: e.target.value})}
