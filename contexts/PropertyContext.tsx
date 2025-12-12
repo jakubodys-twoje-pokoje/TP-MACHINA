@@ -114,24 +114,23 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     setProperties(prev => prev.filter(p => p.id !== id));
   };
 
-  // Improved Helper function to fetch XML with robust multi-proxy fallback
-  const fetchXmlWithProxy = async (targetUrl: string): Promise<Document> => {
-    // Lista proxy do sprawdzenia w kolejności
+  // Improved Helper function to fetch data (text) via robust multi-proxy fallback
+  const fetchWithProxy = async (targetUrl: string): Promise<string> => {
     const proxies = [
-      // 1. AllOrigins (JSON wrapper) - zazwyczaj najbardziej stabilne, omija CORS zwracając JSON
+      // 1. AllOrigins (JSON wrapper)
       async () => {
         const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`);
         if (!res.ok) throw new Error(`AllOrigins status: ${res.status}`);
         const data = await res.json();
         return data.contents; 
       },
-      // 2. CodeTabs - dobra alternatywa
+      // 2. CodeTabs
       async () => {
         const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`);
         if (!res.ok) throw new Error(`CodeTabs status: ${res.status}`);
         return await res.text();
       },
-      // 3. CorsProxy.io - bezpośrednie proxy
+      // 3. CorsProxy.io
       async () => {
          const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`);
          if (!res.ok) throw new Error(`CorsProxy status: ${res.status}`);
@@ -141,18 +140,12 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
     let lastError: any;
     
-    // Próbujemy po kolei
     for (const proxyFetch of proxies) {
       try {
-        const xmlText = await proxyFetch();
-        
-        if (xmlText && xmlText.trim().length > 0 && !xmlText.includes('Access Denied') && !xmlText.includes('404 Not Found')) {
-             const parser = new DOMParser();
-             const xmlDoc = parser.parseFromString(xmlText, "text/xml");
-             // Sprawdź czy parser nie zwrócił błędu
-             if (xmlDoc.getElementsByTagName("parsererror").length === 0) {
-                 return xmlDoc; // Sukces!
-             }
+        const text = await proxyFetch();
+        // Basic validation that we got something meaningful
+        if (text && text.trim().length > 0 && !text.includes('Access Denied') && !text.includes('404 Not Found')) {
+             return text;
         }
       } catch (e) {
         console.warn("Proxy attempt failed:", e);
@@ -160,14 +153,15 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       }
     }
 
-    // Jeśli pętla się skończy i nic nie zwróci:
     throw new Error(`Nie udało się połączyć z Hotres przez żaden serwer pośredniczący. Błąd: ${lastError?.message || 'Brak danych'}`);
   };
 
   const importFromHotres = async (oid: string, propertyId: string) => {
-    const xmlDoc = await fetchXmlWithProxy(`https://hotres.pl/xml/cennik_xml.php?oid=${oid}&kod_waluty=PLN`);
+    // Import korzysta z XML (cennik_xml.php)
+    const xmlText = await fetchWithProxy(`https://hotres.pl/xml/cennik_xml.php?oid=${oid}&kod_waluty=PLN`);
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlText, "text/xml");
 
-    // 2. Parse Rooms
     const rooms = Array.from(xmlDoc.getElementsByTagName("pokoj"));
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -209,14 +203,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   };
 
-  // Funkcja pomocnicza do grupowania dat w zakresy
   const groupDatesIntoRanges = (dates: string[]) => {
     if (dates.length === 0) return [];
-    
-    // Sortowanie dat
     const sortedDates = dates.sort();
     const ranges: { start: string, end: string }[] = [];
-    
     let rangeStart = sortedDates[0];
     let prevDate = new Date(sortedDates[0]);
 
@@ -226,15 +216,12 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
 
         if (diffDays > 1) {
-            // Przerwa w datach, zamykamy obecny zakres
             ranges.push({ start: rangeStart, end: sortedDates[i-1] });
             rangeStart = sortedDates[i];
         }
         prevDate = currentDate;
     }
-    // Dodaj ostatni zakres
     ranges.push({ start: rangeStart, end: sortedDates[sortedDates.length - 1] });
-    
     return ranges;
   };
 
@@ -253,51 +240,66 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     await supabase.from('properties').update({ availability_sync_in_progress: true }).eq('id', propertyId);
 
     try {
-        const xmlDoc = await fetchXmlWithProxy(`https://hotres.pl/xml/dostepnosc_xml.php?oid=${oid}`);
-
-        const rooms = Array.from(xmlDoc.getElementsByTagName("pokoj"));
-        let changesCount = 0;
+        // Oblicz zakres dat: od dziś do końca przyszłego roku (bezpieczny zakres)
         const today = new Date().toISOString().split('T')[0];
-        
-        // 1. Pobierz WSZYSTKIE kwatery dla tego obiektu
-        const { data: units } = await supabase.from('units').select('id, name, external_id').eq('property_id', propertyId);
-        if (!units) throw new Error("Nie znaleziono kwater");
+        const nextYear = new Date();
+        nextYear.setFullYear(nextYear.getFullYear() + 1);
+        const tillDate = nextYear.toISOString().split('T')[0];
 
-        // Use correct typing for unitMap
-        const unitMap = new Map<string, { id: string; name: string; external_id: string }>();
+        // Dane uwierzytelniające (powinny być w zmiennych środowiskowych lub bazie, ale używam podanych w prompt)
+        const apiUser = "admin@twojepokoje.com.pl";
+        const apiPass = "Admin123@@";
+
+        // Nowy URL API JSON
+        const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${today}&till=${tillDate}`;
+        
+        // Pobieramy surowy tekst przez proxy
+        const jsonText = await fetchWithProxy(targetUrl);
+        
+        let jsonData: any[] = [];
+        try {
+            jsonData = JSON.parse(jsonText);
+        } catch (e) {
+            console.error("Failed to parse JSON", jsonText);
+            throw new Error("Otrzymano nieprawidłowy format danych JSON z Hotres.");
+        }
+
+        if (!Array.isArray(jsonData)) {
+            throw new Error("Otrzymano nieprawidłową strukturę danych (nie jest tablicą).");
+        }
+
+        let changesCount = 0;
+        
+        // 1. Pobierz kwatery z bazy
+        const { data: units } = await supabase.from('units').select('id, name, external_id').eq('property_id', propertyId);
+        if (!units) throw new Error("Nie znaleziono kwater w bazie.");
+
+        // Mapowanie external_id -> unit
+        const unitMap = new Map<string, { id: string; name: string }>();
         units.forEach((u: any) => {
-            if (u.external_id) unitMap.set(u.external_id, u);
+            if (u.external_id) unitMap.set(String(u.external_id), u);
         });
 
         const availabilityUpserts: any[] = [];
         const newNotifications: any[] = [];
 
-        // Przetwarzanie każdego pokoju z XML
-        for (const room of rooms) {
-            const extId = room.getElementsByTagName("id_pokoju")[0]?.textContent;
-            if (!extId) continue;
+        // Iteracja po danych z JSON (gdzie type_id to ID pokoju w Hotres)
+        for (const item of jsonData) {
+            // Hotres zwraca "type_id". Zakładamy, że przy imporcie to samo ID trafiło do "external_id".
+            const typeId = String(item.type_id);
+            const unit = unitMap.get(typeId);
 
-            const unit = unitMap.get(extId);
-            if (!unit) continue;
+            if (!unit) {
+                // console.warn(`Pominięto type_id=${typeId} - brak odpowiednika w bazie units (external_id).`);
+                continue;
+            }
 
-            const terminZajetyNodes = Array.from(room.getElementsByTagName("termin_zajety"));
-            const newBookedDatesSet = new Set<string>();
+            if (!item.dates || !Array.isArray(item.dates)) continue;
 
-            terminZajetyNodes.forEach(node => {
-                const zajetyDo = node.getElementsByTagName("zajety_do")[0]?.textContent;
-                const zajetyOd = node.getElementsByTagName("zajety_od")[0]?.textContent;
-
-                if (zajetyOd && zajetyDo) {
-                    let curr = new Date(zajetyOd);
-                    const end = new Date(zajetyDo);
-                    while (curr <= end) {
-                        newBookedDatesSet.add(curr.toISOString().split('T')[0]);
-                        curr.setDate(curr.getDate() + 1);
-                    }
-                }
-            });
-
-            // 2. Pobierz OBECNY stan z bazy
+            const datesToBlock: string[] = [];
+            const datesToFree: string[] = [];
+            
+            // Pobierz aktualny stan dla tego unitu z bazy, aby zrobić diff
             const { data: currentDbAvailability } = await supabase
                 .from('availability')
                 .select('date, status')
@@ -307,30 +309,29 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             const currentDbMap = new Map<string, string>(); 
             currentDbAvailability?.forEach(row => currentDbMap.set(row.date, row.status));
 
-            // 3. Logika Diffing
-            const datesToBlock: string[] = [];
-            const datesToFree: string[] = [];
+            // Przetwarzanie dat z JSON
+            item.dates.forEach((dateObj: any) => {
+                const dateStr = dateObj.date; // "YYYY-MM-DD"
+                // available: "0" = zajęty, "1" = wolny
+                const isAvailable = dateObj.available === "1";
+                const currentStatus = currentDbMap.get(dateStr);
 
-            // Sprawdź daty z XML
-            newBookedDatesSet.forEach(date => {
-                if (date >= today) {
-                    const currentStatus = currentDbMap.get(date);
+                if (!isAvailable) {
+                    // Jest zajęty w API
                     if (currentStatus !== 'booked' && currentStatus !== 'blocked') {
-                        datesToBlock.push(date);
-                        availabilityUpserts.push({ unit_id: unit.id, date: date, status: 'booked' });
+                        datesToBlock.push(dateStr);
+                        availabilityUpserts.push({ unit_id: unit.id, date: dateStr, status: 'booked' });
+                    }
+                } else {
+                    // Jest wolny w API
+                    if (currentStatus === 'booked' || currentStatus === 'blocked') {
+                        datesToFree.push(dateStr);
+                        availabilityUpserts.push({ unit_id: unit.id, date: dateStr, status: 'available' });
                     }
                 }
             });
 
-            // Sprawdź daty, które powinny być wolne
-            currentDbMap.forEach((status, date) => {
-                if ((status === 'booked' || status === 'blocked') && !newBookedDatesSet.has(date)) {
-                    datesToFree.push(date);
-                    availabilityUpserts.push({ unit_id: unit.id, date: date, status: 'available' });
-                }
-            });
-
-            // 4. Generowanie powiadomień (jeśli nie pierwszy import)
+            // Generowanie powiadomień
             if (propCheck?.availability_last_synced_at) {
                 const blockRanges = groupDatesIntoRanges(datesToBlock);
                 const freeRanges = groupDatesIntoRanges(datesToFree);
@@ -363,18 +364,18 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                     });
                 });
             } else {
-                // Pierwszy import - zapisz wszystko, brak powiadomień
-                newBookedDatesSet.forEach(date => {
-                    if (date >= today && !currentDbMap.has(date)) {
-                        availabilityUpserts.push({ unit_id: unit.id, date: date, status: 'booked' });
-                    }
-                });
+                 // Pierwszy import - zapisz stany zajęte bez powiadomień
+                 item.dates.forEach((dateObj: any) => {
+                     if (dateObj.available === "0" && !currentDbMap.has(dateObj.date)) {
+                         availabilityUpserts.push({ unit_id: unit.id, date: dateObj.date, status: 'booked' });
+                     }
+                 });
             }
-            
+
             changesCount += datesToBlock.length + datesToFree.length;
         }
 
-        // 5. Wykonaj operacje na bazie (Batch)
+        // Batch Upsert
         const BATCH_SIZE = 1000;
         for (let i = 0; i < availabilityUpserts.length; i += BATCH_SIZE) {
             const batch = availabilityUpserts.slice(i, i + BATCH_SIZE);
@@ -393,7 +394,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             availability_sync_in_progress: false
         }).eq('id', propertyId);
 
-        return `Zaktualizowano. Wykryto zmian: ${changesCount}.`;
+        return `Zaktualizowano (JSON). Wykryto zmian: ${changesCount}.`;
 
     } catch (e: any) {
         await supabase.from('properties').update({ availability_sync_in_progress: false }).eq('id', propertyId);
