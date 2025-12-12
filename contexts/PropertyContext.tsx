@@ -33,7 +33,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     setLoading(true);
     setError(null);
     try {
-      // Pobieramy wszystkie properties (współdzielona baza)
       const { data, error: dbError } = await supabase
         .from('properties')
         .select('*')
@@ -114,23 +113,19 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     setProperties(prev => prev.filter(p => p.id !== id));
   };
 
-  // Improved Helper function to fetch data (text) via robust multi-proxy fallback
   const fetchWithProxy = async (targetUrl: string): Promise<string> => {
     const proxies = [
-      // 1. AllOrigins (JSON wrapper)
       async () => {
         const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`);
         if (!res.ok) throw new Error(`AllOrigins status: ${res.status}`);
         const data = await res.json();
         return data.contents; 
       },
-      // 2. CodeTabs
       async () => {
         const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`);
         if (!res.ok) throw new Error(`CodeTabs status: ${res.status}`);
         return await res.text();
       },
-      // 3. CorsProxy.io
       async () => {
          const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`);
          if (!res.ok) throw new Error(`CorsProxy status: ${res.status}`);
@@ -139,25 +134,20 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     ];
 
     let lastError: any;
-    
     for (const proxyFetch of proxies) {
       try {
         const text = await proxyFetch();
-        // Basic validation that we got something meaningful
         if (text && text.trim().length > 0 && !text.includes('Access Denied') && !text.includes('404 Not Found')) {
              return text;
         }
       } catch (e) {
-        console.warn("Proxy attempt failed:", e);
         lastError = e;
       }
     }
-
-    throw new Error(`Nie udało się połączyć z Hotres przez żaden serwer pośredniczący. Błąd: ${lastError?.message || 'Brak danych'}`);
+    throw new Error(`Nie udało się połączyć z Hotres. Błąd: ${lastError?.message || 'Brak danych'}`);
   };
 
   const importFromHotres = async (oid: string, propertyId: string) => {
-    // Import korzysta z XML (cennik_xml.php)
     const xmlText = await fetchWithProxy(`https://hotres.pl/xml/cennik_xml.php?oid=${oid}&kod_waluty=PLN`);
     const parser = new DOMParser();
     const xmlDoc = parser.parseFromString(xmlText, "text/xml");
@@ -180,7 +170,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       }
 
       if (externalId && name) {
-        // Upsert unit
         const { data: existingUnit } = await supabase
           .from('units')
           .select('id')
@@ -229,27 +218,24 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Brak autoryzacji");
 
-    // Check if sync is already in progress
     const { data: propCheck } = await supabase.from('properties').select('availability_sync_in_progress, availability_last_synced_at').eq('id', propertyId).single();
     if (propCheck?.availability_sync_in_progress) {
         console.warn("Synchronizacja już trwa.");
         return "Pominięto (inna synchronizacja w toku)";
     }
 
-    // Set flag
     await supabase.from('properties').update({ availability_sync_in_progress: true }).eq('id', propertyId);
 
     try {
         const apiUser = "admin@twojepokoje.com.pl";
         const apiPass = "Admin123@@";
 
-        // TWARDA DATA: Cały rok 2026
         const fromDate = '2026-01-01';
         const tillDate = '2026-12-31';
 
         const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`;
         
-        console.log(`Fetching availability for fixed range: ${fromDate} to ${tillDate}`);
+        console.log(`Syncing range: ${fromDate} to ${tillDate}`);
 
         const rawResponse = await fetchWithProxy(targetUrl);
         const jsonText = rawResponse.trim().replace(/^\uFEFF/, '');
@@ -263,25 +249,20 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         }
 
         if (!Array.isArray(jsonData)) {
-            if (jsonData && typeof jsonData === 'object' && 'error' in jsonData) {
-                throw new Error(`Hotres API Error: ${jsonData.error}`);
-            }
-            const values = Object.values(jsonData);
-            if (values.length > 0 && typeof values[0] === 'object') {
-                jsonData = values;
-            } else {
-                throw new Error(`Zły format danych (nie jest tablicą)`);
-            }
+             // Obsługa dziwnych formatów (np. obiekt zamiast tablicy)
+             const values = Object.values(jsonData);
+             if (values.length > 0 && typeof values[0] === 'object') {
+                 jsonData = values;
+             }
         }
 
         let changesCount = 0;
         let matchedUnitsCount = 0;
         
-        // 1. Pobierz kwatery z bazy
+        // 1. Pobierz kwatery i przygotuj mapę
         const { data: units } = await supabase.from('units').select('id, name, external_id').eq('property_id', propertyId);
         if (!units) throw new Error("Nie znaleziono kwater w bazie.");
 
-        // Mapowanie external_id -> unit (TRIMOWANIE ID)
         const unitMap = new Map<string, { id: string; name: string }>();
         units.forEach((u: any) => {
             if (u.external_id) {
@@ -293,13 +274,13 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const rowsToUpdate: any[] = [];
         const newNotifications: any[] = [];
 
-        // Iteracja po danych z JSON
+        // Iteracja po kwaterach z Hotres
         for (const item of jsonData) {
             const typeId = String(item.type_id).trim();
             const unit = unitMap.get(typeId);
 
             if (!unit) {
-                console.warn(`Nie znaleziono unitu w bazie dla ID Hotres: '${typeId}'`);
+                // Jeśli nie ma ID w naszej bazie, pomijamy
                 continue;
             }
             matchedUnitsCount++;
@@ -309,84 +290,66 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             const datesToBlock: string[] = [];
             const datesToFree: string[] = [];
             
-            // Pobierz aktualny stan dla tego unitu z bazy, aby zrobić diff i ZDOBYĆ ID ISTNIEJĄCEGO REKORDU
+            // Pobierz aktualne wpisy z bazy (aby nadpisać)
             const { data: currentDbAvailability } = await supabase
                 .from('availability')
-                .select('id, date, status, reservation_id') // Pobieramy ID i reservation_id
+                .select('id, date, status, reservation_id')
                 .eq('unit_id', unit.id)
                 .gte('date', fromDate)
                 .lte('date', tillDate);
             
-            // Mapujemy po dacie, ale przechowujemy cały obiekt (id, status, reservation_id)
             const currentDbMap = new Map<string, { id: string, status: string, reservation_id: any }>(); 
             currentDbAvailability?.forEach(row => currentDbMap.set(row.date, row));
 
-            // Przetwarzanie dat z JSON
             item.dates.forEach((dateObj: any) => {
-                const dateStr = dateObj.date; // "YYYY-MM-DD"
+                const dateStr = dateObj.date;
+                const rawVal = dateObj.available;
+
+                // --- UPROSZCZONA LOGIKA ---
+                // Traktujemy "0" jako ZAJĘTE (booked). Wszystko inne jako WOLNE.
+                // Ignorujemy "reception".
+                const isHotresBooked = String(rawVal) === "0" || rawVal === 0 || rawVal === false;
                 
-                // ROZSZERZONA LOGIKA WYKRYWANIA DOSTĘPNOŚCI
-                // Hotres zwraca available jako string "1"/"0" lub boolean true/false
-                // Czasami też jako number 1/0
-                const rawAvail = dateObj.available;
-                const isAvailable = String(rawAvail) === "1" || rawAvail === true || rawAvail === 1;
-                
-                const currentEntry = currentDbMap.get(dateStr);
-                const currentStatus = currentEntry?.status;
-                const currentId = currentEntry?.id;
-                const currentReservationId = currentEntry?.reservation_id;
+                const targetStatus = isHotresBooked ? 'booked' : 'available';
 
-                let newStatus: 'available' | 'booked' | 'blocked' | null = null;
+                // Stan obecny w bazie
+                const dbEntry = currentDbMap.get(dateStr);
+                const currentStatus = dbEntry?.status;
+                const currentId = dbEntry?.id;
+                const currentResId = dbEntry?.reservation_id || null; // Nullable
 
-                if (!isAvailable) {
-                    // API: Zajęty (blokada lub rezerwacja w Hotres)
-                    // Jeśli w bazie jest 'available' -> zmieniamy na 'booked'
-                    // Jeśli w bazie jest 'blocked' (blokada ręczna) -> nadpisujemy 'booked' (Hotres ważniejszy)
-                    if (currentStatus !== 'booked') {
-                        newStatus = 'booked';
-                        datesToBlock.push(dateStr);
-                    }
-                } else {
-                    // API: Wolny
-                    // Jeśli w bazie jest zajęte -> zwalniamy
-                    if (currentStatus === 'booked' || currentStatus === 'blocked') {
-                        newStatus = 'available';
-                        datesToFree.push(dateStr);
-                    }
-                }
-
-                // DIAGNOSTYKA DLA 11 STYCZNIA 2026 - LOGOWANIE DECYZJI
+                // DEBUGOWANIE KRYTYCZNEJ DATY
                 if (dateStr === '2026-01-11') {
-                    console.log(`[DEBUG 2026-01-11] Unit: ${unit.name} (ID: ${typeId}). 
-                      API Raw Available: ${rawAvail} (Type: ${typeof rawAvail}). 
-                      Interpreted as Available? ${isAvailable}. 
-                      DB Status: ${currentStatus || 'NULL'}. 
-                      Decision: ${newStatus ? `CHANGE TO ${newStatus}` : 'NO CHANGE'}`);
+                    console.log(`[DEBUG 2026-01-11] 
+                      Raw Hotres Value: ${rawVal} (type: ${typeof rawVal})
+                      Detected as: ${isHotresBooked ? 'BOOKED (0)' : 'AVAILABLE (1)'}
+                      DB currently is: ${currentStatus || 'NULL'}
+                      Action: ${currentStatus !== targetStatus ? 'UPDATE' : 'SKIP'}`);
                 }
 
-                // Jeśli status się zmienia, dodajemy do listy zadań
-                if (newStatus) {
+                // Jeśli status w bazie jest inny niż w Hotres -> AKTUALIZACJA
+                // Nadpisujemy nawet manualne 'blocked' (zakładamy, że Hotres wie lepiej)
+                if (currentStatus !== targetStatus) {
+                    
+                    if (targetStatus === 'booked') datesToBlock.push(dateStr);
+                    else datesToFree.push(dateStr);
+
                     const payload = {
                         unit_id: unit.id,
                         date: dateStr,
-                        status: newStatus,
-                        // KLUCZOWE: Jeśli undefined, zamień na null. Supabase nie lubi undefined w obiektach
-                        reservation_id: currentReservationId || null 
+                        status: targetStatus,
+                        reservation_id: currentResId // Przepisujemy istniejące ID rezerwacji
                     };
 
                     if (currentId) {
-                        // REKORD ISTNIEJE - ROBIMY UPDATE PO ID
                         rowsToUpdate.push({ ...payload, id: currentId });
-                        if(dateStr === '2026-01-11') console.log("[DEBUG 2026-01-11] Pushed to rowsToUpdate:", { ...payload, id: currentId });
                     } else {
-                        // REKORD NIE ISTNIEJE - ROBIMY INSERT
                         rowsToInsert.push(payload);
-                        if(dateStr === '2026-01-11') console.log("[DEBUG 2026-01-11] Pushed to rowsToInsert:", payload);
                     }
                 }
             });
 
-            // Generowanie powiadomień
+            // Przygotowanie powiadomień
             if (propCheck?.availability_last_synced_at) {
                 const blockRanges = groupDatesIntoRanges(datesToBlock);
                 const freeRanges = groupDatesIntoRanges(datesToFree);
@@ -419,23 +382,15 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                     });
                 });
             } else {
-                 // Pierwszy import - inserty dla stanów zajętych, których nie ma w bazie
-                 item.dates.forEach((dateObj: any) => {
-                     const isAv = String(dateObj.available) === "1" || dateObj.available === true || dateObj.available === 1;
-                     const dStr = dateObj.date;
-                     if (!isAv && !currentDbMap.has(dStr)) {
-                         // Unikamy duplikatów jeśli już dodaliśmy wyżej
-                         if (!rowsToInsert.find(r => r.unit_id === unit.id && r.date === dStr)) {
-                             rowsToInsert.push({ unit_id: unit.id, date: dStr, status: 'booked' });
-                         }
-                     }
-                 });
+                 // Pierwszy import - dodajemy tylko inserty dla zajętych, których nie ma w bazie
+                 // Logika powyżej już to załatwiła, ale dla pewności przy czystym starcie:
+                 // Jeśli nie mamy last_synced_at, nie generujemy powiadomień, po prostu wypełniamy bazę.
             }
 
             changesCount += datesToBlock.length + datesToFree.length;
         }
 
-        console.log(`Planowane operacje DB: Insert=${rowsToInsert.length}, Update=${rowsToUpdate.length}`);
+        console.log(`DB Operations: Inserts=${rowsToInsert.length}, Updates=${rowsToUpdate.length}`);
         
         // Wykonanie INSERTÓW
         const BATCH_SIZE = 1000;
@@ -448,7 +403,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         // Wykonanie UPDATEÓW
         for (let i = 0; i < rowsToUpdate.length; i += BATCH_SIZE) {
             const batch = rowsToUpdate.slice(i, i + BATCH_SIZE);
-            // Upsert z podanym ID działa jak UPDATE. Ważne: payload ma ID.
             const { error: updateError } = await supabase.from('availability').upsert(batch);
             if (updateError) console.error("Update error chunk", i, updateError);
         }
@@ -464,7 +418,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             availability_sync_in_progress: false
         }).eq('id', propertyId);
 
-        return `Dopasowano kwater: ${matchedUnitsCount}. Zmian: ${changesCount} (Ins: ${rowsToInsert.length}, Upd: ${rowsToUpdate.length})`;
+        return `Zmian: ${changesCount} (Dodano: ${rowsToInsert.length}, Zaktualizowano: ${rowsToUpdate.length})`;
 
     } catch (e: any) {
         await supabase.from('properties').update({ availability_sync_in_progress: false }).eq('id', propertyId);
