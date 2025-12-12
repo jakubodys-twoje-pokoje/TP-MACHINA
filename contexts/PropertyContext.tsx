@@ -219,21 +219,26 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const apiPass = "Admin123@@";
 
         // 1. Pobierz Unit-y z bazy
-        const { data: units } = await supabase.from('units').select('id, name, external_id').eq('property_id', propertyId);
+        const { data: units } = await supabase.from('units').select('id, name, external_id, external_type_id').eq('property_id', propertyId);
         if (!units || units.length === 0) throw new Error("Brak kwater (Units) w bazie. Najpierw wykonaj Import/Dodaj kwatery.");
 
         // Mapa ExternalID -> UnitUUID
+        // Mapujemy zarówno external_id jak i external_type_id na ID jednostki, aby zwiększyć szansę trafienia
         const unitMap = new Map<string, string>();
         units.forEach((u: any) => {
-            if (u.external_id) {
-                unitMap.set(String(u.external_id).trim(), u.id);
-            }
+            if (u.external_id) unitMap.set(String(u.external_id).trim(), u.id);
+            if (u.external_type_id) unitMap.set(String(u.external_type_id).trim(), u.id);
         });
 
-        console.log("[SYNC DEBUG] Baza danych - Pokoje:", units.map(u => `${u.name} (ExtID: ${u.external_id})`));
+        // Wypisujemy pełną listę pokoi z bazy w formacie JSON, aby łatwo było porównać
+        console.log("[SYNC DEBUG] Baza danych (Szczegóły):", JSON.stringify(units.map(u => ({ 
+            name: u.name, 
+            external_id: u.external_id,
+            external_type_id: u.external_type_id 
+        })), null, 2));
 
-        // 2. Iteracja po latach (Chunking) aby ominąć limit 365 dni
-        const startYear = 2024;
+        // 2. Sztywne ustawienie na rok 2026
+        const startYear = 2026;
         const endYear = 2026;
         let totalUpserted = 0;
 
@@ -296,6 +301,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                  continue;
              }
 
+             // Wyświetlamy pobrane ID jako prosty ciąg znaków
              console.log(`[SYNC DEBUG] API IDs for ${year}:`, itemsToProcess.map(i => i.type_id).join(', '));
 
              // 3. Pobierz ISTNIEJĄCE wpisy dla danego roku (Manual Upsert)
@@ -375,11 +381,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         }).eq('id', propertyId);
         
         if (totalUpserted === 0) {
-            // Jeśli pętla przeszła, ale nic nie zapisano
-            throw new Error(`Pobrano dane, ale zapisano 0 dni. Prawdopodobnie IDs z Hotres nie pasują do bazy.\nSprawdź konsolę (F12) -> zakładka Console, aby zobaczyć listę IDs.`);
+            throw new Error(`Pobrano dane (2026), ale zapisano 0 dni. IDs z Hotres nie pasują do bazy.\nSprawdź konsolę (F12), porównaj 'API IDs' z 'Baza danych (Szczegóły)'.`);
         }
 
-        return `Sukces! Zapisano ${totalUpserted} dni (2024-2026).`;
+        return `Sukces! Zapisano ${totalUpserted} dni (2026).`;
 
     } catch (e: any) {
         await supabase.from('properties').update({ availability_sync_in_progress: false }).eq('id', propertyId);
