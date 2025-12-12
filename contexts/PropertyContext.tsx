@@ -212,15 +212,13 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Brak autoryzacji");
 
-    // Reset statusu na start, aby uniknąć zablokowania
     await supabase.from('properties').update({ availability_sync_in_progress: true }).eq('id', propertyId);
 
     try {
         const apiUser = "admin@twojepokoje.com.pl";
         const apiPass = "Admin123@@";
 
-        // Ustawiamy szeroki zakres dat "na sztywno", żeby pokryć grudzień 2024, styczeń 2025 i cały 2026.
-        // Rozwiązuje to problem "W grudniu zostało kilka dni".
+        // Sztywny zakres dat
         const fromDate = '2024-01-01';
         const tillDate = '2026-12-31';
 
@@ -229,7 +227,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         console.log(`[SYNC START] Range: ${fromDate} - ${tillDate}, OID: ${oid}`);
 
         const rawResponse = await fetchWithProxy(targetUrl);
-        // Usuwamy BOM i białe znaki
         const jsonText = rawResponse.trim().replace(/^\uFEFF/, '');
         
         let jsonData: any;
@@ -240,15 +237,23 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             throw new Error("Błąd parsowania odpowiedzi z Hotres.");
         }
 
-        if (!Array.isArray(jsonData)) {
-             const values = Object.values(jsonData);
-             if (values.length > 0 && typeof values[0] === 'object') {
-                 jsonData = values;
-             }
+        // --- NAPRAWA LOGIKI PARSOWANIA JSON ---
+        let itemsToProcess: any[] = [];
+        
+        if (Array.isArray(jsonData)) {
+            itemsToProcess = jsonData;
+        } else if (typeof jsonData === 'object' && jsonData !== null) {
+             // Jeśli to obiekt, wyciągamy wartości i sprawdzamy czy wyglądają na dane pokoi
+             const potentialItems = Object.values(jsonData);
+             itemsToProcess = potentialItems.filter((val: any) => {
+                 // Sprawdzamy czy element ma strukturę danych pokoju (type_id lub dates)
+                 return val && typeof val === 'object' && (val.type_id || Array.isArray(val.dates));
+             });
         }
 
-        if (!jsonData || jsonData.length === 0) {
-            throw new Error("Pusta odpowiedź z Hotres (brak danych o pokojach). Sprawdź poprawność OID.");
+        if (itemsToProcess.length === 0) {
+            console.warn("Received Data Structure:", jsonData);
+            throw new Error("Otrzymano dane z Hotres, ale nie znaleziono w nich listy pokoi. (jsonData is not iterable fix)");
         }
         
         // 1. Pobierz Unit-y z bazy
@@ -259,15 +264,12 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const unitMap = new Map<string, string>();
         units.forEach((u: any) => {
             if (u.external_id) {
-                // Normalizacja ID: trim
                 unitMap.set(String(u.external_id).trim(), u.id);
             }
         });
 
-        // 2. Pobierz ISTNIEJĄCE wpisy w bazie availability, aby zrobić "Manual Upsert" (zachować ID)
+        // 2. Pobierz ISTNIEJĄCE wpisy w bazie availability
         const unitIds = units.map(u => u.id);
-        
-        // Dzielimy na mniejsze zapytania select jeśli zakres jest duży, ale tutaj 2 lata dla kilku pokoi powinno przejść
         const { data: existingRows } = await supabase
             .from('availability')
             .select('id, unit_id, date, status, reservation_id')
@@ -275,7 +277,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             .gte('date', fromDate)
             .lte('date', tillDate);
         
-        // Mapa klucza unikalności: "unitUUID_YYYY-MM-DD" -> { id, status }
         const dbMap = new Map<string, { id: string, status: string, reservation_id: any }>();
         existingRows?.forEach(row => {
             const dateKey = normalizeDate(row.date);
@@ -286,13 +287,13 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         let matchedUnits = 0;
         let processedDates = 0;
 
-        // 3. Iterujemy po danych z Hotres
-        for (const item of jsonData) {
+        // 3. Iterujemy po poprawnie sparsowanej tablicy itemsToProcess
+        for (const item of itemsToProcess) {
             const extId = String(item.type_id).trim();
             const unitId = unitMap.get(extId);
 
             if (!unitId) {
-                console.warn(`[Sync] Pominięto Hotres ID: ${extId} - brak odpowiednika w bazie.`);
+                console.warn(`[Sync] Pominięto Hotres ID: ${extId} - brak w bazie.`);
                 continue;
             }
             matchedUnits++;
@@ -301,32 +302,27 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                 item.dates.forEach((d: any) => {
                     const dateStr = normalizeDate(d.date);
                     
-                    // Interpretacja statusu
                     const val = d.available;
-                    // Hotres: '0', 0, false -> BOOKED
-                    // Inne -> AVAILABLE
                     let isBooked = false;
+                    // Logika statusu: 0/false -> booked
                     if (val === 0 || val === '0' || val === false) isBooked = true;
                     
                     const targetStatus = isBooked ? 'booked' : 'available';
 
-                    // Sprawdź czy mamy to w bazie
                     const key = `${unitId}_${dateStr}`;
                     const existingRow = dbMap.get(key);
 
-                    // Przygotuj obiekt do zapisu
                     const payload: any = {
                         unit_id: unitId,
                         date: dateStr,
                         status: targetStatus,
-                        // Zachowaj reservation_id jeśli istnieje w bazie
                         reservation_id: existingRow?.reservation_id || null
                     };
 
                     if (existingRow) {
                         payload.id = existingRow.id; // UPDATE
                     }
-                    // else INSERT (brak pola id)
+                    // else INSERT
 
                     rowsToUpsert.push(payload);
                     processedDates++;
@@ -335,10 +331,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         }
 
         if (matchedUnits === 0) {
-            throw new Error(`Nie dopasowano żadnych pokoi! Sprawdź czy "ID Hotres" w edycji kwater (Units) zgadza się z ID w Hotres. (Dostępne ExternalIDs w bazie: ${Array.from(unitMap.keys()).join(', ')})`);
+            throw new Error(`Nie dopasowano żadnych pokoi! Sprawdź ID w bazie. (Dostępne ID w Hotres: ${itemsToProcess.map((i: any) => i.type_id).join(', ')})`);
         }
 
-        console.log(`[SYNC PREPARE] Matched Units: ${matchedUnits}. Dates to process: ${processedDates}.`);
+        console.log(`[SYNC PREPARE] Matched: ${matchedUnits}. Dates: ${processedDates}.`);
 
         // 4. Batch Upsert
         const BATCH_SIZE = 500;
@@ -351,13 +347,12 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             }
         }
 
-        // Aktualizacja timestampu synchronizacji
         await supabase.from('properties').update({ 
             availability_last_synced_at: new Date().toISOString(),
             availability_sync_in_progress: false
         }).eq('id', propertyId);
 
-        return `Pobrano i zapisano ${rowsToUpsert.length} dni dostępności. (Zakres: ${fromDate} - ${tillDate})`;
+        return `Sukces! Zapisano ${rowsToUpsert.length} dni. (Zakres: ${fromDate} - ${tillDate})`;
 
     } catch (e: any) {
         await supabase.from('properties').update({ availability_sync_in_progress: false }).eq('id', propertyId);
