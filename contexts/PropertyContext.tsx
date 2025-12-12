@@ -114,12 +114,46 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     setProperties(prev => prev.filter(p => p.id !== id));
   };
 
-  const importFromHotres = async (oid: string, propertyId: string) => {
-    // 1. Fetch XML from proxy
-    const response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(`https://hotres.pl/xml/cennik_xml.php?oid=${oid}&kod_waluty=PLN`)}`);
-    const json = await response.json();
+  // Helper function to fetch XML with robust proxy fallback
+  const fetchXmlWithProxy = async (targetUrl: string): Promise<Document> => {
+    let xmlText = '';
+    
+    try {
+        // 1. Try corsproxy.io (usually most reliable for raw content)
+        const response = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`);
+        if (!response.ok) throw new Error('CorsProxy failed');
+        xmlText = await response.text();
+    } catch (err) {
+        console.warn('Primary proxy failed, trying backup...', err);
+        try {
+            // 2. Try allorigins.win RAW
+            const response = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`);
+            if (!response.ok) throw new Error('AllOrigins failed');
+            xmlText = await response.text();
+        } catch (err2) {
+             console.warn('Backup proxy failed', err2);
+             // 3. Last resort: allorigins GET (JSON wrapper)
+             const response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`);
+             const json = await response.json();
+             if (!json.contents) throw new Error('AllOrigins JSON failed');
+             xmlText = json.contents;
+        }
+    }
+
+    if (!xmlText || xmlText.trim().length === 0) {
+        throw new Error("Pobrany plik XML jest pusty.");
+    }
+
     const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(json.contents, "text/xml");
+    const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+    if (xmlDoc.getElementsByTagName("parsererror").length > 0) {
+        throw new Error("Błąd parsowania XML z Hotres.");
+    }
+    return xmlDoc;
+  };
+
+  const importFromHotres = async (oid: string, propertyId: string) => {
+    const xmlDoc = await fetchXmlWithProxy(`https://hotres.pl/xml/cennik_xml.php?oid=${oid}&kod_waluty=PLN`);
 
     // 2. Parse Rooms
     const rooms = Array.from(xmlDoc.getElementsByTagName("pokoj"));
@@ -207,10 +241,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     await supabase.from('properties').update({ availability_sync_in_progress: true }).eq('id', propertyId);
 
     try {
-        const response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(`https://hotres.pl/xml/dostepnosc_xml.php?oid=${oid}`)}`);
-        const json = await response.json();
-        const parser = new DOMParser();
-        const xmlDoc = parser.parseFromString(json.contents, "text/xml");
+        const xmlDoc = await fetchXmlWithProxy(`https://hotres.pl/xml/dostepnosc_xml.php?oid=${oid}`);
 
         const rooms = Array.from(xmlDoc.getElementsByTagName("pokoj"));
         let changesCount = 0;
