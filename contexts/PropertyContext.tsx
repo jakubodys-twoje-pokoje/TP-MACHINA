@@ -161,6 +161,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
     for (const room of rooms) {
       const externalId = room.getElementsByTagName("id_pokoju")[0]?.textContent;
+      const externalTypeId = room.getElementsByTagName("id_typu")[0]?.textContent || null;
       const name = room.getElementsByTagName("nazwa")[0]?.textContent;
       const type = room.getElementsByTagName("typ")[0]?.textContent || 'Standard';
       
@@ -188,6 +189,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             capacity: capacity,
             area: area,
             external_id: externalId,
+            external_type_id: externalTypeId,
             description: `Import z Hotres (OID: ${oid})`
           });
         }
@@ -223,18 +225,20 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         if (!units || units.length === 0) throw new Error("Brak kwater (Units) w bazie. Najpierw wykonaj Import/Dodaj kwatery.");
 
         // Mapa ExternalID -> UnitUUID
-        // Mapujemy zarówno external_id jak i external_type_id na ID jednostki, aby zwiększyć szansę trafienia
+        // PRIORYTET: external_type_id
         const unitMap = new Map<string, string>();
         units.forEach((u: any) => {
+            // Najpierw ładujemy fallback (ID pokoju), żeby ewentualny Type ID mógł go nadpisać jako ważniejszy
             if (u.external_id) unitMap.set(String(u.external_id).trim(), u.id);
+            // Teraz ładujemy główny klucz (ID typu), nadpisując w razie konfliktu
             if (u.external_type_id) unitMap.set(String(u.external_type_id).trim(), u.id);
         });
 
-        // Wypisujemy pełną listę pokoi z bazy w formacie JSON, aby łatwo było porównać
-        console.log("[SYNC DEBUG] Baza danych (Szczegóły):", JSON.stringify(units.map(u => ({ 
+        // Wypisujemy pełną listę pokoi z bazy w formacie JSON
+        console.log("[SYNC DEBUG] Baza danych (Pokoje):", JSON.stringify(units.map(u => ({ 
             name: u.name, 
-            external_id: u.external_id,
-            external_type_id: u.external_type_id 
+            ext_id: u.external_id,
+            ext_type_id: u.external_type_id 
         })), null, 2));
 
         // 2. Sztywne ustawienie na rok 2026
@@ -263,7 +267,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
              
              try {
                 jsonData = JSON.parse(jsonText);
-                // Double parse check
                 if (typeof jsonData === 'string') {
                     jsonData = JSON.parse(jsonData);
                 }
@@ -272,10 +275,8 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                 continue; 
              }
              
-             // Check API error explicitly
              if (jsonData && jsonData.result === 'error') {
                  console.error(`Hotres API Error for ${year}: ${jsonData.message}`);
-                 // Kontynuujemy, może inne lata zadziałają
                  continue; 
              }
 
@@ -301,10 +302,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                  continue;
              }
 
-             // Wyświetlamy pobrane ID jako prosty ciąg znaków
+             // Wyświetlamy pobrane ID z API
              console.log(`[SYNC DEBUG] API IDs for ${year}:`, itemsToProcess.map(i => i.type_id).join(', '));
 
-             // 3. Pobierz ISTNIEJĄCE wpisy dla danego roku (Manual Upsert)
+             // 3. Pobierz ISTNIEJĄCE wpisy dla danego roku
              const unitIds = units.map(u => u.id);
              const { data: existingRows } = await supabase
                 .from('availability')
@@ -359,7 +360,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
              }
              
              if (mismatchedCount > 0) {
-                 console.warn(`[SYNC WARNING] Year ${year}: Skipped ${mismatchedCount} items due to ID mismatch. Check console logs for DB vs API IDs.`);
+                 console.warn(`[SYNC WARNING] Year ${year}: Skipped ${mismatchedCount} items. IDs from API (${itemsToProcess.map(i => i.type_id).join(',')}) not found in DB 'external_type_id' or 'external_id'.`);
              }
 
              // 5. Zapis do bazy
@@ -381,7 +382,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         }).eq('id', propertyId);
         
         if (totalUpserted === 0) {
-            throw new Error(`Pobrano dane (2026), ale zapisano 0 dni. IDs z Hotres nie pasują do bazy.\nSprawdź konsolę (F12), porównaj 'API IDs' z 'Baza danych (Szczegóły)'.`);
+            throw new Error(`Pobrano dane (2026), ale zapisano 0 dni. Prawdopodobnie IDs z Hotres (type_id) nie pasują do bazy (external_type_id).\nEdytuj kwatery w zakładce 'Kwatery' i wpisz poprawne ID (zobacz konsolę F12).`);
         }
 
         return `Sukces! Zapisano ${totalUpserted} dni (2026).`;

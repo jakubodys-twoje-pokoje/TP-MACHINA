@@ -177,7 +177,7 @@ export const UnitsView: React.FC = () => {
             <Key size={14}/>
             <div>
                 <div>{unit.external_id} <span className="text-slate-600">(pokój)</span></div>
-                <div className="mt-1">{unit.external_type_id} <span className="text-slate-600">(typ)</span></div>
+                <div className="mt-1 font-bold text-indigo-300">{unit.external_type_id} <span className="text-slate-500 font-normal">(typ)</span></div>
             </div>
         </span>
       </td>
@@ -210,7 +210,12 @@ export const UnitsView: React.FC = () => {
          <input type="text" name="photo_url" value={editFormData.photo_url || ''} onChange={handleFormChange} className="w-24 bg-slate-900 border border-border text-white rounded p-1 text-xs" placeholder="URL zdjęcia"/>
        </td>
        <td className="px-4 py-3"><input type="text" name="name" value={editFormData.name || ''} onChange={handleFormChange} className="w-full bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
-       <td className="px-4 py-3"></td>
+       <td className="px-4 py-3">
+          <div className="space-y-1">
+             <input type="text" name="external_id" value={editFormData.external_id || ''} onChange={handleFormChange} className="w-20 bg-slate-900 border border-border text-white rounded p-1 text-xs font-mono" placeholder="ID Pokój"/>
+             <input type="text" name="external_type_id" value={editFormData.external_type_id || ''} onChange={handleFormChange} className="w-20 bg-slate-900 border border-indigo-500/50 text-indigo-200 rounded p-1 text-xs font-mono" placeholder="ID Typ"/>
+          </div>
+       </td>
        <td className="px-4 py-3"><input type="number" name="max_adults" value={editFormData.max_adults ?? ''} onChange={handleFormChange} className="w-16 bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
        <td className="px-4 py-3"></td>
        <td className="px-4 py-3"><input type="number" name="area" value={editFormData.area ?? ''} onChange={handleFormChange} className="w-16 bg-slate-900 border border-border text-white rounded p-1 text-sm"/></td>
