@@ -114,19 +114,19 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   };
 
   const fetchWithProxy = async (targetUrl: string): Promise<string> => {
-    // Używamy corsproxy.io jako najstabilniejszego rozwiązania
-    // Dodajemy timestamp (_t) żeby uniknąć cache'owania
+    // Proste proxy, bez kombinacji - wersja stabilna
     const noCacheUrl = `${targetUrl}&_t=${Date.now()}`;
     const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(noCacheUrl)}`;
     
     try {
         const res = await fetch(proxyUrl);
-        if (!res.ok) throw new Error(`Proxy status: ${res.status}`);
+        if (!res.ok) throw new Error(`Proxy HTTP error: ${res.status}`);
         return await res.text();
     } catch (e: any) {
-        console.warn("Proxy failed, trying direct fetch (will fail if no CORS plugin)...");
-        // Fallback: próba bezpośrednia (zadziała tylko z wtyczką CORS w przeglądarce)
+        console.warn("Proxy failed, trying direct fetch...");
+        // Fallback dla wtyczek CORS lub localhost
         const resDirect = await fetch(noCacheUrl);
+        if (!resDirect.ok) throw new Error(`Direct HTTP error: ${resDirect.status}`);
         return await resDirect.text();
     }
   };
@@ -190,7 +190,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       }
   };
 
-  // Generator UUID v4 (konieczny, bo baza nie generuje ID sama dla tej tabeli)
+  // Prosty generator UUID v4
   const uuidv4 = () => {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
       const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
@@ -208,61 +208,52 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const apiUser = "admin@twojepokoje.com.pl";
         const apiPass = "Admin123@@";
 
-        // 1. Pobierz Unit-y
+        // 1. Pobierz Kwatery
         const { data: units } = await supabase.from('units').select('id, name, external_id, external_type_id').eq('property_id', propertyId);
-        if (!units || units.length === 0) throw new Error("Brak kwater. Wykonaj Import.");
+        if (!units || units.length === 0) throw new Error("Brak kwater w bazie.");
 
-        // Mapa ID
+        // Mapa ID -> Unit UUID
         const unitMap = new Map<string, string>();
         units.forEach((u: any) => {
             if (u.external_id) unitMap.set(String(u.external_id).trim(), u.id);
             if (u.external_type_id) unitMap.set(String(u.external_type_id).trim(), u.id);
         });
 
-        console.log("[SYNC DEBUG] Baza:", units.map(u => u.external_type_id).join(', '));
-
-        // 2. Sztywny rok 2026
+        // 2. Pobierz dane z Hotres (tylko 2026)
         const year = 2026;
         const fromDate = `${year}-01-01`;
         const tillDate = `${year}-12-31`;
-             
-        console.log(`[SYNC] Pobieram rok: ${year}`);
-             
+        
+        console.log(`[SYNC] Pobieranie danych dla roku ${year}...`);
+        
         const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`;
-        
         const rawResponse = await fetchWithProxy(targetUrl);
-        const jsonText = rawResponse.trim().replace(/^\uFEFF/, '');
         
+        const jsonText = rawResponse.trim().replace(/^\uFEFF/, '');
         let jsonData: any;
         try {
             jsonData = JSON.parse(jsonText);
             if (typeof jsonData === 'string') jsonData = JSON.parse(jsonData);
         } catch (e) {
-            console.error(`Błąd parsowania JSON dla 2026`);
-            throw new Error("Otrzymano błędny format danych z Hotres API");
-        }
-             
-        if (jsonData && jsonData.result === 'error') {
-            throw new Error(`API Error: ${jsonData.message}`);
+            throw new Error("Błąd parsowania odpowiedzi z Hotres.");
         }
 
-        // Ekstrakcja danych - Hotres API to chaos
+        if (jsonData && jsonData.result === 'error') {
+            throw new Error(`Hotres API Error: ${jsonData.message}`);
+        }
+
         let itemsToProcess: any[] = [];
         if (Array.isArray(jsonData)) {
             itemsToProcess = jsonData;
         } else if (typeof jsonData === 'object' && jsonData !== null) {
-            const potentialItems = Object.values(jsonData);
-            const nestedArray = potentialItems.find(v => Array.isArray(v) && v.length > 0 && (v[0].type_id || v[0].dates));
-            if (nestedArray) {
-                itemsToProcess = nestedArray as any[];
-            } else {
-                itemsToProcess = potentialItems.filter((val: any) => val && typeof val === 'object' && (val.type_id || Array.isArray(val.dates)));
-            }
+            const vals = Object.values(jsonData);
+            const foundArr = vals.find(v => Array.isArray(v) && v.length > 0 && (v[0].type_id || v[0].dates));
+            itemsToProcess = foundArr ? (foundArr as any[]) : vals.filter((v: any) => v && (v.type_id || v.dates));
         }
 
-        console.log(`[SYNC] API IDs:`, itemsToProcess.map(i => i.type_id).join(', '));
+        console.log(`[SYNC] Znaleziono ${itemsToProcess.length} kwater w API.`);
 
-        // 3. Pobierz istniejące wpisy
+        // 3. Pobierz aktualny stan z bazy
         const unitIds = units.map(u => u.id);
         const { data: existingRows } = await supabase
             .from('availability')
@@ -271,47 +262,54 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             .gte('date', fromDate)
             .lte('date', tillDate);
         
-        const dbMap = new Map<string, { id: string, status: string, reservation_id: any }>();
+        const dbMap = new Map<string, any>();
         existingRows?.forEach(row => {
             dbMap.set(`${row.unit_id}_${normalizeDate(row.date)}`, row);
         });
 
         const rowsToUpsert: any[] = [];
+        const processedKeys = new Set<string>(); // Unikamy duplikatów w ramach jednego wsadu
 
-        // 4. Przygotuj dane
+        // 4. Mapowanie
         for (const item of itemsToProcess) {
             const extId = String(item.type_id).trim();
             const unitId = unitMap.get(extId);
             
             if (unitId && item.dates && Array.isArray(item.dates)) {
-                item.dates.forEach((d: any) => {
+                for (const d of item.dates) {
                     const dateStr = normalizeDate(d.date);
+                    
+                    // Deduplikacja w pamięci
+                    const key = `${unitId}_${dateStr}`;
+                    if (processedKeys.has(key)) continue;
+                    processedKeys.add(key);
+
                     const isBooked = (d.available === 0 || d.available === '0' || d.available === false);
                     const targetStatus = isBooked ? 'booked' : 'available';
-                    
-                    const key = `${unitId}_${dateStr}`;
+
                     const existingRow = dbMap.get(key);
 
-                    // Jeśli status się nie zmienił, pomijamy (opcjonalna optymalizacja)
-                    // if (existingRow && existingRow.status === targetStatus) return;
-
                     rowsToUpsert.push({
-                        id: existingRow ? existingRow.id : uuidv4(), // Fix: Generuj ID jeśli nowy
+                        id: existingRow ? existingRow.id : uuidv4(),
                         unit_id: unitId,
                         date: dateStr,
                         status: targetStatus,
                         reservation_id: existingRow?.reservation_id || null
                     });
-                });
+                }
             }
         }
 
-        // 5. Zapisz w paczkach
+        // 5. Zapis (w paczkach po 500)
         if (rowsToUpsert.length > 0) {
             const BATCH_SIZE = 500;
             for (let i = 0; i < rowsToUpsert.length; i += BATCH_SIZE) {
                 const batch = rowsToUpsert.slice(i, i + BATCH_SIZE);
-                const { error: upsertError } = await supabase.from('availability').upsert(batch);
+                // FIX: Dodano onConflict aby obsłużyć błąd "duplicate key value"
+                // Mówimy bazie: jeśli para (unit_id, date) już istnieje, zrób update, zamiast krzyczeć.
+                const { error: upsertError } = await supabase
+                    .from('availability')
+                    .upsert(batch, { onConflict: 'unit_id,date' });
                 if (upsertError) throw upsertError;
             }
         }
@@ -320,12 +318,8 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             availability_last_synced_at: new Date().toISOString(),
             availability_sync_in_progress: false
         }).eq('id', propertyId);
-        
-        if (rowsToUpsert.length === 0) {
-            throw new Error("Pobrano dane, ale nie dopasowano ID kwater. Sprawdź 'ID Typu' w edycji kwatery.");
-        }
 
-        return `Zapisano ${rowsToUpsert.length} dni (2026).`;
+        return `Zapisano ${rowsToUpsert.length} zmian dla roku ${year}.`;
 
     } catch (e: any) {
         await supabase.from('properties').update({ availability_sync_in_progress: false }).eq('id', propertyId);
