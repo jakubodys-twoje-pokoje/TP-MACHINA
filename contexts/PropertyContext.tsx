@@ -195,60 +195,49 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   };
 
-  const groupDatesIntoRanges = (dates: string[]) => {
-    if (dates.length === 0) return [];
-    const sortedDates = dates.sort();
-    const ranges: { start: string, end: string }[] = [];
-    let rangeStart = sortedDates[0];
-    let prevDate = new Date(sortedDates[0]);
-
-    for (let i = 1; i < sortedDates.length; i++) {
-        const currentDate = new Date(sortedDates[i]);
-        const diffTime = Math.abs(currentDate.getTime() - prevDate.getTime());
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-
-        if (diffDays > 1) {
-            ranges.push({ start: rangeStart, end: sortedDates[i-1] });
-            rangeStart = sortedDates[i];
-        }
-        prevDate = currentDate;
-    }
-    ranges.push({ start: rangeStart, end: sortedDates[sortedDates.length - 1] });
-    return ranges;
+  const normalizeDate = (dateInput: string): string => {
+      try {
+          if (!dateInput) return "";
+          // Format YYYY-MM-DD
+          if (dateInput.includes('T')) {
+              return dateInput.split('T')[0];
+          }
+          return dateInput.substring(0, 10);
+      } catch (e) {
+          return String(dateInput).substring(0, 10);
+      }
   };
 
   const syncAvailability = async (oid: string, propertyId: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Brak autoryzacji");
 
-    const { data: propCheck } = await supabase.from('properties').select('availability_sync_in_progress, availability_last_synced_at').eq('id', propertyId).single();
-    if (propCheck?.availability_sync_in_progress) {
-        console.warn("Synchronizacja już trwa.");
-        return "Pominięto (inna synchronizacja w toku)";
-    }
-
+    // Reset statusu na start, aby uniknąć zablokowania
     await supabase.from('properties').update({ availability_sync_in_progress: true }).eq('id', propertyId);
 
     try {
         const apiUser = "admin@twojepokoje.com.pl";
         const apiPass = "Admin123@@";
 
-        const fromDate = '2026-01-01';
+        // Ustawiamy szeroki zakres dat "na sztywno", żeby pokryć grudzień 2024, styczeń 2025 i cały 2026.
+        // Rozwiązuje to problem "W grudniu zostało kilka dni".
+        const fromDate = '2024-01-01';
         const tillDate = '2026-12-31';
 
         const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`;
         
-        console.log(`Syncing range: ${fromDate} to ${tillDate}`);
+        console.log(`[SYNC START] Range: ${fromDate} - ${tillDate}, OID: ${oid}`);
 
         const rawResponse = await fetchWithProxy(targetUrl);
+        // Usuwamy BOM i białe znaki
         const jsonText = rawResponse.trim().replace(/^\uFEFF/, '');
         
         let jsonData: any;
         try {
             jsonData = JSON.parse(jsonText);
         } catch (e) {
-            console.error("JSON Parse Error", jsonText);
-            throw new Error("Błąd parsowania JSON z Hotres.");
+            console.error("JSON Parse Error. Raw text prefix:", jsonText.substring(0, 100));
+            throw new Error("Błąd parsowania odpowiedzi z Hotres.");
         }
 
         if (!Array.isArray(jsonData)) {
@@ -258,158 +247,121 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
              }
         }
 
-        let changesCount = 0;
-        let matchedUnitsCount = 0;
+        if (!jsonData || jsonData.length === 0) {
+            throw new Error("Pusta odpowiedź z Hotres (brak danych o pokojach). Sprawdź poprawność OID.");
+        }
         
+        // 1. Pobierz Unit-y z bazy
         const { data: units } = await supabase.from('units').select('id, name, external_id').eq('property_id', propertyId);
-        if (!units) throw new Error("Nie znaleziono kwater w bazie.");
+        if (!units || units.length === 0) throw new Error("Brak kwater (Units) w bazie. Najpierw wykonaj Import/Dodaj kwatery.");
 
-        const unitMap = new Map<string, { id: string; name: string }>();
+        // Mapa ExternalID -> UnitUUID
+        const unitMap = new Map<string, string>();
         units.forEach((u: any) => {
             if (u.external_id) {
-                unitMap.set(String(u.external_id).trim(), u);
+                // Normalizacja ID: trim
+                unitMap.set(String(u.external_id).trim(), u.id);
             }
         });
 
-        const rowsToInsert: any[] = [];
-        const rowsToUpdate: any[] = [];
-        const newNotifications: any[] = [];
+        // 2. Pobierz ISTNIEJĄCE wpisy w bazie availability, aby zrobić "Manual Upsert" (zachować ID)
+        const unitIds = units.map(u => u.id);
+        
+        // Dzielimy na mniejsze zapytania select jeśli zakres jest duży, ale tutaj 2 lata dla kilku pokoi powinno przejść
+        const { data: existingRows } = await supabase
+            .from('availability')
+            .select('id, unit_id, date, status, reservation_id')
+            .in('unit_id', unitIds)
+            .gte('date', fromDate)
+            .lte('date', tillDate);
+        
+        // Mapa klucza unikalności: "unitUUID_YYYY-MM-DD" -> { id, status }
+        const dbMap = new Map<string, { id: string, status: string, reservation_id: any }>();
+        existingRows?.forEach(row => {
+            const dateKey = normalizeDate(row.date);
+            dbMap.set(`${row.unit_id}_${dateKey}`, row);
+        });
 
+        const rowsToUpsert: any[] = [];
+        let matchedUnits = 0;
+        let processedDates = 0;
+
+        // 3. Iterujemy po danych z Hotres
         for (const item of jsonData) {
-            const typeId = String(item.type_id).trim();
-            const unit = unitMap.get(typeId);
+            const extId = String(item.type_id).trim();
+            const unitId = unitMap.get(extId);
 
-            if (!unit) continue;
-            matchedUnitsCount++;
+            if (!unitId) {
+                console.warn(`[Sync] Pominięto Hotres ID: ${extId} - brak odpowiednika w bazie.`);
+                continue;
+            }
+            matchedUnits++;
 
-            if (!item.dates || !Array.isArray(item.dates)) continue;
+            if (item.dates && Array.isArray(item.dates)) {
+                item.dates.forEach((d: any) => {
+                    const dateStr = normalizeDate(d.date);
+                    
+                    // Interpretacja statusu
+                    const val = d.available;
+                    // Hotres: '0', 0, false -> BOOKED
+                    // Inne -> AVAILABLE
+                    let isBooked = false;
+                    if (val === 0 || val === '0' || val === false) isBooked = true;
+                    
+                    const targetStatus = isBooked ? 'booked' : 'available';
 
-            const datesToBlock: string[] = [];
-            const datesToFree: string[] = [];
-            
-            const { data: currentDbAvailability } = await supabase
-                .from('availability')
-                .select('id, date, status, reservation_id')
-                .eq('unit_id', unit.id)
-                .gte('date', fromDate)
-                .lte('date', tillDate);
-            
-            const currentDbMap = new Map<string, { id: string, status: string, reservation_id: any }>(); 
-            currentDbAvailability?.forEach(row => {
-                // Bezpieczne przycięcie daty do YYYY-MM-DD, aby klucze się zgadzały
-                const cleanDate = row.date.substring(0, 10);
-                currentDbMap.set(cleanDate, row);
-            });
+                    // Sprawdź czy mamy to w bazie
+                    const key = `${unitId}_${dateStr}`;
+                    const existingRow = dbMap.get(key);
 
-            item.dates.forEach((dateObj: any) => {
-                const dateStr = dateObj.date;
-                const rawVal = dateObj.available;
-
-                // LOGIKA: '0' = BOOKED, reszta AVAILABLE.
-                // Usuwamy białe znaki jeśli string
-                const valToCheck = typeof rawVal === 'string' ? rawVal.trim() : rawVal;
-                const isHotresBooked = String(valToCheck) === "0" || valToCheck === 0 || valToCheck === false;
-                
-                const targetStatus = isHotresBooked ? 'booked' : 'available';
-
-                const dbEntry = currentDbMap.get(dateStr);
-                const currentStatus = dbEntry?.status;
-                const currentId = dbEntry?.id;
-                const currentResId = dbEntry?.reservation_id || null;
-
-                // DIAGNOSTYKA
-                if (dateStr === '2026-01-11' || isHotresBooked) {
-                    // Logujemy tylko ciekawe przypadki (blokady lub konkretną datę)
-                    console.log(`[SYNC DEBUG] ${dateStr} Unit ${unit.id}: HotresVal=${valToCheck} -> Target=${targetStatus}. DB=${currentStatus}. ID=${currentId}`);
-                }
-
-                if (currentStatus !== targetStatus) {
-                    if (targetStatus === 'booked') datesToBlock.push(dateStr);
-                    else datesToFree.push(dateStr);
-
-                    const payload = {
-                        unit_id: unit.id,
+                    // Przygotuj obiekt do zapisu
+                    const payload: any = {
+                        unit_id: unitId,
                         date: dateStr,
                         status: targetStatus,
-                        reservation_id: currentResId
+                        // Zachowaj reservation_id jeśli istnieje w bazie
+                        reservation_id: existingRow?.reservation_id || null
                     };
 
-                    if (currentId) {
-                        rowsToUpdate.push({ ...payload, id: currentId });
-                    } else {
-                        rowsToInsert.push(payload);
+                    if (existingRow) {
+                        payload.id = existingRow.id; // UPDATE
                     }
-                }
-            });
+                    // else INSERT (brak pola id)
 
-            if (propCheck?.availability_last_synced_at) {
-                const blockRanges = groupDatesIntoRanges(datesToBlock);
-                const freeRanges = groupDatesIntoRanges(datesToFree);
-
-                blockRanges.forEach(range => {
-                    newNotifications.push({
-                        user_id: user.id,
-                        property_id: propertyId,
-                        unit_id: unit.id,
-                        property_name: "Twój Obiekt", 
-                        unit_name: unit.name,
-                        change_type: 'blocked',
-                        start_date: range.start,
-                        end_date: range.end,
-                        is_read: false
-                    });
-                });
-
-                freeRanges.forEach(range => {
-                    newNotifications.push({
-                         user_id: user.id,
-                         property_id: propertyId,
-                         unit_id: unit.id,
-                         property_name: "Twój Obiekt",
-                         unit_name: unit.name,
-                         change_type: 'available',
-                         start_date: range.start,
-                         end_date: range.end,
-                         is_read: false
-                    });
+                    rowsToUpsert.push(payload);
+                    processedDates++;
                 });
             }
-
-            changesCount += datesToBlock.length + datesToFree.length;
         }
 
-        console.log(`DB Operations: Inserts=${rowsToInsert.length}, Updates=${rowsToUpdate.length}`);
-        
-        const BATCH_SIZE = 1000;
-        for (let i = 0; i < rowsToInsert.length; i += BATCH_SIZE) {
-            const batch = rowsToInsert.slice(i, i + BATCH_SIZE);
-            const { error: insertError } = await supabase.from('availability').insert(batch);
-            if (insertError) console.error("Insert error chunk", i, insertError);
+        if (matchedUnits === 0) {
+            throw new Error(`Nie dopasowano żadnych pokoi! Sprawdź czy "ID Hotres" w edycji kwater (Units) zgadza się z ID w Hotres. (Dostępne ExternalIDs w bazie: ${Array.from(unitMap.keys()).join(', ')})`);
         }
 
-        for (let i = 0; i < rowsToUpdate.length; i += BATCH_SIZE) {
-            const batch = rowsToUpdate.slice(i, i + BATCH_SIZE);
-            // Upsert z explicit ID.
-            const { error: updateError } = await supabase.from('availability').upsert(batch, { onConflict: 'id' });
-            if (updateError) console.error("Update error chunk", i, updateError);
+        console.log(`[SYNC PREPARE] Matched Units: ${matchedUnits}. Dates to process: ${processedDates}.`);
+
+        // 4. Batch Upsert
+        const BATCH_SIZE = 500;
+        for (let i = 0; i < rowsToUpsert.length; i += BATCH_SIZE) {
+            const batch = rowsToUpsert.slice(i, i + BATCH_SIZE);
+            const { error: upsertError } = await supabase.from('availability').upsert(batch);
+            if (upsertError) {
+                console.error("Upsert Batch Error:", upsertError);
+                throw new Error(`Błąd zapisu do bazy: ${upsertError.message}`);
+            }
         }
 
-        if (newNotifications.length > 0) {
-             const { data: propName } = await supabase.from('properties').select('name').eq('id', propertyId).single();
-             const fixedNotifications = newNotifications.map(n => ({...n, property_name: propName?.name || 'Obiekt' }));
-             await supabase.from('notifications').insert(fixedNotifications);
-        }
-
+        // Aktualizacja timestampu synchronizacji
         await supabase.from('properties').update({ 
             availability_last_synced_at: new Date().toISOString(),
             availability_sync_in_progress: false
         }).eq('id', propertyId);
 
-        return `Zmian: ${changesCount} (Dodano: ${rowsToInsert.length}, Zaktualizowano: ${rowsToUpdate.length})`;
+        return `Pobrano i zapisano ${rowsToUpsert.length} dni dostępności. (Zakres: ${fromDate} - ${tillDate})`;
 
     } catch (e: any) {
         await supabase.from('properties').update({ availability_sync_in_progress: false }).eq('id', propertyId);
-        console.error(e);
+        console.error("Sync Exception:", e);
         throw e;
     }
   };
