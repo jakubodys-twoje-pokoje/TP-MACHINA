@@ -218,61 +218,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const apiUser = "admin@twojepokoje.com.pl";
         const apiPass = "Admin123@@";
 
-        // Sztywny zakres dat - obejmuje też 2026 jak w Twoim logu
-        const fromDate = '2024-01-01';
-        const tillDate = '2026-12-31';
-
-        const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`;
-        
-        console.log(`[SYNC START] Range: ${fromDate} - ${tillDate}, OID: ${oid}`);
-
-        const rawResponse = await fetchWithProxy(targetUrl);
-        const jsonText = rawResponse.trim().replace(/^\uFEFF/, '');
-        
-        let jsonData: any;
-        try {
-            jsonData = JSON.parse(jsonText);
-            
-            // --- CRITICAL FIX: Double encoded JSON check ---
-            if (typeof jsonData === 'string') {
-                console.log("[SYNC] Detected double-encoded JSON string, parsing again...");
-                jsonData = JSON.parse(jsonData);
-            }
-
-        } catch (e) {
-            console.error("JSON Parse Error. Raw text prefix:", jsonText.substring(0, 100));
-            throw new Error("Błąd parsowania odpowiedzi z Hotres.");
-        }
-
-        console.log(`[SYNC DEBUG] Data Type: ${typeof jsonData}, IsArray: ${Array.isArray(jsonData)}`);
-
-        // --- INTELLIGENT DATA EXTRACTION ---
-        let itemsToProcess: any[] = [];
-        
-        if (Array.isArray(jsonData)) {
-            itemsToProcess = jsonData;
-        } else if (typeof jsonData === 'object' && jsonData !== null) {
-             const potentialItems = Object.values(jsonData);
-             
-             // 1. Sprawdź czy któraś wartość w obiekcie TO WŁAŚNIE lista pokoi (zagnieżdżona tablica)
-             const nestedArray = potentialItems.find(v => Array.isArray(v) && v.length > 0 && (v[0].type_id || v[0].dates));
-             
-             if (nestedArray) {
-                 itemsToProcess = nestedArray as any[];
-                 console.log("[SYNC] Found nested array with rooms.");
-             } else {
-                 // 2. Jeśli nie, sprawdź czy obiekt jest mapą { id: {pokoj}, id2: {pokoj} }
-                 itemsToProcess = potentialItems.filter((val: any) => {
-                     return val && typeof val === 'object' && (val.type_id || Array.isArray(val.dates));
-                 });
-             }
-        }
-
-        if (itemsToProcess.length === 0) {
-            console.warn("[SYNC ERROR] Received Data Structure:", JSON.stringify(jsonData).substring(0, 500));
-            throw new Error(`Otrzymano dane (typ: ${typeof jsonData}), ale nie znaleziono w nich listy pokoi. Sprawdź konsolę.`);
-        }
-        
         // 1. Pobierz Unit-y z bazy
         const { data: units } = await supabase.from('units').select('id, name, external_id').eq('property_id', propertyId);
         if (!units || units.length === 0) throw new Error("Brak kwater (Units) w bazie. Najpierw wykonaj Import/Dodaj kwatery.");
@@ -285,95 +230,143 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             }
         });
 
-        // 2. Pobierz ISTNIEJĄCE wpisy w bazie availability
-        const unitIds = units.map(u => u.id);
-        const { data: existingRows } = await supabase
-            .from('availability')
-            .select('id, unit_id, date, status, reservation_id')
-            .in('unit_id', unitIds)
-            .gte('date', fromDate)
-            .lte('date', tillDate);
-        
-        const dbMap = new Map<string, { id: string, status: string, reservation_id: any }>();
-        existingRows?.forEach(row => {
-            const dateKey = normalizeDate(row.date);
-            dbMap.set(`${row.unit_id}_${dateKey}`, row);
-        });
+        // 2. Iteracja po latach (Chunking) aby ominąć limit 365 dni
+        const startYear = 2024;
+        const endYear = 2026;
+        let totalUpserted = 0;
 
-        const rowsToUpsert: any[] = [];
-        let matchedUnits = 0;
-        let processedDates = 0;
+        for (let year = startYear; year <= endYear; year++) {
+             const fromDate = `${year}-01-01`;
+             const tillDate = `${year}-12-31`;
+             
+             console.log(`[SYNC CHUNK] Processing Year: ${year}`);
+             
+             const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`;
+             
+             let rawResponse: string;
+             try {
+                 rawResponse = await fetchWithProxy(targetUrl);
+             } catch (fetchErr: any) {
+                 console.warn(`[SYNC] Failed to fetch year ${year}: ${fetchErr.message}`);
+                 continue; // Próbujemy następny rok
+             }
 
-        // 3. Iterujemy po poprawnie sparsowanej tablicy itemsToProcess
-        for (const item of itemsToProcess) {
-            const extId = String(item.type_id).trim();
-            const unitId = unitMap.get(extId);
+             const jsonText = rawResponse.trim().replace(/^\uFEFF/, '');
+             let jsonData: any;
+             
+             try {
+                jsonData = JSON.parse(jsonText);
+                // Double parse check
+                if (typeof jsonData === 'string') {
+                    jsonData = JSON.parse(jsonData);
+                }
+             } catch (e) {
+                console.error(`JSON Parse Error year ${year}.`);
+                continue; 
+             }
+             
+             // Check API error explicitly
+             if (jsonData && jsonData.result === 'error') {
+                 console.error(`Hotres API Error for ${year}: ${jsonData.message}`);
+                 // Kontynuujemy, może inne lata zadziałają
+                 continue; 
+             }
 
-            if (!unitId) {
-                // To normalne, że w API mogą być inne ID niż w bazie (np. stare pokoje), więc tylko warn
-                // console.warn(`[Sync] Pominięto Hotres ID: ${extId} - brak w bazie.`);
-                continue;
-            }
-            matchedUnits++;
+             // Extraction logic
+             let itemsToProcess: any[] = [];
+             if (Array.isArray(jsonData)) {
+                itemsToProcess = jsonData;
+             } else if (typeof jsonData === 'object' && jsonData !== null) {
+                 const potentialItems = Object.values(jsonData);
+                 const nestedArray = potentialItems.find(v => Array.isArray(v) && v.length > 0 && (v[0].type_id || v[0].dates));
+                 
+                 if (nestedArray) {
+                     itemsToProcess = nestedArray as any[];
+                 } else {
+                     itemsToProcess = potentialItems.filter((val: any) => {
+                         return val && typeof val === 'object' && (val.type_id || Array.isArray(val.dates));
+                     });
+                 }
+             }
+             
+             if (itemsToProcess.length === 0) {
+                 console.log(`[SYNC] No items found for year ${year}.`);
+                 continue;
+             }
 
-            if (item.dates && Array.isArray(item.dates)) {
-                item.dates.forEach((d: any) => {
-                    const dateStr = normalizeDate(d.date);
-                    
-                    const val = d.available;
-                    let isBooked = false;
-                    // Logika statusu: 0, "0", false -> booked. "1", 1, true -> available.
-                    if (val === 0 || val === '0' || val === false) isBooked = true;
-                    
-                    const targetStatus = isBooked ? 'booked' : 'available';
+             // 3. Pobierz ISTNIEJĄCE wpisy dla danego roku (Manual Upsert)
+             const unitIds = units.map(u => u.id);
+             const { data: existingRows } = await supabase
+                .from('availability')
+                .select('id, unit_id, date, status, reservation_id')
+                .in('unit_id', unitIds)
+                .gte('date', fromDate)
+                .lte('date', tillDate);
+            
+             const dbMap = new Map<string, { id: string, status: string, reservation_id: any }>();
+             existingRows?.forEach(row => {
+                const dateKey = normalizeDate(row.date);
+                dbMap.set(`${row.unit_id}_${dateKey}`, row);
+             });
 
-                    const key = `${unitId}_${dateStr}`;
-                    const existingRow = dbMap.get(key);
+             const rowsToUpsert: any[] = [];
 
-                    // Jeśli status w bazie jest taki sam i nie ma zmiany rezerwacji, można by pominąć,
-                    // ale dla pewności robimy upsert.
-                    
-                    const payload: any = {
-                        unit_id: unitId,
-                        date: dateStr,
-                        status: targetStatus,
-                        reservation_id: existingRow?.reservation_id || null
-                    };
+             // 4. Mapowanie danych
+             for (const item of itemsToProcess) {
+                const extId = String(item.type_id).trim();
+                const unitId = unitMap.get(extId);
+                if (!unitId) continue;
 
-                    if (existingRow) {
-                        payload.id = existingRow.id; // UPDATE
-                    }
-                    // else INSERT
+                if (item.dates && Array.isArray(item.dates)) {
+                    item.dates.forEach((d: any) => {
+                        const dateStr = normalizeDate(d.date);
+                        const val = d.available;
+                        let isBooked = false;
+                        if (val === 0 || val === '0' || val === false) isBooked = true;
+                        
+                        const targetStatus = isBooked ? 'booked' : 'available';
+                        const key = `${unitId}_${dateStr}`;
+                        const existingRow = dbMap.get(key);
 
-                    rowsToUpsert.push(payload);
-                    processedDates++;
-                });
-            }
-        }
+                        const payload: any = {
+                            unit_id: unitId,
+                            date: dateStr,
+                            status: targetStatus,
+                            reservation_id: existingRow?.reservation_id || null
+                        };
 
-        if (matchedUnits === 0) {
-            throw new Error(`Nie dopasowano żadnych pokoi! Sprawdź ID w bazie. (Dostępne ID w Hotres: ${itemsToProcess.map((i: any) => i.type_id).join(', ')})`);
-        }
-
-        console.log(`[SYNC PREPARE] Matched Units: ${matchedUnits}. Rows generated: ${processedDates}.`);
-
-        // 4. Batch Upsert
-        const BATCH_SIZE = 500;
-        for (let i = 0; i < rowsToUpsert.length; i += BATCH_SIZE) {
-            const batch = rowsToUpsert.slice(i, i + BATCH_SIZE);
-            const { error: upsertError } = await supabase.from('availability').upsert(batch);
-            if (upsertError) {
-                console.error("Upsert Batch Error:", upsertError);
-                throw new Error(`Błąd zapisu do bazy: ${upsertError.message}`);
-            }
+                        if (existingRow) {
+                            payload.id = existingRow.id; 
+                        }
+                        rowsToUpsert.push(payload);
+                    });
+                }
+             }
+             
+             // 5. Zapis do bazy
+             if (rowsToUpsert.length > 0) {
+                const BATCH_SIZE = 500;
+                for (let i = 0; i < rowsToUpsert.length; i += BATCH_SIZE) {
+                    const batch = rowsToUpsert.slice(i, i + BATCH_SIZE);
+                    const { error: upsertError } = await supabase.from('availability').upsert(batch);
+                    if (upsertError) throw upsertError;
+                }
+                totalUpserted += rowsToUpsert.length;
+                console.log(`[SYNC] Success for ${year}. Processed ${rowsToUpsert.length} days.`);
+             }
         }
 
         await supabase.from('properties').update({ 
             availability_last_synced_at: new Date().toISOString(),
             availability_sync_in_progress: false
         }).eq('id', propertyId);
+        
+        if (totalUpserted === 0) {
+            // Jeśli pętla przeszła, ale nic nie zapisano
+            throw new Error("Pobrano dane, ale liczba zapisanych dni wynosi 0. Sprawdź mapowanie ID pokoi lub logi konsoli.");
+        }
 
-        return `Sukces! Zapisano ${rowsToUpsert.length} dni. (Zakres: ${fromDate} - ${tillDate})`;
+        return `Sukces! Zapisano ${totalUpserted} dni (2024-2026).`;
 
     } catch (e: any) {
         await supabase.from('properties').update({ availability_sync_in_progress: false }).eq('id', propertyId);
