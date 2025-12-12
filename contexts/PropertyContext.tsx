@@ -218,7 +218,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const apiUser = "admin@twojepokoje.com.pl";
         const apiPass = "Admin123@@";
 
-        // Sztywny zakres dat
+        // Sztywny zakres dat - obejmuje też 2026 jak w Twoim logu
         const fromDate = '2024-01-01';
         const tillDate = '2026-12-31';
 
@@ -232,28 +232,45 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         let jsonData: any;
         try {
             jsonData = JSON.parse(jsonText);
+            
+            // --- CRITICAL FIX: Double encoded JSON check ---
+            if (typeof jsonData === 'string') {
+                console.log("[SYNC] Detected double-encoded JSON string, parsing again...");
+                jsonData = JSON.parse(jsonData);
+            }
+
         } catch (e) {
             console.error("JSON Parse Error. Raw text prefix:", jsonText.substring(0, 100));
             throw new Error("Błąd parsowania odpowiedzi z Hotres.");
         }
 
-        // --- NAPRAWA LOGIKI PARSOWANIA JSON ---
+        console.log(`[SYNC DEBUG] Data Type: ${typeof jsonData}, IsArray: ${Array.isArray(jsonData)}`);
+
+        // --- INTELLIGENT DATA EXTRACTION ---
         let itemsToProcess: any[] = [];
         
         if (Array.isArray(jsonData)) {
             itemsToProcess = jsonData;
         } else if (typeof jsonData === 'object' && jsonData !== null) {
-             // Jeśli to obiekt, wyciągamy wartości i sprawdzamy czy wyglądają na dane pokoi
              const potentialItems = Object.values(jsonData);
-             itemsToProcess = potentialItems.filter((val: any) => {
-                 // Sprawdzamy czy element ma strukturę danych pokoju (type_id lub dates)
-                 return val && typeof val === 'object' && (val.type_id || Array.isArray(val.dates));
-             });
+             
+             // 1. Sprawdź czy któraś wartość w obiekcie TO WŁAŚNIE lista pokoi (zagnieżdżona tablica)
+             const nestedArray = potentialItems.find(v => Array.isArray(v) && v.length > 0 && (v[0].type_id || v[0].dates));
+             
+             if (nestedArray) {
+                 itemsToProcess = nestedArray as any[];
+                 console.log("[SYNC] Found nested array with rooms.");
+             } else {
+                 // 2. Jeśli nie, sprawdź czy obiekt jest mapą { id: {pokoj}, id2: {pokoj} }
+                 itemsToProcess = potentialItems.filter((val: any) => {
+                     return val && typeof val === 'object' && (val.type_id || Array.isArray(val.dates));
+                 });
+             }
         }
 
         if (itemsToProcess.length === 0) {
-            console.warn("Received Data Structure:", jsonData);
-            throw new Error("Otrzymano dane z Hotres, ale nie znaleziono w nich listy pokoi. (jsonData is not iterable fix)");
+            console.warn("[SYNC ERROR] Received Data Structure:", JSON.stringify(jsonData).substring(0, 500));
+            throw new Error(`Otrzymano dane (typ: ${typeof jsonData}), ale nie znaleziono w nich listy pokoi. Sprawdź konsolę.`);
         }
         
         // 1. Pobierz Unit-y z bazy
@@ -293,7 +310,8 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             const unitId = unitMap.get(extId);
 
             if (!unitId) {
-                console.warn(`[Sync] Pominięto Hotres ID: ${extId} - brak w bazie.`);
+                // To normalne, że w API mogą być inne ID niż w bazie (np. stare pokoje), więc tylko warn
+                // console.warn(`[Sync] Pominięto Hotres ID: ${extId} - brak w bazie.`);
                 continue;
             }
             matchedUnits++;
@@ -304,7 +322,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                     
                     const val = d.available;
                     let isBooked = false;
-                    // Logika statusu: 0/false -> booked
+                    // Logika statusu: 0, "0", false -> booked. "1", 1, true -> available.
                     if (val === 0 || val === '0' || val === false) isBooked = true;
                     
                     const targetStatus = isBooked ? 'booked' : 'available';
@@ -312,6 +330,9 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                     const key = `${unitId}_${dateStr}`;
                     const existingRow = dbMap.get(key);
 
+                    // Jeśli status w bazie jest taki sam i nie ma zmiany rezerwacji, można by pominąć,
+                    // ale dla pewności robimy upsert.
+                    
                     const payload: any = {
                         unit_id: unitId,
                         date: dateStr,
@@ -334,7 +355,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             throw new Error(`Nie dopasowano żadnych pokoi! Sprawdź ID w bazie. (Dostępne ID w Hotres: ${itemsToProcess.map((i: any) => i.type_id).join(', ')})`);
         }
 
-        console.log(`[SYNC PREPARE] Matched: ${matchedUnits}. Dates: ${processedDates}.`);
+        console.log(`[SYNC PREPARE] Matched Units: ${matchedUnits}. Rows generated: ${processedDates}.`);
 
         // 4. Batch Upsert
         const BATCH_SIZE = 500;
