@@ -230,6 +230,8 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             }
         });
 
+        console.log("[SYNC DEBUG] Baza danych - Pokoje:", units.map(u => `${u.name} (ExtID: ${u.external_id})`));
+
         // 2. Iteracja po latach (Chunking) aby ominąć limit 365 dni
         const startYear = 2024;
         const endYear = 2026;
@@ -294,6 +296,8 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                  continue;
              }
 
+             console.log(`[SYNC DEBUG] API IDs for ${year}:`, itemsToProcess.map(i => i.type_id).join(', '));
+
              // 3. Pobierz ISTNIEJĄCE wpisy dla danego roku (Manual Upsert)
              const unitIds = units.map(u => u.id);
              const { data: existingRows } = await supabase
@@ -310,12 +314,17 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
              });
 
              const rowsToUpsert: any[] = [];
+             let mismatchedCount = 0;
 
              // 4. Mapowanie danych
              for (const item of itemsToProcess) {
                 const extId = String(item.type_id).trim();
                 const unitId = unitMap.get(extId);
-                if (!unitId) continue;
+                
+                if (!unitId) {
+                    mismatchedCount++;
+                    continue;
+                }
 
                 if (item.dates && Array.isArray(item.dates)) {
                     item.dates.forEach((d: any) => {
@@ -343,6 +352,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                 }
              }
              
+             if (mismatchedCount > 0) {
+                 console.warn(`[SYNC WARNING] Year ${year}: Skipped ${mismatchedCount} items due to ID mismatch. Check console logs for DB vs API IDs.`);
+             }
+
              // 5. Zapis do bazy
              if (rowsToUpsert.length > 0) {
                 const BATCH_SIZE = 500;
@@ -363,7 +376,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         
         if (totalUpserted === 0) {
             // Jeśli pętla przeszła, ale nic nie zapisano
-            throw new Error("Pobrano dane, ale liczba zapisanych dni wynosi 0. Sprawdź mapowanie ID pokoi lub logi konsoli.");
+            throw new Error(`Pobrano dane, ale zapisano 0 dni. Prawdopodobnie IDs z Hotres nie pasują do bazy.\nSprawdź konsolę (F12) -> zakładka Console, aby zobaczyć listę IDs.`);
         }
 
         return `Sukces! Zapisano ${totalUpserted} dni (2024-2026).`;
