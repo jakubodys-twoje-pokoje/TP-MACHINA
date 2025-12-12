@@ -243,7 +243,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const apiUser = "admin@twojepokoje.com.pl";
         const apiPass = "Admin123@@";
 
-        // TWARDA DATA: Cały rok 2026 (dokładnie 365 dni)
+        // TWARDA DATA: Cały rok 2026
         const fromDate = '2026-01-01';
         const tillDate = '2026-12-31';
 
@@ -266,7 +266,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             if (jsonData && typeof jsonData === 'object' && 'error' in jsonData) {
                 throw new Error(`Hotres API Error: ${jsonData.error}`);
             }
-            // Try object conversion
             const values = Object.values(jsonData);
             if (values.length > 0 && typeof values[0] === 'object') {
                 jsonData = values;
@@ -276,67 +275,98 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         }
 
         let changesCount = 0;
+        let matchedUnitsCount = 0;
         
         // 1. Pobierz kwatery z bazy
         const { data: units } = await supabase.from('units').select('id, name, external_id').eq('property_id', propertyId);
         if (!units) throw new Error("Nie znaleziono kwater w bazie.");
 
-        // Mapowanie external_id -> unit
+        // Mapowanie external_id -> unit (TRIMOWANIE ID)
         const unitMap = new Map<string, { id: string; name: string }>();
         units.forEach((u: any) => {
-            if (u.external_id) unitMap.set(String(u.external_id), u);
+            if (u.external_id) {
+                unitMap.set(String(u.external_id).trim(), u);
+            }
         });
 
-        const availabilityUpserts: any[] = [];
+        const rowsToInsert: any[] = [];
+        const rowsToUpdate: any[] = [];
         const newNotifications: any[] = [];
 
-        // Iteracja po danych z JSON (gdzie type_id to ID pokoju w Hotres)
+        // Iteracja po danych z JSON
         for (const item of jsonData) {
-            // Hotres zwraca "type_id". Zakładamy, że przy imporcie to samo ID trafiło do "external_id".
-            const typeId = String(item.type_id);
+            const typeId = String(item.type_id).trim();
             const unit = unitMap.get(typeId);
 
             if (!unit) {
-                // console.warn(`Pominięto type_id=${typeId} - brak odpowiednika w bazie units (external_id).`);
+                console.warn(`Nie znaleziono unitu w bazie dla ID Hotres: '${typeId}'`);
                 continue;
             }
+            matchedUnitsCount++;
 
             if (!item.dates || !Array.isArray(item.dates)) continue;
 
             const datesToBlock: string[] = [];
             const datesToFree: string[] = [];
             
-            // Pobierz aktualny stan dla tego unitu z bazy, aby zrobić diff
-            // Pobieramy tylko dla analizowanego okresu (2026)
+            // Pobierz aktualny stan dla tego unitu z bazy, aby zrobić diff i ZDOBYĆ ID ISTNIEJĄCEGO REKORDU
             const { data: currentDbAvailability } = await supabase
                 .from('availability')
-                .select('date, status')
+                .select('id, date, status, reservation_id') // Pobieramy ID i reservation_id
                 .eq('unit_id', unit.id)
                 .gte('date', fromDate)
                 .lte('date', tillDate);
             
-            const currentDbMap = new Map<string, string>(); 
-            currentDbAvailability?.forEach(row => currentDbMap.set(row.date, row.status));
+            // Mapujemy po dacie, ale przechowujemy cały obiekt (id, status, reservation_id)
+            const currentDbMap = new Map<string, { id: string, status: string, reservation_id: any }>(); 
+            currentDbAvailability?.forEach(row => currentDbMap.set(row.date, row));
 
             // Przetwarzanie dat z JSON
             item.dates.forEach((dateObj: any) => {
                 const dateStr = dateObj.date; // "YYYY-MM-DD"
-                // available: "0" = zajęty, "1" = wolny
-                // Czasami API zwraca liczby zamiast stringów
-                const isAvailable = String(dateObj.available) === "1";
-                const currentStatus = currentDbMap.get(dateStr);
+                const isAvailable = String(dateObj.available) === "1" || dateObj.available === true;
+                
+                const currentEntry = currentDbMap.get(dateStr);
+                const currentStatus = currentEntry?.status;
+                const currentId = currentEntry?.id;
+                const currentReservationId = currentEntry?.reservation_id;
+
+                // DIAGNOSTYKA DLA 11 STYCZNIA 2026
+                if (dateStr === '2026-01-11') {
+                    console.log(`[DEBUG 2026-01-11] Unit: ${unit.name} (ID: ${typeId}). API says Available? ${isAvailable}. DB Status: ${currentStatus}. DB ID: ${currentId}`);
+                }
+
+                let newStatus: 'available' | 'booked' | 'blocked' | null = null;
 
                 if (!isAvailable) {
-                    // Jest zajęty w API
-                    if (currentStatus !== 'booked' && currentStatus !== 'blocked') {
+                    // API: Zajęty
+                    if (currentStatus !== 'booked') {
+                        newStatus = 'booked';
                         datesToBlock.push(dateStr);
-                        availabilityUpserts.push({ unit_id: unit.id, date: dateStr, status: 'booked' });
                     }
                 } else {
-                    // Jest wolny w API
+                    // API: Wolny
                     if (currentStatus === 'booked' || currentStatus === 'blocked') {
+                        newStatus = 'available';
                         datesToFree.push(dateStr);
-                        availabilityUpserts.push({ unit_id: unit.id, date: dateStr, status: 'available' });
+                    }
+                }
+
+                // Jeśli status się zmienia, dodajemy do listy zadań
+                if (newStatus) {
+                    const payload = {
+                        unit_id: unit.id,
+                        date: dateStr,
+                        status: newStatus,
+                        reservation_id: currentReservationId // Zachowujemy reservation_id przy update
+                    };
+
+                    if (currentId) {
+                        // REKORD ISTNIEJE - ROBIMY UPDATE PO ID
+                        rowsToUpdate.push({ ...payload, id: currentId });
+                    } else {
+                        // REKORD NIE ISTNIEJE - ROBIMY INSERT
+                        rowsToInsert.push(payload);
                     }
                 }
             });
@@ -374,11 +404,15 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
                     });
                 });
             } else {
-                 // Pierwszy import - zapisz stany zajęte bez powiadomień
+                 // Pierwszy import - inserty dla stanów zajętych, których nie ma w bazie
                  item.dates.forEach((dateObj: any) => {
-                     // Sprawdzamy oba typy (number/string)
-                     if (String(dateObj.available) === "0" && !currentDbMap.has(dateObj.date)) {
-                         availabilityUpserts.push({ unit_id: unit.id, date: dateObj.date, status: 'booked' });
+                     const isAv = String(dateObj.available) === "1" || dateObj.available === true;
+                     const dStr = dateObj.date;
+                     if (!isAv && !currentDbMap.has(dStr)) {
+                         // Unikamy duplikatów jeśli już dodaliśmy wyżej
+                         if (!rowsToInsert.find(r => r.unit_id === unit.id && r.date === dStr)) {
+                             rowsToInsert.push({ unit_id: unit.id, date: dStr, status: 'booked' });
+                         }
                      }
                  });
             }
@@ -386,12 +420,23 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             changesCount += datesToBlock.length + datesToFree.length;
         }
 
-        // Batch Upsert
+        console.log(`Planowane operacje DB: Insert=${rowsToInsert.length}, Update=${rowsToUpdate.length}`);
+        
+        // Wykonanie INSERTÓW
         const BATCH_SIZE = 1000;
-        for (let i = 0; i < availabilityUpserts.length; i += BATCH_SIZE) {
-            const batch = availabilityUpserts.slice(i, i + BATCH_SIZE);
-            const { error: upsertError } = await supabase.from('availability').upsert(batch, { onConflict: 'unit_id, date' });
-            if (upsertError) console.error("Upsert error chunk", i, upsertError);
+        for (let i = 0; i < rowsToInsert.length; i += BATCH_SIZE) {
+            const batch = rowsToInsert.slice(i, i + BATCH_SIZE);
+            const { error: insertError } = await supabase.from('availability').insert(batch);
+            if (insertError) console.error("Insert error chunk", i, insertError);
+        }
+
+        // Wykonanie UPDATEÓW (niestety Supabase nie wspiera batch update w jednym zapytaniu bez funkcji po stronie SQL, 
+        // ale upsert z ID zadziała jako update).
+        for (let i = 0; i < rowsToUpdate.length; i += BATCH_SIZE) {
+            const batch = rowsToUpdate.slice(i, i + BATCH_SIZE);
+            // Upsert z podanym ID działa jak UPDATE
+            const { error: updateError } = await supabase.from('availability').upsert(batch);
+            if (updateError) console.error("Update error chunk", i, updateError);
         }
 
         if (newNotifications.length > 0) {
@@ -405,7 +450,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             availability_sync_in_progress: false
         }).eq('id', propertyId);
 
-        return `Zaktualizowano 2026. Wykryto zmian: ${changesCount}.`;
+        return `Dopasowano kwater: ${matchedUnitsCount}. Zmian: ${changesCount} (Ins: ${rowsToInsert.length}, Upd: ${rowsToUpdate.length})`;
 
     } catch (e: any) {
         await supabase.from('properties').update({ availability_sync_in_progress: false }).eq('id', propertyId);
