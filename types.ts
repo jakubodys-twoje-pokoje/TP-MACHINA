@@ -1,3 +1,4 @@
+
 export interface Property {
   id: string;
   user_id: string;
@@ -65,4 +66,29 @@ export interface PushSubscriptionDB {
   user_id: string;
   subscription: any;
   created_at: string;
+}
+
+// Workflow Types
+export interface WorkflowTask {
+  id: string;
+  user_id: string;
+  title: string;
+  created_at: string;
+}
+
+export interface WorkflowStatus {
+  id: string;
+  user_id: string;
+  label: string;
+  color: string; // Tailwind class e.g. 'bg-red-500'
+  created_at: string;
+}
+
+export interface WorkflowEntry {
+  id: string;
+  property_id: string;
+  task_id: string;
+  status_id: string | null;
+  comment: string | null;
+  updated_at: string;
 }
