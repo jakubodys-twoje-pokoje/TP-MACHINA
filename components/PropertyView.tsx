@@ -79,9 +79,14 @@ export const PropertyView: React.FC = () => {
       if (error) throw error;
       
       alert('Zapisano zmiany');
-    } catch (err) {
-      alert('Błąd zapisu');
+    } catch (err: any) {
       console.error(err);
+      // Sprawdzanie czy błąd dotyczy brakującej kolumny
+      if (err.message && (err.message.includes('hotres_id') || err.code === '42703')) {
+           alert("Błąd zapisu: W bazie danych brakuje kolumny 'hotres_id'. Wykonaj polecenie SQL w panelu Supabase.");
+      } else {
+           alert('Błąd zapisu: ' + (err.message || 'Wystąpił nieznany błąd'));
+      }
     } finally {
       setSaving(false);
     }

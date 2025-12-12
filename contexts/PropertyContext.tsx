@@ -114,42 +114,54 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     setProperties(prev => prev.filter(p => p.id !== id));
   };
 
-  // Helper function to fetch XML with robust proxy fallback
+  // Improved Helper function to fetch XML with robust multi-proxy fallback
   const fetchXmlWithProxy = async (targetUrl: string): Promise<Document> => {
-    let xmlText = '';
+    // Lista proxy do sprawdzenia w kolejności
+    const proxies = [
+      // 1. AllOrigins (JSON wrapper) - zazwyczaj najbardziej stabilne, omija CORS zwracając JSON
+      async () => {
+        const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`);
+        if (!res.ok) throw new Error(`AllOrigins status: ${res.status}`);
+        const data = await res.json();
+        return data.contents; 
+      },
+      // 2. CodeTabs - dobra alternatywa
+      async () => {
+        const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`);
+        if (!res.ok) throw new Error(`CodeTabs status: ${res.status}`);
+        return await res.text();
+      },
+      // 3. CorsProxy.io - bezpośrednie proxy
+      async () => {
+         const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`);
+         if (!res.ok) throw new Error(`CorsProxy status: ${res.status}`);
+         return await res.text();
+      }
+    ];
+
+    let lastError: any;
     
-    try {
-        // 1. Try corsproxy.io (usually most reliable for raw content)
-        const response = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`);
-        if (!response.ok) throw new Error('CorsProxy failed');
-        xmlText = await response.text();
-    } catch (err) {
-        console.warn('Primary proxy failed, trying backup...', err);
-        try {
-            // 2. Try allorigins.win RAW
-            const response = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`);
-            if (!response.ok) throw new Error('AllOrigins failed');
-            xmlText = await response.text();
-        } catch (err2) {
-             console.warn('Backup proxy failed', err2);
-             // 3. Last resort: allorigins GET (JSON wrapper)
-             const response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`);
-             const json = await response.json();
-             if (!json.contents) throw new Error('AllOrigins JSON failed');
-             xmlText = json.contents;
+    // Próbujemy po kolei
+    for (const proxyFetch of proxies) {
+      try {
+        const xmlText = await proxyFetch();
+        
+        if (xmlText && xmlText.trim().length > 0 && !xmlText.includes('Access Denied') && !xmlText.includes('404 Not Found')) {
+             const parser = new DOMParser();
+             const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+             // Sprawdź czy parser nie zwrócił błędu
+             if (xmlDoc.getElementsByTagName("parsererror").length === 0) {
+                 return xmlDoc; // Sukces!
+             }
         }
+      } catch (e) {
+        console.warn("Proxy attempt failed:", e);
+        lastError = e;
+      }
     }
 
-    if (!xmlText || xmlText.trim().length === 0) {
-        throw new Error("Pobrany plik XML jest pusty.");
-    }
-
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlText, "text/xml");
-    if (xmlDoc.getElementsByTagName("parsererror").length > 0) {
-        throw new Error("Błąd parsowania XML z Hotres.");
-    }
-    return xmlDoc;
+    // Jeśli pętla się skończy i nic nie zwróci:
+    throw new Error(`Nie udało się połączyć z Hotres przez żaden serwer pośredniczący. Błąd: ${lastError?.message || 'Brak danych'}`);
   };
 
   const importFromHotres = async (oid: string, propertyId: string) => {
