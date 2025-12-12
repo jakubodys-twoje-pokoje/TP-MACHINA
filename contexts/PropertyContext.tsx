@@ -246,26 +246,49 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         nextYear.setFullYear(nextYear.getFullYear() + 1);
         const tillDate = nextYear.toISOString().split('T')[0];
 
-        // Dane uwierzytelniające (powinny być w zmiennych środowiskowych lub bazie, ale używam podanych w prompt)
+        // Dane uwierzytelniające
         const apiUser = "admin@twojepokoje.com.pl";
         const apiPass = "Admin123@@";
 
         // Nowy URL API JSON
+        // Używamy encodeURIComponent dla parametrów, aby znaki specjalne (jak @ w haśle) nie psuły URL
         const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${today}&till=${tillDate}`;
         
         // Pobieramy surowy tekst przez proxy
-        const jsonText = await fetchWithProxy(targetUrl);
+        const rawResponse = await fetchWithProxy(targetUrl);
         
-        let jsonData: any[] = [];
+        // Czyszczenie odpowiedzi (usuwanie BOM, białych znaków)
+        const jsonText = rawResponse.trim().replace(/^\uFEFF/, '');
+        
+        console.log("Hotres Raw Response:", jsonText.substring(0, 500) + "..."); // Log for debugging
+
+        let jsonData: any;
         try {
             jsonData = JSON.parse(jsonText);
         } catch (e) {
             console.error("Failed to parse JSON", jsonText);
-            throw new Error("Otrzymano nieprawidłowy format danych JSON z Hotres.");
+            throw new Error("Otrzymano nieprawidłowy format danych (błąd parsowania JSON).");
         }
 
+        // Walidacja struktury
         if (!Array.isArray(jsonData)) {
-            throw new Error("Otrzymano nieprawidłową strukturę danych (nie jest tablicą).");
+            // Obsługa błędu zwróconego jako obiekt JSON
+            if (jsonData && typeof jsonData === 'object') {
+                if ('error' in jsonData) {
+                     throw new Error(`Hotres API Error: ${jsonData.error}`);
+                }
+                // Jeśli to obiekt ale nie ma pola error, spróbujmy przekonwertować go na tablicę (czasami PHP tak zwraca tablice)
+                const values = Object.values(jsonData);
+                if (values.length > 0 && typeof values[0] === 'object') {
+                    console.log("Converted object to array automatically");
+                    jsonData = values;
+                } else {
+                     console.error("Hotres Unexpected Object:", jsonData);
+                     throw new Error(`Otrzymano obiekt zamiast tablicy: ${JSON.stringify(jsonData).substring(0, 100)}...`);
+                }
+            } else {
+                throw new Error("Otrzymano nieprawidłową strukturę danych (nie jest tablicą ani obiektem).");
+            }
         }
 
         let changesCount = 0;
@@ -313,7 +336,8 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             item.dates.forEach((dateObj: any) => {
                 const dateStr = dateObj.date; // "YYYY-MM-DD"
                 // available: "0" = zajęty, "1" = wolny
-                const isAvailable = dateObj.available === "1";
+                // Czasami API zwraca liczby zamiast stringów
+                const isAvailable = String(dateObj.available) === "1";
                 const currentStatus = currentDbMap.get(dateStr);
 
                 if (!isAvailable) {
@@ -366,7 +390,8 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             } else {
                  // Pierwszy import - zapisz stany zajęte bez powiadomień
                  item.dates.forEach((dateObj: any) => {
-                     if (dateObj.available === "0" && !currentDbMap.has(dateObj.date)) {
+                     // Sprawdzamy oba typy (number/string)
+                     if (String(dateObj.available) === "0" && !currentDbMap.has(dateObj.date)) {
                          availabilityUpserts.push({ unit_id: unit.id, date: dateObj.date, status: 'booked' });
                      }
                  });
