@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { useProperties } from '../contexts/PropertyContext';
 import { WorkflowTask, WorkflowStatus, WorkflowEntry } from '../types';
-import { Plus, X, Loader2, Save, Trash2, Settings, MessageSquare, RefreshCw } from 'lucide-react';
+import { Plus, X, Loader2, Save, Trash2, Settings, MessageSquare, RefreshCw, Maximize2 } from 'lucide-react';
 
 const COLORS = [
   { label: 'Szary', class: 'bg-slate-600' },
@@ -206,70 +206,94 @@ export const WorkflowView: React.FC = () => {
   if (loading) return <div className="flex h-64 items-center justify-center"><Loader2 className="animate-spin text-indigo-500" /></div>;
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center border-b border-border pb-4">
+    <div className="flex flex-col h-[calc(100vh-120px)] overflow-hidden">
+      {/* HEADER */}
+      <div className="flex justify-between items-center pb-4 flex-shrink-0">
         <div>
            <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-             <RefreshCw size={24} className="text-indigo-400"/> Workflow Zespołowy
+             <RefreshCw size={24} className="text-indigo-400"/> Workflow
            </h2>
-           <p className="text-slate-400 text-sm">Wspólna tablica zadań dla wszystkich obiektów</p>
         </div>
         <div className="flex gap-2">
+            <button onClick={() => setIsPropertyModalOpen(true)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-slate-700">
+                <Plus size={16} /> Obiekt
+            </button>
+            <div className="w-px h-8 bg-slate-700 mx-1"></div>
             <button onClick={() => setIsStatusModalOpen(true)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-slate-700">
                 <Settings size={16} /> Statusy
             </button>
             <button onClick={() => setIsTaskModalOpen(true)} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
-                <Plus size={16} /> Dodaj kolumnę
+                <Plus size={16} /> Kolumna
             </button>
         </div>
       </div>
 
-      <div className="overflow-x-auto bg-surface rounded-xl border border-border shadow-xl pb-2">
-        <table className="w-full text-left border-collapse">
-          <thead>
+      {/* TABLE CONTAINER - SCROLLABLE */}
+      <div className="flex-1 overflow-auto bg-surface rounded-xl border border-border shadow-xl relative custom-scrollbar">
+        <table className="w-max border-collapse">
+          <thead className="sticky top-0 z-30">
             <tr>
-              <th className="p-4 bg-slate-900/80 text-slate-400 font-bold text-xs uppercase tracking-wider border-b border-border sticky left-0 z-10 w-64">
+              {/* TOP LEFT CORNER (FIXED) */}
+              <th className="p-4 bg-slate-900 text-slate-400 font-bold text-xs uppercase tracking-wider border-b border-r border-border sticky left-0 z-40 w-64 shadow-[2px_2px_5px_rgba(0,0,0,0.5)]">
                 Obiekt
               </th>
+              {/* TOP ROW HEADERS (STICKY TOP) */}
               {tasks.map(task => (
-                <th key={task.id} className="p-4 bg-slate-900/80 text-white font-bold text-sm border-b border-border border-l border-slate-800 min-w-[200px] group relative">
-                   <div className="flex justify-between items-center">
-                       {task.title}
-                       <button onClick={() => handleDeleteTask(task.id)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity">
+                <th key={task.id} className="p-3 bg-slate-900 text-white font-bold text-sm border-b border-border border-r border-slate-800 w-[220px] min-w-[220px] max-w-[220px] group relative">
+                   <div className="flex justify-between items-center w-full">
+                       <span className="truncate" title={task.title}>{task.title}</span>
+                       <button onClick={() => handleDeleteTask(task.id)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity flex-shrink-0 ml-2">
                            <Trash2 size={14} />
                        </button>
                    </div>
                 </th>
               ))}
-              {tasks.length === 0 && <th className="p-4 text-slate-500 italic font-normal text-sm border-b border-border">Dodaj kolumny zadań</th>}
+              {tasks.length === 0 && <th className="p-4 text-slate-500 italic font-normal text-sm border-b border-border w-full">Dodaj kolumny zadań</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {properties.map(property => (
               <tr key={property.id} className="hover:bg-slate-800/30 transition-colors">
-                <td className="p-4 font-medium text-white sticky left-0 bg-surface z-10 border-r border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.3)] align-top">
-                  {property.name}
+                {/* LEFT COLUMN (STICKY LEFT) */}
+                <td className="p-4 font-medium text-white bg-surface sticky left-0 z-20 border-r border-border border-b border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)] align-middle h-[70px]">
+                  <div className="truncate w-56" title={property.name}>{property.name}</div>
                 </td>
+                
+                {/* DATA CELLS */}
                 {tasks.map(task => {
                   const entry = getEntry(property.id, task.id);
                   const status = entry ? getStatus(entry.status_id) : null;
                   return (
                     <td 
                         key={task.id} 
-                        className="p-2 border-l border-slate-800 cursor-pointer relative group align-top"
+                        className="p-1 border-r border-b border-slate-800 cursor-pointer relative group align-middle h-[70px]"
                         onClick={() => openCellModal(property.id, task.id)}
                     >
-                      <div className={`w-full min-h-[42px] rounded flex flex-col justify-center px-3 py-2 transition-all gap-1 ${status ? status.color : 'bg-slate-900/50 hover:bg-slate-800'} ${status ? 'text-white shadow-sm' : 'text-slate-500'}`}>
-                         <div className="flex items-center justify-between">
-                             <span className="text-sm font-medium truncate">
-                                 {status ? status.label : <span className="opacity-30 text-xs">Brak</span>}
-                             </span>
-                         </div>
-                         {entry?.comment && (
-                             <div className={`text-xs mt-1 break-words font-normal leading-snug whitespace-pre-wrap ${status ? 'text-white/90' : 'text-slate-400 italic'}`}>
-                                 {entry.comment}
+                      <div className={`w-full h-full rounded flex flex-col justify-center px-3 py-1.5 transition-all gap-0.5 ${status ? status.color : 'hover:bg-slate-800 bg-transparent'} ${status ? 'text-white' : 'text-slate-500'}`}>
+                         
+                         {status ? (
+                            <>
+                                <div className="text-sm font-bold truncate">{status.label}</div>
+                                {entry?.comment && (
+                                    <div className="flex items-center gap-1 text-[11px] text-white/80 opacity-90">
+                                        <MessageSquare size={10} className="flex-shrink-0" />
+                                        <span className="truncate">{entry.comment}</span>
+                                    </div>
+                                )}
+                            </>
+                         ) : (
+                             <div className="w-full h-full flex items-center justify-center">
+                                 {entry?.comment ? (
+                                     <div className="flex items-center gap-1 text-slate-400">
+                                        <MessageSquare size={14} />
+                                        <span className="text-xs truncate max-w-[120px]">{entry.comment}</span>
+                                     </div>
+                                 ) : (
+                                     <span className="opacity-0 group-hover:opacity-20 text-xs uppercase font-bold text-center w-full">+</span>
+                                 )}
                              </div>
                          )}
+
                       </div>
                     </td>
                   );
@@ -277,17 +301,8 @@ export const WorkflowView: React.FC = () => {
                 {tasks.length === 0 && <td className="p-4"></td>}
               </tr>
             ))}
-            {properties.length === 0 && (
-                <tr><td colSpan={tasks.length + 1} className="p-8 text-center text-slate-500 italic">Brak obiektów. Dodaj je w panelu bocznym.</td></tr>
-            )}
           </tbody>
         </table>
-        
-        <div className="p-4 border-t border-border bg-slate-900/30">
-            <button onClick={() => setIsPropertyModalOpen(true)} className="text-sm text-indigo-400 hover:text-white flex items-center gap-2 transition-colors">
-                <Plus size={16} /> Dodaj nowy obiekt
-            </button>
-        </div>
       </div>
 
       {/* --- MODALS --- */}
@@ -380,7 +395,7 @@ export const WorkflowView: React.FC = () => {
              <div>
                 <label className="block text-xs font-medium text-slate-400 mb-1">Komentarz</label>
                 <textarea 
-                    rows={3}
+                    rows={4}
                     value={cellForm.comment}
                     onChange={e => setCellForm({...cellForm, comment: e.target.value})}
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
