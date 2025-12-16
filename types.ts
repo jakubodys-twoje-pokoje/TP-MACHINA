@@ -48,6 +48,19 @@ export interface Availability {
   reservation_id?: string | null;
 }
 
+export interface RatePlan {
+  id: string;
+  property_id: string;
+  external_id: string | null; // rate_id z Hotres
+  name: string; // title
+  description: string | null; // advert
+  board_type: string | null; // board
+  min_stay: number;
+  max_stay: number;
+  photo_url: string | null;
+  created_at?: string;
+}
+
 export interface Notification {
   id: string;
   user_id: string;

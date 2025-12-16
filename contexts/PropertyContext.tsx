@@ -1,6 +1,6 @@
 import React, { createContext, useState, useEffect, useContext, ReactNode } from 'react';
 import { supabase } from '../services/supabaseClient';
-import { Property, Unit, Availability, Notification } from '../types';
+import { Property, Unit, Availability, Notification, RatePlan } from '../types';
 
 interface PropertyContextType {
   properties: Property[];
@@ -13,6 +13,7 @@ interface PropertyContextType {
   deleteProperty: (id: string) => Promise<void>;
   importFromHotres: (oid: string, propertyId: string) => Promise<void>;
   syncAvailability: (oid: string, propertyId: string) => Promise<string>;
+  syncRates: (oid: string, propertyId: string) => Promise<string>;
   fetchNotifications: () => Promise<void>;
   markNotificationAsRead: (id: string) => Promise<void>;
   markAllNotificationsAsRead: () => Promise<void>;
@@ -328,6 +329,55 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   };
 
+  const syncRates = async (oid: string, propertyId: string) => {
+    const apiUser = "admin@twojepokoje.com.pl";
+    const apiPass = "Admin123@@";
+    
+    // Używamy fetchWithProxy tak jak przy innych metodach
+    const targetUrl = `https://panel.hotres.pl/api_rates?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
+    
+    try {
+      const rawResponse = await fetchWithProxy(targetUrl);
+      const jsonText = rawResponse.trim().replace(/^\uFEFF/, '');
+      let jsonData: any;
+      
+      try {
+          jsonData = JSON.parse(jsonText);
+      } catch (e) {
+          throw new Error("Błąd parsowania JSON z API cenników.");
+      }
+
+      if (!Array.isArray(jsonData)) {
+          throw new Error("Nieprawidłowy format danych z API cenników (oczekiwano tablicy).");
+      }
+
+      const ratesToUpsert = jsonData.map((item: any) => ({
+          property_id: propertyId,
+          external_id: item.rate_id,
+          name: item.title,
+          description: item.advert,
+          board_type: item.board,
+          min_stay: parseInt(item.minimum_stay) || 1,
+          max_stay: parseInt(item.maximum_stay) || 365,
+          photo_url: item.photo,
+      }));
+
+      if (ratesToUpsert.length > 0) {
+          const { error } = await supabase
+              .from('rate_plans')
+              .upsert(ratesToUpsert, { onConflict: 'property_id,external_id' });
+          
+          if (error) throw error;
+      }
+      
+      return `Zaktualizowano ${ratesToUpsert.length} cenników.`;
+
+    } catch (e: any) {
+        console.error("Sync Rates Exception:", e);
+        throw e;
+    }
+  };
+
   const markNotificationAsRead = async (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
     setUnreadCount(prev => Math.max(0, prev - 1));
@@ -368,6 +418,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       deleteProperty, 
       importFromHotres,
       syncAvailability,
+      syncRates,
       fetchNotifications,
       markNotificationAsRead,
       markAllNotificationsAsRead,

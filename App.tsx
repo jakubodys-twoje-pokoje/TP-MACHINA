@@ -6,6 +6,7 @@ import { Layout } from './components/Layout';
 import { PropertyView } from './components/PropertyView';
 import { UnitsView } from './components/UnitsView';
 import { CalendarView } from './components/CalendarView';
+import { PricingView } from './components/PricingView';
 import { Dashboard } from './components/Dashboard';
 import { WorkflowView } from './components/WorkflowView';
 import { Loader2 } from 'lucide-react';
@@ -95,6 +96,7 @@ const App: React.FC = () => {
             <Route path="/workflow" element={<WorkflowView />} />
             <Route path="/property/:id/details" element={<PropertyView />} />
             <Route path="/property/:id/units" element={<UnitsView />} />
+            <Route path="/property/:id/pricing" element={<PricingView />} />
             <Route path="/property/:id/calendar" element={<CalendarView />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
