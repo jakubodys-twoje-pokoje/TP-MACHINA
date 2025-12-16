@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
 import { supabase, VAPID_PUBLIC_KEY } from '../services/supabaseClient';
 import { LogOut, BellRing } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -24,6 +25,7 @@ const urlBase64ToUint8Array = (base64String: string) => {
 
 export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const location = useLocation();
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -72,6 +74,11 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       }
   };
 
+  // Logic to determine layout width based on current path
+  const isWorkflow = location.pathname === '/workflow';
+  // Use w-full for workflow to utilize ultrawide monitors, keep constrained width for other views
+  const containerClass = isWorkflow ? "w-full px-6" : "max-w-6xl mx-auto px-4";
+
   return (
     <div className="flex h-screen w-full bg-background text-slate-100 overflow-hidden font-sans">
       <div className="w-64 flex-shrink-0 border-r border-border bg-surface flex flex-col justify-between">
@@ -101,8 +108,8 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
       </div>
 
       <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-        <main className="flex-1 overflow-y-auto py-16 px-6 sm:px-8 mt-4">
-            <div className="max-w-6xl mx-auto">
+        <main className="flex-1 overflow-y-auto py-8 mt-4 custom-scrollbar">
+            <div className={containerClass}>
                 {children}
             </div>
         </main>

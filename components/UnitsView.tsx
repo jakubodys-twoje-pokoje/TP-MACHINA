@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2, ImageOff, Ruler, Layers, Bath, ChevronDown, Save, X, Plus } from 'lucide-react';
+import { RefreshCw, Trash2, Edit2, Users, Key, Bed, Sofa, Loader2, ImageOff, Ruler, Layers, Bath, ChevronDown, Save, X, Plus, Tag } from 'lucide-react';
 import { Unit, Property } from '../types';
 import { useProperties } from '../contexts/PropertyContext';
 
@@ -37,6 +37,7 @@ export const UnitsView: React.FC = () => {
   const [editingUnitId, setEditingUnitId] = useState<string | null>(null);
   const [editFormData, setEditFormData] = useState<Partial<Unit>>({});
   const [newFacility, setNewFacility] = useState('');
+  const [newTag, setNewTag] = useState('');
 
   const { importFromHotres } = useProperties();
 
@@ -75,6 +76,8 @@ export const UnitsView: React.FC = () => {
   const handleCancelEdit = () => {
     setEditingUnitId(null);
     setEditFormData({});
+    setNewFacility('');
+    setNewTag('');
   };
   
   const handleSaveEdit = async () => {
@@ -102,6 +105,7 @@ export const UnitsView: React.FC = () => {
     }));
   };
   
+  // Facilities Logic
   const handleDeleteFacility = (facilityToRemove: string) => {
     const currentFacilities = (editFormData.facilities || '').split(',').map(f => f.trim());
     const newFacilities = currentFacilities.filter(f => f !== facilityToRemove).join(', ');
@@ -118,6 +122,25 @@ export const UnitsView: React.FC = () => {
       const newFacilities = [...currentFacilities, newFacility.trim()].join(', ');
       setEditFormData(prev => ({ ...prev, facilities: newFacilities }));
       setNewFacility('');
+  };
+
+  // Tags Logic
+  const handleDeleteTag = (tagToRemove: string) => {
+    const currentTags = (editFormData.tags || '').split(',').map(t => t.trim());
+    const newTags = currentTags.filter(t => t !== tagToRemove).join(', ');
+    setEditFormData(prev => ({ ...prev, tags: newTags }));
+  };
+
+  const handleAddTag = () => {
+      if (!newTag.trim()) return;
+      const currentTags = (editFormData.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+      if (currentTags.map(t => t.toLowerCase()).includes(newTag.trim().toLowerCase())) {
+          alert("Ten tag już istnieje.");
+          return;
+      }
+      const newTags = [...currentTags, newTag.trim()].join(', ');
+      setEditFormData(prev => ({ ...prev, tags: newTags }));
+      setNewTag('');
   };
 
 
@@ -158,7 +181,7 @@ export const UnitsView: React.FC = () => {
   const isImported = !!property?.hotres_id; // Sprawdzamy czy OID istnieje w nowym polu
 
   const renderDisplayRow = (unit: Unit) => (
-    <tr onClick={() => handleToggleRow(unit.id)} className="hover:bg-slate-800/50 transition-colors cursor-pointer">
+    <tr onClick={() => handleToggleRow(unit.id)} className="hover:bg-slate-800/50 transition-colors cursor-pointer group">
       <td className="px-4 py-3 text-center">
         <ChevronDown size={16} className={`text-slate-600 transition-transform duration-200 ${expandedUnitId === unit.id ? 'rotate-180' : ''}`} />
       </td>
@@ -171,7 +194,17 @@ export const UnitsView: React.FC = () => {
           </div>
         )}
       </td>
-      <td className="px-4 py-4 font-medium text-white">{unit.name}</td>
+      <td className="px-4 py-4 font-medium text-white">
+        {unit.name}
+        {unit.tags && (
+          <div className="flex flex-wrap gap-1 mt-1">
+             {unit.tags.split(',').slice(0, 2).map(tag => (
+                <span key={tag} className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700">{tag.trim()}</span>
+             ))}
+             {unit.tags.split(',').length > 2 && <span className="text-[10px] text-slate-600">+{unit.tags.split(',').length - 2}</span>}
+          </div>
+        )}
+      </td>
       <td className="px-4 py-4 text-slate-400 font-mono text-xs">
         <span className="flex items-center gap-2">
             <Key size={14}/>
@@ -195,7 +228,7 @@ export const UnitsView: React.FC = () => {
         {unit.bathroom_count ? <span className="flex items-center gap-1.5"><Bath size={14} className="text-slate-500"/> {unit.bathroom_count}</span> : <span className="text-slate-500">—</span>}
       </td>
       <td className="px-4 py-4 text-right">
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
           <button onClick={(e) => { e.stopPropagation(); handleEditClick(unit); }} title="Edytuj" className="text-slate-400 hover:text-indigo-400 p-2 rounded-md transition-colors hover:bg-indigo-500/10"><Edit2 size={16} /></button>
           <button onClick={(e) => handleDelete(e, unit.id)} title="Usuń" className="text-slate-400 hover:text-red-400 p-2 rounded-md transition-colors hover:bg-red-500/10"><Trash2 size={16} /></button>
         </div>
@@ -293,49 +326,96 @@ export const UnitsView: React.FC = () => {
                            )}
                         </div>
 
-                        {/* FACILITIES SECTION */}
-                        <div className="border-t border-border pt-6">
-                          <h4 className="text-sm font-bold text-white mb-3">Udogodnienia</h4>
-                          {editingUnitId === unit.id ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 border-t border-border pt-6">
+                            {/* FACILITIES SECTION */}
                             <div>
-                              <div className="flex flex-wrap gap-2 mb-4">
-                                {(editFormData.facilities || '').split(',').filter(f => f.trim()).map(facility => (
-                                  <div key={facility} className="bg-slate-700 text-slate-300 text-xs font-medium pl-3 pr-2 py-1 rounded-full flex items-center gap-2">
-                                    {facility.trim()}
-                                    <button onClick={() => handleDeleteFacility(facility.trim())} className="text-slate-400 hover:text-white transition-colors">
-                                      <X size={14} />
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                              <div className="flex gap-2 items-center">
-                                <input
-                                  type="text"
-                                  value={newFacility}
-                                  onChange={(e) => setNewFacility(e.target.value)}
-                                  onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddFacility())}
-                                  placeholder="Wpisz nowe udogodnienie"
-                                  className="flex-grow bg-slate-800 border border-border text-white rounded-lg p-2 text-sm outline-none focus:ring-1 focus:ring-indigo-500"
-                                />
-                                <button type="button" onClick={handleAddFacility} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 text-sm font-medium rounded-lg flex items-center gap-1 transition-colors">
-                                  <Plus size={16} /> Dodaj
-                                </button>
-                              </div>
+                                <h4 className="text-sm font-bold text-white mb-3">Udogodnienia</h4>
+                                {editingUnitId === unit.id ? (
+                                    <div>
+                                    <div className="flex flex-wrap gap-2 mb-4">
+                                        {(editFormData.facilities || '').split(',').filter(f => f.trim()).map(facility => (
+                                        <div key={facility} className="bg-slate-700 text-slate-300 text-xs font-medium pl-3 pr-2 py-1 rounded-full flex items-center gap-2">
+                                            {facility.trim()}
+                                            <button onClick={() => handleDeleteFacility(facility.trim())} className="text-slate-400 hover:text-white transition-colors">
+                                            <X size={14} />
+                                            </button>
+                                        </div>
+                                        ))}
+                                    </div>
+                                    <div className="flex gap-2 items-center">
+                                        <input
+                                        type="text"
+                                        value={newFacility}
+                                        onChange={(e) => setNewFacility(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddFacility())}
+                                        placeholder="Nowe udogodnienie"
+                                        className="flex-grow bg-slate-800 border border-border text-white rounded-lg p-2 text-sm outline-none focus:ring-1 focus:ring-indigo-500"
+                                        />
+                                        <button type="button" onClick={handleAddFacility} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 text-sm font-medium rounded-lg flex items-center gap-1 transition-colors">
+                                        <Plus size={16} />
+                                        </button>
+                                    </div>
+                                    </div>
+                                ) : (
+                                    unit.facilities ? (
+                                    <div className="flex flex-wrap gap-2">
+                                        {unit.facilities.split(',').map(name => (
+                                        <span key={name} className="bg-slate-700 text-slate-300 text-xs font-medium px-2.5 py-1.5 rounded-full">
+                                            {name.trim()}
+                                        </span>
+                                        ))}
+                                    </div>
+                                    ) : (
+                                    <p className="italic text-slate-500 text-sm">Brak danych o udogodnieniach.</p>
+                                    )
+                                )}
                             </div>
-                          ) : (
-                            unit.facilities ? (
-                              <div className="flex flex-wrap gap-2">
-                                {unit.facilities.split(',').map(name => (
-                                  <span key={name} className="bg-slate-700 text-slate-300 text-xs font-medium px-2.5 py-1.5 rounded-full">
-                                    {name.trim()}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : (
-                              <p className="italic text-slate-500 text-sm">Brak danych o udogodnieniach.</p>
-                            )
-                          )}
+
+                            {/* TAGS SECTION */}
+                            <div>
+                                <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2"><Tag size={16}/> Tagi (wewnętrzne)</h4>
+                                {editingUnitId === unit.id ? (
+                                    <div>
+                                    <div className="flex flex-wrap gap-2 mb-4">
+                                        {(editFormData.tags || '').split(',').filter(t => t.trim()).map(tag => (
+                                        <div key={tag} className="bg-indigo-900/40 text-indigo-200 border border-indigo-500/30 text-xs font-medium pl-3 pr-2 py-1 rounded-md flex items-center gap-2">
+                                            {tag.trim()}
+                                            <button onClick={() => handleDeleteTag(tag.trim())} className="text-indigo-400 hover:text-white transition-colors">
+                                            <X size={14} />
+                                            </button>
+                                        </div>
+                                        ))}
+                                    </div>
+                                    <div className="flex gap-2 items-center">
+                                        <input
+                                        type="text"
+                                        value={newTag}
+                                        onChange={(e) => setNewTag(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddTag())}
+                                        placeholder="Nowy tag (np. VIP, Remont)"
+                                        className="flex-grow bg-slate-800 border border-border text-white rounded-lg p-2 text-sm outline-none focus:ring-1 focus:ring-indigo-500"
+                                        />
+                                        <button type="button" onClick={handleAddTag} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 text-sm font-medium rounded-lg flex items-center gap-1 transition-colors">
+                                        <Plus size={16} />
+                                        </button>
+                                    </div>
+                                    </div>
+                                ) : (
+                                    unit.tags ? (
+                                    <div className="flex flex-wrap gap-2">
+                                        {unit.tags.split(',').map(tag => (
+                                        <span key={tag} className="bg-indigo-900/30 border border-indigo-500/30 text-indigo-300 text-xs font-medium px-2.5 py-1.5 rounded-md">
+                                            {tag.trim()}
+                                        </span>
+                                        ))}
+                                    </div>
+                                    ) : (
+                                    <p className="italic text-slate-500 text-sm">Brak tagów.</p>
+                                    )
+                                )}
+                            </div>
                         </div>
+
                       </div>
                     </td>
                   </tr>

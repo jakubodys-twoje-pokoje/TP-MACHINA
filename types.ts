@@ -35,6 +35,7 @@ export interface Unit {
   bathroom_count?: number | null;
   floor?: number | null;
   facilities?: string | null;
+  tags?: string | null; // Nowe pole tagów
   photos?: any | null;
   photo_url?: string | null;
 }
