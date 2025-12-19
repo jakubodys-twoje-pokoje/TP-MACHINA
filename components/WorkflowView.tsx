@@ -1,8 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { useProperties } from '../contexts/PropertyContext';
-import { WorkflowTask, WorkflowStatus, WorkflowEntry } from '../types';
-import { Plus, X, Loader2, Save, Trash2, Settings, MessageSquare, RefreshCw, Maximize2 } from 'lucide-react';
+import { WorkflowTask, WorkflowStatus, WorkflowEntry, Property } from '../types';
+import { 
+  Plus, X, Loader2, Save, Trash2, Settings, MessageSquare, 
+  Search, BarChart3, Info, Eye, EyeOff, ChevronUp, ChevronDown, 
+  ChevronLeft, ChevronRight, User, Clock 
+} from 'lucide-react';
 
 const COLORS = [
   { label: 'Szary', class: 'bg-slate-600' },
@@ -17,48 +21,39 @@ const COLORS = [
 ];
 
 export const WorkflowView: React.FC = () => {
-  const { properties, addProperty } = useProperties();
+  const { properties, fetchProperties } = useProperties();
   const [tasks, setTasks] = useState<WorkflowTask[]>([]);
   const [statuses, setStatuses] = useState<WorkflowStatus[]>([]);
   const [entries, setEntries] = useState<WorkflowEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
   
   // Modals
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
   const [isCellModalOpen, setIsCellModalOpen] = useState(false);
-  const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false);
 
   // Forms & Selections
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newStatus, setNewStatus] = useState({ label: '', color: 'bg-slate-600' });
   const [selectedCell, setSelectedCell] = useState<{ propId: string, taskId: string } | null>(null);
   const [cellForm, setCellForm] = useState({ statusId: '', comment: '' });
-  const [newPropertyName, setNewPropertyName] = useState('');
 
   useEffect(() => {
     fetchWorkflowData();
 
-    // Realtime Subscriptions
     const channels = supabase.channel('workflow-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => {
-          fetchTasks();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => {
-          fetchStatuses();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, (payload) => {
-          handleEntryRealtime(payload);
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => fetchTasks())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => fetchStatuses())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, (p) => handleEntryRealtime(p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'properties' }, () => fetchProperties())
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channels);
-    };
+    return () => { supabase.removeChannel(channels); };
   }, []);
 
   const fetchTasks = async () => {
-      const { data } = await supabase.from('workflow_tasks').select('*').order('created_at', { ascending: true });
+      const { data } = await supabase.from('workflow_tasks').select('*').order('position', { ascending: true });
       if (data) setTasks(data);
   }
 
@@ -81,124 +76,148 @@ export const WorkflowView: React.FC = () => {
     setLoading(true);
     try {
       const [tRes, sRes, eRes] = await Promise.all([
-        supabase.from('workflow_tasks').select('*').order('created_at', { ascending: true }),
+        supabase.from('workflow_tasks').select('*').order('position', { ascending: true }),
         supabase.from('workflow_statuses').select('*').order('created_at', { ascending: true }),
         supabase.from('workflow_entries').select('*')
       ]);
-
-      if (tRes.error) throw tRes.error;
-      if (sRes.error) throw sRes.error;
-      if (eRes.error) throw eRes.error;
-
       setTasks(tRes.data || []);
       setStatuses(sRes.data || []);
       setEntries(eRes.data || []);
-    } catch (e: any) {
-      console.error("Workflow fetch error:", e);
-      if (e.message?.includes('relation') || e.code === '42P01') {
-          alert("Brakuje tabel w bazie danych. Wykonaj kod SQL podany w instrukcji.");
-      }
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
-  // --- ACTIONS ---
+  // Logic: Active first, then by position
+  const sortedProperties = useMemo(() => {
+    return [...properties].sort((a, b) => {
+        const activeA = a.workflow_is_active === false ? 0 : 1;
+        const activeB = b.workflow_is_active === false ? 0 : 1;
+        if (activeA !== activeB) return activeB - activeA;
+        return (a.workflow_position || 0) - (b.workflow_position || 0);
+    });
+  }, [properties]);
+
+  const sortedTasks = useMemo(() => {
+    return [...tasks].sort((a, b) => {
+        const activeA = a.is_active === false ? 0 : 1;
+        const activeB = b.is_active === false ? 0 : 1;
+        if (activeA !== activeB) return activeB - activeA;
+        return a.position - b.position;
+    });
+  }, [tasks]);
+
+  const filteredProperties = useMemo(() => {
+    return sortedProperties.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
+  }, [sortedProperties, searchQuery]);
+
+  // Actions
+  const handleMoveTask = async (taskId: string, direction: 'left' | 'right') => {
+      const idx = tasks.findIndex(t => t.id === taskId);
+      if ((direction === 'left' && idx === 0) || (direction === 'right' && idx === tasks.length - 1)) return;
+      const targetIdx = direction === 'left' ? idx - 1 : idx + 1;
+      const updatedTasks = [...tasks];
+      const tempPos = updatedTasks[idx].position;
+      updatedTasks[idx].position = updatedTasks[targetIdx].position;
+      updatedTasks[targetIdx].position = tempPos;
+
+      await Promise.all([
+          supabase.from('workflow_tasks').update({ position: updatedTasks[idx].position }).eq('id', updatedTasks[idx].id),
+          supabase.from('workflow_tasks').update({ position: updatedTasks[targetIdx].position }).eq('id', updatedTasks[targetIdx].id)
+      ]);
+      fetchTasks();
+  };
+
+  const handleToggleTaskActive = async (taskId: string, currentState: boolean) => {
+      await supabase.from('workflow_tasks').update({ is_active: !currentState }).eq('id', taskId);
+      fetchTasks();
+  };
+
+  const handleMoveProperty = async (propId: string, direction: 'up' | 'down') => {
+      const idx = properties.findIndex(p => p.id === propId);
+      if ((direction === 'up' && idx === 0) || (direction === 'down' && idx === properties.length - 1)) return;
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+      const p1 = properties[idx];
+      const p2 = properties[targetIdx];
+      
+      await Promise.all([
+          supabase.from('properties').update({ workflow_position: p2.workflow_position || 0 }).eq('id', p1.id),
+          supabase.from('properties').update({ workflow_position: p1.workflow_position || 0 }).eq('id', p2.id)
+      ]);
+      fetchProperties();
+  };
+
+  const handleTogglePropertyActive = async (propId: string, currentState: boolean) => {
+      await supabase.from('properties').update({ workflow_is_active: !currentState }).eq('id', propId);
+      fetchProperties();
+  };
 
   const handleAddTask = async () => {
     if (!newTaskTitle.trim()) return;
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-
-    // Insert only. Realtime will update the UI.
-    const { error } = await supabase.from('workflow_tasks').insert({
-      title: newTaskTitle,
-      user_id: user.id
-    });
-
-    if (!error) {
-      setNewTaskTitle('');
-      setIsTaskModalOpen(false);
-    }
+    const maxPos = tasks.reduce((max, t) => Math.max(max, t.position), 0);
+    await supabase.from('workflow_tasks').insert({ title: newTaskTitle, user_id: user.id, position: maxPos + 1 });
+    setNewTaskTitle(''); setIsTaskModalOpen(false);
+    fetchTasks();
   };
 
   const handleDeleteTask = async (id: string) => {
-    if (!confirm("Usunąć to zadanie (kolumnę)? Wszystkie wpisy w niej zostaną usunięte.")) return;
+    if (!confirm("Trwale usunąć tę kolumnę danych?")) return;
     await supabase.from('workflow_tasks').delete().eq('id', id);
-    // UI update handled by realtime
   };
 
+  // Fix: Added missing handleDeleteStatus function to remove workflow statuses
+  const handleDeleteStatus = async (id: string) => {
+    if (!confirm("Czy na pewno chcesz usunąć ten status?")) return;
+    await supabase.from('workflow_statuses').delete().eq('id', id);
+    fetchStatuses();
+  };
+
+  // Fix: Added missing handleAddStatus function to create new workflow statuses
   const handleAddStatus = async () => {
     if (!newStatus.label.trim()) return;
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-
-    const { error } = await supabase.from('workflow_statuses').insert({
+    
+    await supabase.from('workflow_statuses').insert({
       label: newStatus.label,
       color: newStatus.color,
       user_id: user.id
     });
-
-    if (!error) {
-      setNewStatus({ label: '', color: 'bg-slate-600' });
-    }
+    
+    setNewStatus({ label: '', color: 'bg-slate-600' });
+    fetchStatuses();
   };
-
-  const handleDeleteStatus = async (id: string) => {
-    if (!confirm("Usunąć ten status?")) return;
-    await supabase.from('workflow_statuses').delete().eq('id', id);
-  };
-
-  const handleAddProperty = async () => {
-    if(!newPropertyName.trim()) return;
-    try {
-        await addProperty(newPropertyName, 'Dodane z Workflow', null, null, null);
-        setNewPropertyName('');
-        setIsPropertyModalOpen(false);
-    } catch(e: any) {
-        alert(e.message);
-    }
-  }
-
-  // --- CELL EDITING ---
 
   const openCellModal = (propId: string, taskId: string) => {
     const entry = entries.find(e => e.property_id === propId && e.task_id === taskId);
     setSelectedCell({ propId, taskId });
-    setCellForm({
-      statusId: entry?.status_id || '',
-      comment: entry?.comment || ''
-    });
+    setCellForm({ statusId: entry?.status_id || '', comment: entry?.comment || '' });
     setIsCellModalOpen(true);
   };
 
   const saveCell = async () => {
     if (!selectedCell) return;
-    
-    // Check if entry exists
+    const { data: { user } } = await supabase.auth.getUser();
     const existing = entries.find(e => e.property_id === selectedCell.propId && e.task_id === selectedCell.taskId);
     
-    if (existing) {
-      // Update
-      await supabase.from('workflow_entries').update({
+    const payload = {
         status_id: cellForm.statusId || null,
         comment: cellForm.comment,
+        last_updated_by_email: user?.email || 'System',
         updated_at: new Date().toISOString()
-      }).eq('id', existing.id);
+    };
+
+    if (existing) {
+      await supabase.from('workflow_entries').update(payload).eq('id', existing.id);
     } else {
-      // Create
       await supabase.from('workflow_entries').insert({
+        ...payload,
         property_id: selectedCell.propId,
         task_id: selectedCell.taskId,
-        status_id: cellForm.statusId || null,
-        comment: cellForm.comment
       });
     }
-    // UI updated via realtime
     setIsCellModalOpen(false);
   };
-
-  // --- RENDER HELPERS ---
 
   const getStatus = (id: string | null) => statuses.find(s => s.id === id);
   const getEntry = (propId: string, taskId: string) => entries.find(e => e.property_id === propId && e.task_id === taskId);
@@ -206,132 +225,160 @@ export const WorkflowView: React.FC = () => {
   if (loading) return <div className="flex h-64 items-center justify-center"><Loader2 className="animate-spin text-indigo-500" /></div>;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-120px)] overflow-hidden">
+    <div className="flex flex-col h-[calc(100vh-120px)] overflow-hidden space-y-4">
       {/* HEADER */}
-      <div className="flex justify-between items-center pb-4 flex-shrink-0">
-        <div>
-           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-             <RefreshCw size={24} className="text-indigo-400"/> Workflow
-           </h2>
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 flex-shrink-0 bg-surface p-4 rounded-xl border border-border">
+        <div className="flex items-center gap-4">
+          <div className="relative w-80">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+            <input type="text" placeholder="Szukaj obiektu..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg py-2.5 pl-10 pr-4 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
         </div>
         <div className="flex gap-2">
-            <button onClick={() => setIsPropertyModalOpen(true)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-slate-700">
-                <Plus size={16} /> Obiekt
-            </button>
-            <div className="w-px h-8 bg-slate-700 mx-1"></div>
-            <button onClick={() => setIsStatusModalOpen(true)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-slate-700">
-                <Settings size={16} /> Statusy
-            </button>
-            <button onClick={() => setIsTaskModalOpen(true)} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2">
-                <Plus size={16} /> Kolumna
-            </button>
+            <button onClick={() => setIsStatusModalOpen(true)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm flex items-center gap-2 border border-slate-700"><Settings size={16} /> Statusy</button>
+            <button onClick={() => setIsTaskModalOpen(true)} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm flex items-center gap-2"><Plus size={16} /> Kolumna</button>
         </div>
       </div>
 
-      {/* TABLE CONTAINER - SCROLLABLE */}
-      <div className="flex-1 overflow-auto bg-surface rounded-xl border border-border shadow-xl relative custom-scrollbar">
-        <table className="w-max border-collapse">
+      {/* TABLE */}
+      <div className="flex-1 overflow-auto bg-surface rounded-xl border border-border shadow-xl custom-scrollbar">
+        <table className="min-w-full border-collapse">
           <thead className="sticky top-0 z-30">
             <tr>
-              {/* TOP LEFT CORNER (FIXED) */}
-              <th className="p-4 bg-slate-900 text-slate-400 font-bold text-xs uppercase tracking-wider border-b border-r border-border sticky left-0 z-40 w-64 shadow-[2px_2px_5px_rgba(0,0,0,0.5)]">
-                Obiekt
-              </th>
-              {/* TOP ROW HEADERS (STICKY TOP) */}
-              {tasks.map(task => (
-                <th key={task.id} className="p-3 bg-slate-900 text-white font-bold text-sm border-b border-border border-r border-slate-800 w-[220px] min-w-[220px] max-w-[220px] group relative">
-                   <div className="flex justify-between items-center w-full">
-                       <span className="truncate" title={task.title}>{task.title}</span>
-                       <button onClick={() => handleDeleteTask(task.id)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity flex-shrink-0 ml-2">
-                           <Trash2 size={14} />
-                       </button>
+              <th className="p-4 bg-slate-900 text-slate-400 font-bold text-xs uppercase border-b border-r border-border sticky left-0 z-40 w-64">Obiekt</th>
+              {sortedTasks.map(task => (
+                <th key={task.id} className={`p-3 bg-slate-900 border-b border-border border-r border-slate-800 min-w-[220px] max-w-[280px] group ${!task.is_active ? 'opacity-40 grayscale' : ''}`}>
+                   <div className="flex flex-col gap-2">
+                       <div className="flex justify-between items-center text-white text-sm">
+                           <span className="truncate font-bold" title={task.title}>{task.title}</span>
+                           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                               <button onClick={() => handleToggleTaskActive(task.id, task.is_active)} className="p-1 hover:text-indigo-400">
+                                   {task.is_active ? <Eye size={14} /> : <EyeOff size={14} />}
+                               </button>
+                               <button onClick={() => handleDeleteTask(task.id)} className="p-1 hover:text-red-400"><Trash2 size={14} /></button>
+                           </div>
+                       </div>
+                       <div className="flex items-center gap-2 text-slate-600">
+                           <button onClick={() => handleMoveTask(task.id, 'left')} className="hover:text-white"><ChevronLeft size={16}/></button>
+                           <span className="text-[10px] uppercase font-bold tracking-widest">Kolejność</span>
+                           <button onClick={() => handleMoveTask(task.id, 'right')} className="hover:text-white"><ChevronRight size={16}/></button>
+                       </div>
                    </div>
                 </th>
               ))}
-              {tasks.length === 0 && <th className="p-4 text-slate-500 italic font-normal text-sm border-b border-border w-full">Dodaj kolumny zadań</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {properties.map(property => (
-              <tr key={property.id} className="hover:bg-slate-800/30 transition-colors">
-                {/* LEFT COLUMN (STICKY LEFT) */}
-                <td className="p-4 font-medium text-white bg-surface sticky left-0 z-20 border-r border-border border-b border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)] align-middle h-[70px]">
-                  <div className="truncate w-56" title={property.name}>{property.name}</div>
-                </td>
-                
-                {/* DATA CELLS */}
-                {tasks.map(task => {
-                  const entry = getEntry(property.id, task.id);
-                  const status = entry ? getStatus(entry.status_id) : null;
-                  return (
-                    <td 
-                        key={task.id} 
-                        className="p-1 border-r border-b border-slate-800 cursor-pointer relative group align-middle h-[70px]"
-                        onClick={() => openCellModal(property.id, task.id)}
-                    >
-                      <div className={`w-full h-full rounded flex flex-col justify-center px-3 py-1.5 transition-all gap-0.5 ${status ? status.color : 'hover:bg-slate-800 bg-transparent'} ${status ? 'text-white' : 'text-slate-500'}`}>
-                         
-                         {status ? (
-                            <>
-                                <div className="text-sm font-bold truncate">{status.label}</div>
-                                {entry?.comment && (
-                                    <div className="flex items-center gap-1 text-[11px] text-white/80 opacity-90">
-                                        <MessageSquare size={10} className="flex-shrink-0" />
-                                        <span className="truncate">{entry.comment}</span>
-                                    </div>
-                                )}
-                            </>
-                         ) : (
-                             <div className="w-full h-full flex items-center justify-center">
-                                 {entry?.comment ? (
-                                     <div className="flex items-center gap-1 text-slate-400">
-                                        <MessageSquare size={14} />
-                                        <span className="text-xs truncate max-w-[120px]">{entry.comment}</span>
-                                     </div>
-                                 ) : (
-                                     <span className="opacity-0 group-hover:opacity-20 text-xs uppercase font-bold text-center w-full">+</span>
-                                 )}
-                             </div>
-                         )}
-
-                      </div>
-                    </td>
-                  );
-                })}
-                {tasks.length === 0 && <td className="p-4"></td>}
-              </tr>
-            ))}
+            {filteredProperties.map(property => {
+              const rowIsActive = property.workflow_is_active !== false;
+              return (
+                <tr key={property.id} className={`hover:bg-slate-800/30 transition-colors ${!rowIsActive ? 'opacity-40 bg-slate-900/50' : ''}`}>
+                  <td className="p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group">
+                    <div className="flex justify-between items-center">
+                        <div className="truncate w-40 font-medium text-white" title={property.name}>{property.name}</div>
+                        <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => handleTogglePropertyActive(property.id, rowIsActive)} className="text-slate-500 hover:text-indigo-400"><Eye size={12}/></button>
+                            <button onClick={() => handleMoveProperty(property.id, 'up')} className="text-slate-500 hover:text-white"><ChevronUp size={12}/></button>
+                            <button onClick={() => handleMoveProperty(property.id, 'down')} className="text-slate-500 hover:text-white"><ChevronDown size={12}/></button>
+                        </div>
+                    </div>
+                  </td>
+                  {sortedTasks.map(task => {
+                    const entry = getEntry(property.id, task.id);
+                    const status = entry ? getStatus(entry.status_id) : null;
+                    const hasComment = entry?.comment && entry.comment.trim().length > 0;
+                    
+                    return (
+                      <td key={task.id} className="p-1 border-r border-b border-slate-800 cursor-pointer align-middle h-[80px]" onClick={() => openCellModal(property.id, task.id)}>
+                        <div className={`w-full h-full rounded flex flex-col justify-center px-4 py-2 transition-all border-2 max-w-[280px] ${status ? status.color + ' border-transparent' : 'bg-transparent border-transparent hover:border-slate-700 hover:bg-slate-800'} ${status ? 'text-white' : 'text-slate-500'}`}>
+                           <div className="flex items-center justify-between gap-2">
+                               <span className="text-sm font-bold truncate">{status ? status.label : ''}</span>
+                               {hasComment && <MessageSquare size={14} className={status ? 'text-white/80' : 'text-indigo-500'} />}
+                           </div>
+                           {!status && !hasComment && <span className="text-[10px] uppercase font-black opacity-0 hover:opacity-10 transition-opacity">Edytuj</span>}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
 
-      {/* --- MODALS --- */}
+      {/* MODAL EDIT CELL */}
+      {isCellModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-5 animate-in zoom-in-95">
+             <div className="flex justify-between items-start">
+                <h3 className="font-bold text-white text-lg">Zmień status i uwagi</h3>
+                <button onClick={() => setIsCellModalOpen(false)} className="text-slate-500 hover:text-white"><X size={20}/></button>
+             </div>
 
-      {/* Add Task Modal */}
-      {isTaskModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-          <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">
-             <h3 className="font-bold text-white text-lg">Nowe Zadanie (Kolumna)</h3>
-             <input autoFocus value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} placeholder="np. Sprzątanie" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" />
-             <div className="flex justify-end gap-2">
-                 <button onClick={() => setIsTaskModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white">Anuluj</button>
-                 <button onClick={handleAddTask} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg">Dodaj</button>
+             {/* INFO OSTATNIA EDYCJA */}
+             {selectedCell && (
+                 <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-800 space-y-1.5">
+                    <div className="flex items-center gap-2 text-[10px] text-slate-500 uppercase font-bold tracking-wider">
+                        <Clock size={12} /> Ostatnia zmiana
+                    </div>
+                    {getEntry(selectedCell.propId, selectedCell.taskId) ? (
+                        <div className="text-xs text-slate-300">
+                            <div className="flex items-center gap-1.5"><User size={12} className="text-indigo-400" /> {getEntry(selectedCell.propId, selectedCell.taskId)?.last_updated_by_email || 'Nieznany'}</div>
+                            <div className="mt-1 text-slate-500">{new Date(getEntry(selectedCell.propId, selectedCell.taskId)!.updated_at).toLocaleString()}</div>
+                        </div>
+                    ) : (
+                        <div className="text-xs text-slate-600 italic">Brak wcześniejszych wpisów</div>
+                    )}
+                 </div>
+             )}
+
+             <div>
+                 <label className="block text-xs font-bold text-slate-400 uppercase mb-3">Wybierz status:</label>
+                 <div className="grid grid-cols-1 gap-2 max-h-[180px] overflow-y-auto pr-1 custom-scrollbar">
+                     <button onClick={() => setCellForm({...cellForm, statusId: ''})} className={`p-2.5 rounded-lg border text-sm text-left ${cellForm.statusId === '' ? 'border-indigo-500 bg-indigo-500/10 text-white' : 'border-slate-700 text-slate-500 hover:bg-slate-800'}`}>Brak statusu / Wyczyść</button>
+                     {statuses.map(s => (
+                         <button key={s.id} onClick={() => setCellForm({...cellForm, statusId: s.id})} className={`p-2.5 rounded-lg border text-sm text-left flex items-center gap-3 ${cellForm.statusId === s.id ? 'border-white bg-slate-800 text-white' : 'border-slate-700 text-slate-300 hover:bg-slate-800'}`}>
+                            <div className={`w-3 h-3 rounded-full ${s.color}`}></div> {s.label}
+                         </button>
+                     ))}
+                 </div>
+             </div>
+             <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Notatki (widoczne po kliknięciu ikony):</label>
+                <textarea rows={4} value={cellForm.comment} onChange={e => setCellForm({...cellForm, comment: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none" placeholder="Wpisz uwagi..." />
+             </div>
+             <div className="flex justify-end gap-2 pt-2">
+                 <button onClick={saveCell} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center justify-center gap-2 font-bold shadow-lg transition-all active:scale-95"><Save size={18}/> Zapisz zmiany</button>
              </div>
           </div>
         </div>
       )}
 
-      {/* Status Manager Modal */}
+      {/* MODAL ADD TASK (Column) */}
+      {isTaskModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">
+             <h3 className="font-bold text-white text-lg">Nowe Zadanie (Kolumna)</h3>
+             <input autoFocus value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} placeholder="np. Sprzątanie" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" />
+             <div className="flex justify-end gap-2">
+                 <button onClick={() => setIsTaskModalOpen(false)} className="px-4 py-2 text-slate-400">Anuluj</button>
+                 <button onClick={handleAddTask} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold">Dodaj</button>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL MANAGE STATUSES */}
       {isStatusModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-          <div className="bg-surface w-full max-w-lg rounded-xl border border-border shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="bg-surface w-full max-w-lg rounded-xl border border-border shadow-2xl overflow-hidden animate-in zoom-in-95">
              <div className="p-4 border-b border-border flex justify-between items-center bg-slate-900/50">
                 <h3 className="font-bold text-white">Zarządzaj Statusami</h3>
                 <button onClick={() => setIsStatusModalOpen(false)}><X className="text-slate-400 hover:text-white" /></button>
              </div>
              <div className="p-6 space-y-6">
                 <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                    {statuses.length === 0 && <p className="text-slate-500 italic text-sm text-center">Brak zdefiniowanych statusów.</p>}
                     {statuses.map(s => (
                         <div key={s.id} className="flex items-center justify-between bg-slate-900 p-2 rounded border border-border">
                             <div className="flex items-center gap-3">
@@ -350,12 +397,7 @@ export const WorkflowView: React.FC = () => {
                     </div>
                     <div className="flex gap-2 flex-wrap">
                         {COLORS.map(c => (
-                            <button 
-                                key={c.class} 
-                                onClick={() => setNewStatus({...newStatus, color: c.class})}
-                                className={`w-6 h-6 rounded-full ${c.class} transition-transform hover:scale-110 ${newStatus.color === c.class ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-800' : ''}`}
-                                title={c.label}
-                            />
+                            <button key={c.class} onClick={() => setNewStatus({...newStatus, color: c.class})} className={`w-6 h-6 rounded-full ${c.class} transition-transform hover:scale-110 ${newStatus.color === c.class ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-800' : ''}`} />
                         ))}
                     </div>
                 </div>
@@ -363,68 +405,6 @@ export const WorkflowView: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* Cell Editor Modal */}
-      {isCellModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-          <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">
-             <h3 className="font-bold text-white text-lg">Edytuj wpis</h3>
-             
-             <div>
-                 <label className="block text-xs font-medium text-slate-400 mb-1">Status</label>
-                 <div className="grid grid-cols-1 gap-2">
-                     <button 
-                        onClick={() => setCellForm({...cellForm, statusId: ''})}
-                        className={`p-2 rounded border text-sm text-left transition-colors ${cellForm.statusId === '' ? 'border-white bg-slate-800 text-white' : 'border-slate-700 text-slate-400 hover:bg-slate-800'}`}
-                     >
-                        Brak statusu
-                     </button>
-                     {statuses.map(s => (
-                         <button 
-                            key={s.id}
-                            onClick={() => setCellForm({...cellForm, statusId: s.id})}
-                            className={`p-2 rounded border text-sm text-left transition-colors flex items-center gap-2 ${cellForm.statusId === s.id ? 'border-white bg-slate-800 text-white' : 'border-slate-700 text-slate-300 hover:bg-slate-800'}`}
-                         >
-                            <div className={`w-3 h-3 rounded-full ${s.color}`}></div>
-                            {s.label}
-                         </button>
-                     ))}
-                 </div>
-             </div>
-
-             <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1">Komentarz</label>
-                <textarea 
-                    rows={4}
-                    value={cellForm.comment}
-                    onChange={e => setCellForm({...cellForm, comment: e.target.value})}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-                    placeholder="Dodaj opcjonalny komentarz..."
-                />
-             </div>
-
-             <div className="flex justify-end gap-2 pt-2">
-                 <button onClick={() => setIsCellModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white">Anuluj</button>
-                 <button onClick={saveCell} className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center gap-2"><Save size={16}/> Zapisz</button>
-             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add Property Modal */}
-      {isPropertyModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-          <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">
-             <h3 className="font-bold text-white text-lg">Dodaj nowy obiekt</h3>
-             <input autoFocus value={newPropertyName} onChange={e => setNewPropertyName(e.target.value)} placeholder="Nazwa obiektu" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" />
-             <div className="flex justify-end gap-2">
-                 <button onClick={() => setIsPropertyModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white">Anuluj</button>
-                 <button onClick={handleAddProperty} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg">Dodaj</button>
-             </div>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 };

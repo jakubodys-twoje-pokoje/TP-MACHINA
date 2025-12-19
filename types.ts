@@ -7,13 +7,15 @@ export interface Property {
   address: string | null;
   email: string | null;
   phone: string | null;
-  hotres_id?: string | null; // Nowe pole
+  hotres_id?: string | null;
   maps_link?: string | null;
   amenities?: string | null;
   availability_last_synced_at?: string | null;
   availability_sync_in_progress?: boolean;
   auto_sync_enabled?: boolean;
   auto_sync_interval?: number;
+  workflow_is_active?: boolean; // Nowe
+  workflow_position?: number;   // Nowe
   created_at: string;
 }
 
@@ -35,7 +37,7 @@ export interface Unit {
   bathroom_count?: number | null;
   floor?: number | null;
   facilities?: string | null;
-  tags?: string | null; // Nowe pole tagów
+  tags?: string | null;
   photos?: any | null;
   photo_url?: string | null;
 }
@@ -43,7 +45,7 @@ export interface Unit {
 export interface Availability {
   id: string;
   unit_id: string;
-  date: string; // YYYY-MM-DD
+  date: string;
   status: 'available' | 'booked' | 'blocked';
   reservation_id?: string | null;
 }
@@ -51,14 +53,41 @@ export interface Availability {
 export interface RatePlan {
   id: string;
   property_id: string;
-  external_id: string | null; // rate_id z Hotres
-  name: string; // title
-  description: string | null; // advert
-  board_type: string | null; // board
+  external_id: string | null;
+  name: string;
+  description: string | null;
+  board_type: string | null;
   min_stay: number;
   max_stay: number;
   photo_url: string | null;
   created_at?: string;
+}
+
+export interface WorkflowTask {
+  id: string;
+  user_id: string;
+  title: string;
+  is_active: boolean; // Nowe
+  position: number;   // Nowe
+  created_at: string;
+}
+
+export interface WorkflowStatus {
+  id: string;
+  user_id: string;
+  label: string;
+  color: string;
+  created_at: string;
+}
+
+export interface WorkflowEntry {
+  id: string;
+  property_id: string;
+  task_id: string;
+  status_id: string | null;
+  comment: string | null;
+  last_updated_by_email?: string | null; // Nowe
+  updated_at: string;
 }
 
 export interface Notification {
@@ -73,36 +102,4 @@ export interface Notification {
   end_date: string;
   is_read: boolean;
   created_at: string;
-}
-
-export interface PushSubscriptionDB {
-  id: string;
-  user_id: string;
-  subscription: any;
-  created_at: string;
-}
-
-// Workflow Types
-export interface WorkflowTask {
-  id: string;
-  user_id: string;
-  title: string;
-  created_at: string;
-}
-
-export interface WorkflowStatus {
-  id: string;
-  user_id: string;
-  label: string;
-  color: string; // Tailwind class e.g. 'bg-red-500'
-  created_at: string;
-}
-
-export interface WorkflowEntry {
-  id: string;
-  property_id: string;
-  task_id: string;
-  status_id: string | null;
-  comment: string | null;
-  updated_at: string;
 }
