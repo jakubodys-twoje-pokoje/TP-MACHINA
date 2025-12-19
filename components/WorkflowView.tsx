@@ -28,6 +28,13 @@ export const WorkflowView: React.FC = () => {
   const [isSavingOrder, setIsSavingOrder] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
+  // Refs to ensure D&D handlers always have the LATEST state data
+  const tasksRef = useRef<WorkflowTask[]>([]);
+  const propertiesRef = useRef<Property[]>([]);
+  
+  useEffect(() => { tasksRef.current = tasks; }, [tasks]);
+  useEffect(() => { propertiesRef.current = properties; }, [properties]);
+
   // Local temporary sorted properties for smooth D&D feedback
   const [localProperties, setLocalProperties] = useState<Property[]>([]);
 
@@ -51,17 +58,20 @@ export const WorkflowView: React.FC = () => {
   useEffect(() => {
     fetchWorkflowData();
 
-    const channels = supabase.channel('workflow-realtime-v5')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => fetchTasks())
+    const channels = supabase.channel('workflow-realtime-v6')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, (p) => {
+          if (!isSavingOrder) fetchTasks();
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => fetchStatuses())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, (p) => handleEntryRealtime(p))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'properties' }, () => fetchProperties())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'properties' }, (p) => {
+          if (!isSavingOrder) fetchProperties();
+      })
       .subscribe();
 
     return () => { supabase.removeChannel(channels); };
-  }, []);
+  }, [isSavingOrder]);
 
-  // Keep localProperties in sync with source of truth when not dragging
   useEffect(() => {
     if (!draggedPropId) {
         setLocalProperties([...properties]);
@@ -102,7 +112,6 @@ export const WorkflowView: React.FC = () => {
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
-  // Pre-sorted data for display
   const sortedProperties = useMemo(() => {
     const list = localProperties.length > 0 ? localProperties : properties;
     return [...list].sort((a, b) => {
@@ -134,15 +143,15 @@ export const WorkflowView: React.FC = () => {
     e.preventDefault();
     if (!draggedTaskId || draggedTaskId === targetId) return;
     
-    const draggedIdx = tasks.findIndex(t => t.id === draggedTaskId);
-    const targetIdx = tasks.findIndex(t => t.id === targetId);
+    const currentTasks = tasksRef.current;
+    const draggedIdx = currentTasks.findIndex(t => t.id === draggedTaskId);
+    const targetIdx = currentTasks.findIndex(t => t.id === targetId);
     if (draggedIdx === -1 || targetIdx === -1) return;
 
-    const newTasks = [...tasks];
+    const newTasks = [...currentTasks];
     const [removed] = newTasks.splice(draggedIdx, 1);
     newTasks.splice(targetIdx, 0, removed);
     
-    // Update local state for immediate visual feedback
     const reordered = newTasks.map((t, i) => ({ ...t, position: i }));
     setTasks(reordered);
   };
@@ -151,13 +160,19 @@ export const WorkflowView: React.FC = () => {
     if (!draggedTaskId) return;
     setIsSavingOrder(true);
     try {
-        // Use the current tasks state which was updated during dragOver
-        const updates = tasks.map((t, i) => 
-            supabase.from('workflow_tasks').update({ position: i }).eq('id', t.id)
-        );
-        await Promise.all(updates);
+        const finalTasks = tasksRef.current.map((t, i) => ({
+            id: t.id,
+            position: i
+        }));
+        
+        // Single batch update for all tasks
+        const { error } = await supabase
+            .from('workflow_tasks')
+            .upsert(finalTasks, { onConflict: 'id' });
+            
+        if (error) throw error;
     } catch (e) {
-        console.error("Task order save failed", e);
+        console.error("Column save failed:", e);
     } finally {
         setDraggedTaskId(null);
         setIsSavingOrder(false);
@@ -179,7 +194,6 @@ export const WorkflowView: React.FC = () => {
     const [removed] = list.splice(draggedIdx, 1);
     list.splice(targetIdx, 0, removed);
     
-    // Update local feedback for rows
     setLocalProperties(list.map((p, i) => ({ ...p, workflow_position: i })));
   };
 
@@ -188,17 +202,22 @@ export const WorkflowView: React.FC = () => {
     
     setIsSavingOrder(true);
     try {
-        // Save the positions of all items in the local reordered list
-        const updates = localProperties.map((p, i) => 
-            supabase.from('properties').update({ workflow_position: i }).eq('id', p.id)
-        );
-        await Promise.all(updates);
+        const finalProps = localProperties.map((p, i) => ({
+            id: p.id,
+            workflow_position: i
+        }));
+        
+        const { error } = await supabase
+            .from('properties')
+            .upsert(finalProps, { onConflict: 'id' });
+            
+        if (error) throw error;
     } catch (e) {
-        console.error("Property order save failed", e);
+        console.error("Row save failed:", e);
     } finally {
         setDraggedPropId(null);
         setIsSavingOrder(false);
-        fetchProperties(); // Refresh context
+        fetchProperties();
     }
   };
 
@@ -318,8 +337,8 @@ export const WorkflowView: React.FC = () => {
             <input type="text" placeholder="Szukaj obiektu..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg py-2.5 pl-10 pr-4 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-all" />
           </div>
           {isSavingOrder && (
-              <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold animate-pulse">
-                  <Loader2 size={14} className="animate-spin" /> Zapisuję kolejność...
+              <div className="flex items-center gap-2 text-green-400 text-xs font-bold animate-pulse">
+                  <Loader2 size={14} className="animate-spin" /> Trwały zapis w bazie...
               </div>
           )}
         </div>
@@ -343,6 +362,7 @@ export const WorkflowView: React.FC = () => {
                   onDragStart={() => onTaskDragStart(task.id)}
                   onDragOver={(e) => onTaskDragOver(e, task.id)}
                   onDrop={onTaskDrop}
+                  onDragEnd={() => setDraggedTaskId(null)}
                   className={`p-3 bg-slate-900 border-b border-border border-r border-slate-800 w-[250px] group transition-all cursor-grab active:cursor-grabbing ${!task.is_active ? 'opacity-40 grayscale' : ''} ${draggedTaskId === task.id ? 'bg-indigo-900/60 border-indigo-400' : ''}`}
                 >
                    <div className="flex flex-col gap-2 pointer-events-none">
