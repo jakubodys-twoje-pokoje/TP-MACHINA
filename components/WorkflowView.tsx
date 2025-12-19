@@ -35,7 +35,6 @@ export const WorkflowView: React.FC = () => {
   const isLocked = useRef<boolean>(false);
   const cooldownTimer = useRef<number | null>(null);
 
-  // Synchronizacja stanu lokalnego z globalnym, jeśli nie trwa przeciąganie
   useEffect(() => {
     if (!isDragging && !isLocked.current) {
         setLocalProperties([...properties]);
@@ -69,7 +68,7 @@ export const WorkflowView: React.FC = () => {
 
   useEffect(() => {
     fetchWorkflowData();
-    const channel = supabase.channel('workflow-v14-rls-fix')
+    const channel = supabase.channel('workflow-v15-complete-fix')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => { if (!isLocked.current) fetchTasks(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => fetchStatuses())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, (p) => handleEntryRealtime(p))
@@ -108,7 +107,13 @@ export const WorkflowView: React.FC = () => {
   };
 
   // --- KOLUMNY ---
-  const onTaskDragStart = (id: string) => { setIsDragging(true); setDraggedTaskId(id); lockSync(); };
+  const onTaskDragStart = (e: React.DragEvent, id: string) => { 
+    e.dataTransfer.setData('text/plain', id);
+    e.dataTransfer.effectAllowed = 'move';
+    setIsDragging(true); 
+    setDraggedTaskId(id); 
+    lockSync(); 
+  };
   
   const onTaskDragEnter = (targetId: string) => {
     if (!draggedTaskId || draggedTaskId === targetId) return;
@@ -132,10 +137,12 @@ export const WorkflowView: React.FC = () => {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error("Unauthorized");
 
-        // GWARANCJA RLS: Wysyłamy TYLKO niezbędne pola
+        // GWARANCJA RLS: Musimy przesłać 'title' i 'is_active', aby przejść walidację NOT NULL
         const payload = tasksRef.current.map((t, i) => ({ 
             id: t.id,
             user_id: user.id,
+            title: t.title,
+            is_active: t.is_active,
             position: i 
         }));
 
@@ -146,8 +153,8 @@ export const WorkflowView: React.FC = () => {
         if (error) throw error;
         await fetchTasks();
     } catch (e: any) { 
-        console.error("Column RLS Error:", e);
-        alert("Błąd zapisu kolumn (RLS): " + e.message);
+        console.error("Column Save Error:", e);
+        alert("Błąd zapisu kolumn: " + e.message);
         fetchTasks(); 
     } finally { 
         setDraggedTaskId(null); 
@@ -157,7 +164,9 @@ export const WorkflowView: React.FC = () => {
   };
 
   // --- RZĘDY ---
-  const onPropDragStart = (id: string) => { 
+  const onPropDragStart = (e: React.DragEvent, id: string) => { 
+    e.dataTransfer.setData('text/plain', id);
+    e.dataTransfer.effectAllowed = 'move';
     setIsDragging(true); 
     setDraggedPropId(id); 
     lockSync(); 
@@ -185,10 +194,12 @@ export const WorkflowView: React.FC = () => {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error("Unauthorized");
 
-        // GWARANCJA RLS: Wysyłamy TYLKO niezbędne pola
+        // GWARANCJA RLS: Musimy przesłać 'name', aby przejść walidację NOT NULL
         const payload = propsRef.current.map((p, i) => ({
             id: p.id,
             user_id: user.id,
+            name: p.name,
+            workflow_is_active: p.workflow_is_active,
             workflow_position: i
         }));
 
@@ -199,8 +210,8 @@ export const WorkflowView: React.FC = () => {
         if (error) throw error;
         await fetchProperties();
     } catch (e: any) {
-        console.error("Row RLS Error:", e);
-        alert("Błąd zapisu rzędów (RLS): " + e.message);
+        console.error("Row Save Error:", e);
+        alert("Błąd zapisu rzędów: " + e.message);
         fetchProperties();
     } finally {
         setDraggedPropId(null);
@@ -213,10 +224,9 @@ export const WorkflowView: React.FC = () => {
   const sortedTasks = useMemo(() => [...tasks].sort((a, b) => a.position - b.position), [tasks]);
   
   const filteredProperties = useMemo(() => {
-    // Podczas przeciągania WYŁĄCZAMY sortowanie bazodanowe, 
-    // polegamy na kolejności w tablicy localProperties uzyskanej przez splice
     let list = [...localProperties];
     
+    // Sortowanie bazodanowe tylko jeśli nie przeciągamy
     if (!isDragging) {
         list.sort((a, b) => {
             const activeA = a.workflow_is_active === false ? 0 : 1;
@@ -324,7 +334,7 @@ export const WorkflowView: React.FC = () => {
           </div>
           {isSavingOrder && (
               <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold animate-pulse">
-                  <Loader2 size={14} className="animate-spin" /> SYNCHRONIZACJA KOLEJNOŚCI...
+                  <Loader2 size={14} className="animate-spin" /> SYNCHRONIZACJA Z BAZĄ...
               </div>
           )}
         </div>
@@ -345,7 +355,7 @@ export const WorkflowView: React.FC = () => {
                 <th 
                   key={task.id} 
                   draggable
-                  onDragStart={() => onTaskDragStart(task.id)}
+                  onDragStart={(e) => onTaskDragStart(e, task.id)}
                   onDragEnter={() => onTaskDragEnter(task.id)}
                   onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
                   onDragEnd={() => { setDraggedTaskId(null); setIsDragging(false); if(!isSavingOrder) isLocked.current = false; }}
@@ -376,7 +386,7 @@ export const WorkflowView: React.FC = () => {
                 <tr 
                   key={property.id} 
                   draggable
-                  onDragStart={() => onPropDragStart(property.id)}
+                  onDragStart={(e) => onPropDragStart(e, property.id)}
                   onDragEnter={() => onPropDragEnter(property.id)}
                   onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
                   onDragEnd={() => { setDraggedPropId(null); setIsDragging(false); if(!isSavingOrder) isLocked.current = false; }}
@@ -386,13 +396,13 @@ export const WorkflowView: React.FC = () => {
                   <td 
                     className={`p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)] transition-colors ${draggedPropId === property.id ? 'bg-indigo-900/40' : ''}`}
                   >
-                    <div className="flex justify-between items-center gap-2 pointer-events-none">
-                        <div className="flex items-center gap-3 flex-grow truncate">
+                    <div className="flex justify-between items-center gap-2">
+                        <div className="flex items-center gap-3 flex-grow truncate pointer-events-none">
                             <GripVertical size={16} className="text-slate-600 flex-shrink-0" />
                             <div className="truncate font-medium text-white text-sm" title={property.name}>{property.name}</div>
                         </div>
-                        <div className="flex flex-col gap-0.5 pointer-events-auto">
-                            <button onClick={(e) => { e.stopPropagation(); handleTogglePropertyActive(property.id, rowIsActive); }} className="text-slate-500 hover:text-indigo-400" title="Aktywuj/Dezaktywuj"><Eye size={12}/></button>
+                        <div className="flex flex-col gap-0.5">
+                            <button onClick={(e) => { e.stopPropagation(); handleTogglePropertyActive(property.id, rowIsActive); }} className="text-slate-500 hover:text-indigo-400 transition-colors" title="Aktywuj/Dezaktywuj"><Eye size={14}/></button>
                         </div>
                     </div>
                   </td>
