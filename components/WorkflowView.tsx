@@ -28,16 +28,22 @@ export const WorkflowView: React.FC = () => {
   const [isSavingOrder, setIsSavingOrder] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
-  // CRITICAL: Refs to avoid stale closures in D&D handlers
+  // REFS - The only way to ensure D&D handlers use the LATEST data
   const tasksRef = useRef<WorkflowTask[]>([]);
-  const propertiesRef = useRef<Property[]>([]);
+  const localPropsRef = useRef<Property[]>([]);
   const isSyncLocked = useRef<boolean>(false);
 
   // Keep refs in sync with state
   useEffect(() => { tasksRef.current = tasks; }, [tasks]);
-  useEffect(() => { propertiesRef.current = localProperties; }, [properties]);
-
+  
   const [localProperties, setLocalProperties] = useState<Property[]>([]);
+  useEffect(() => { 
+    if (!isSyncLocked.current) {
+      setLocalProperties([...properties]);
+      localPropsRef.current = [...properties];
+    }
+  }, [properties]);
+
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [draggedPropId, setDraggedPropId] = useState<string | null>(null);
 
@@ -57,7 +63,7 @@ export const WorkflowView: React.FC = () => {
   useEffect(() => {
     fetchWorkflowData();
 
-    const channel = supabase.channel('workflow-realtime-final')
+    const channel = supabase.channel('workflow-realtime-v9')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => {
           if (!isSyncLocked.current) fetchTasks();
       })
@@ -70,13 +76,6 @@ export const WorkflowView: React.FC = () => {
 
     return () => { supabase.removeChannel(channel); };
   }, []);
-
-  // Sync local properties with context when not dragging
-  useEffect(() => {
-    if (!draggedPropId) {
-        setLocalProperties([...properties]);
-    }
-  }, [properties, draggedPropId]);
 
   const fetchTasks = async () => {
       const { data } = await supabase.from('workflow_tasks').select('*').order('position', { ascending: true });
@@ -113,8 +112,7 @@ export const WorkflowView: React.FC = () => {
   };
 
   const sortedProperties = useMemo(() => {
-    const list = localProperties.length > 0 ? localProperties : properties;
-    return [...list].sort((a, b) => {
+    return [...localProperties].sort((a, b) => {
         const activeA = a.workflow_is_active === false ? 0 : 1;
         const activeB = b.workflow_is_active === false ? 0 : 1;
         if (activeA !== activeB) return activeB - activeA;
@@ -123,7 +121,7 @@ export const WorkflowView: React.FC = () => {
         }
         return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
     });
-  }, [properties, localProperties]);
+  }, [localProperties]);
 
   const sortedTasks = useMemo(() => {
     return [...tasks].sort((a, b) => {
@@ -136,24 +134,26 @@ export const WorkflowView: React.FC = () => {
     return sortedProperties.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
   }, [sortedProperties, searchQuery]);
 
-  // --- DRAG AND DROP TASKS (COLUMNS) ---
+  // --- LOGIKA DRAG & DROP KOLUMNY ---
   const onTaskDragStart = (id: string) => setDraggedTaskId(id);
   
   const onTaskDragOver = (e: React.DragEvent, targetId: string) => {
     e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
     if (!draggedTaskId || draggedTaskId === targetId) return;
     
-    // Use functional state update to ensure we have the absolute latest order
     setTasks(prev => {
-        const draggedIdx = prev.findIndex(t => t.id === draggedTaskId);
-        const targetIdx = prev.findIndex(t => t.id === targetId);
-        if (draggedIdx === -1 || targetIdx === -1) return prev;
+        const dIdx = prev.findIndex(t => t.id === draggedTaskId);
+        const tIdx = prev.findIndex(t => t.id === targetId);
+        if (dIdx === -1 || tIdx === -1) return prev;
 
         const updated = [...prev];
-        const [removed] = updated.splice(draggedIdx, 1);
-        updated.splice(targetIdx, 0, removed);
+        const [moved] = updated.splice(dIdx, 1);
+        updated.splice(tIdx, 0, moved);
         
-        return updated.map((t, i) => ({ ...t, position: i }));
+        const final = updated.map((t, i) => ({ ...t, position: i }));
+        tasksRef.current = final; // Sync ref immediately
+        return final;
     });
   };
 
@@ -162,48 +162,52 @@ export const WorkflowView: React.FC = () => {
     if (!draggedTaskId) return;
     
     setIsSavingOrder(true);
-    isSyncLocked.current = true; // Lock realtime updates
+    isSyncLocked.current = true; // Lock incoming DB changes
 
     try {
-        // Use the current Ref which was kept in sync with the functional updates in DragOver
-        const finalOrder = tasksRef.current.map((t, i) => ({
+        // ALWAYS use the Ref for the final DB write to avoid closures
+        const dataToSave = tasksRef.current.map((t, i) => ({
             id: t.id,
             position: i
         }));
 
         const { error } = await supabase
             .from('workflow_tasks')
-            .upsert(finalOrder, { onConflict: 'id' });
+            .upsert(dataToSave, { onConflict: 'id' });
 
         if (error) throw error;
+        console.log("Column order persisted.");
     } catch (e) {
-        console.error("Column persistence error:", e);
-        fetchTasks(); // Recovery
+        console.error("DB Save failed:", e);
+        fetchTasks();
     } finally {
         setDraggedTaskId(null);
         setIsSavingOrder(false);
-        // Delay unlocking to let Supabase propagate
-        setTimeout(() => { isSyncLocked.current = false; }, 1000);
+        // Release lock after small delay to ensure DB propagation
+        setTimeout(() => { isSyncLocked.current = false; }, 2000);
     }
   };
 
-  // --- DRAG AND DROP PROPERTIES (ROWS) ---
+  // --- LOGIKA DRAG & DROP RZĘDY ---
   const onPropDragStart = (id: string) => setDraggedPropId(id);
 
   const onPropDragOver = (e: React.DragEvent, targetId: string) => {
     e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
     if (!draggedPropId || draggedPropId === targetId) return;
 
     setLocalProperties(prev => {
         const list = [...prev];
-        const draggedIdx = list.findIndex(p => p.id === draggedPropId);
-        const targetIdx = list.findIndex(p => p.id === targetId);
-        if (draggedIdx === -1 || targetIdx === -1) return prev;
+        const dIdx = list.findIndex(p => p.id === draggedPropId);
+        const tIdx = list.findIndex(p => p.id === targetId);
+        if (dIdx === -1 || tIdx === -1) return prev;
 
-        const [removed] = list.splice(draggedIdx, 1);
-        list.splice(targetIdx, 0, removed);
+        const [moved] = list.splice(dIdx, 1);
+        list.splice(tIdx, 0, moved);
         
-        return list.map((p, i) => ({ ...p, workflow_position: i }));
+        const final = list.map((p, i) => ({ ...p, workflow_position: i }));
+        localPropsRef.current = final;
+        return final;
     });
   };
 
@@ -215,26 +219,28 @@ export const WorkflowView: React.FC = () => {
     isSyncLocked.current = true;
 
     try {
-        const finalOrder = localProperties.map((p, i) => ({
+        const dataToSave = localPropsRef.current.map((p, i) => ({
             id: p.id,
             workflow_position: i
         }));
 
         const { error } = await supabase
             .from('properties')
-            .upsert(finalOrder, { onConflict: 'id' });
+            .upsert(dataToSave, { onConflict: 'id' });
 
         if (error) throw error;
+        console.log("Row order persisted.");
     } catch (e) {
-        console.error("Row persistence error:", e);
-        fetchProperties(); // Recovery
+        console.error("DB Save failed:", e);
+        fetchProperties();
     } finally {
         setDraggedPropId(null);
         setIsSavingOrder(false);
-        setTimeout(() => { isSyncLocked.current = false; }, 1000);
+        setTimeout(() => { isSyncLocked.current = false; }, 2000);
     }
   };
 
+  // --- INNE AKCJE ---
   const handleToggleTaskActive = async (taskId: string, currentState: boolean) => {
       await supabase.from('workflow_tasks').update({ is_active: !currentState }).eq('id', taskId);
       fetchTasks();
@@ -352,7 +358,7 @@ export const WorkflowView: React.FC = () => {
           </div>
           {isSavingOrder && (
               <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold animate-pulse">
-                  <Loader2 size={14} className="animate-spin" /> Trwały zapis w bazie danych...
+                  <Loader2 size={14} className="animate-spin" /> ZAPIS TRWAŁY W BAZIE...
               </div>
           )}
         </div>
@@ -377,7 +383,7 @@ export const WorkflowView: React.FC = () => {
                   onDragOver={(e) => onTaskDragOver(e, task.id)}
                   onDrop={onTaskDrop}
                   onDragEnd={() => setDraggedTaskId(null)}
-                  className={`p-3 bg-slate-900 border-b border-border border-r border-slate-800 w-[250px] group transition-all cursor-grab active:cursor-grabbing ${!task.is_active ? 'opacity-40 grayscale' : ''} ${draggedTaskId === task.id ? 'bg-indigo-900/60 border-indigo-400' : ''}`}
+                  className={`p-3 bg-slate-900 border-b border-border border-r border-slate-800 w-[250px] group transition-all cursor-grab active:cursor-grabbing ${!task.is_active ? 'opacity-40 grayscale' : ''} ${draggedTaskId === task.id ? 'bg-indigo-900/60 border-indigo-400 ring-2 ring-indigo-500 z-50' : ''}`}
                 >
                    <div className="flex flex-col gap-2 pointer-events-none">
                        <div className="flex justify-between items-center text-white text-sm">
@@ -392,7 +398,7 @@ export const WorkflowView: React.FC = () => {
                                <button onClick={(e) => { e.stopPropagation(); handleDeleteTask(task.id); }} className="p-1 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
                            </div>
                        </div>
-                       <div className="text-[9px] uppercase font-bold text-slate-600 tracking-widest text-center">Złap i przesuń</div>
+                       <div className="text-[9px] uppercase font-bold text-slate-600 tracking-widest text-center">Przesuń kolumnę</div>
                    </div>
                 </th>
               ))}
@@ -409,7 +415,7 @@ export const WorkflowView: React.FC = () => {
                   className={`hover:bg-slate-800/30 transition-colors ${!rowIsActive ? 'opacity-40 bg-slate-900/50' : ''} ${draggedPropId === property.id ? 'bg-indigo-900/20' : ''}`}
                 >
                   <td 
-                    className={`p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)] transition-colors ${draggedPropId === property.id ? 'bg-indigo-900/40' : ''}`}
+                    className={`p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)] transition-colors ${draggedPropId === property.id ? 'bg-indigo-900/40 ring-2 ring-inset ring-indigo-500' : ''}`}
                   >
                     <div className="flex justify-between items-center gap-2">
                         <div 
@@ -450,9 +456,9 @@ export const WorkflowView: React.FC = () => {
         </table>
       </div>
 
-      {/* MODALS */}
+      {/* MODALS (Simplified logic for brevity) */}
       {isCellModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-5 animate-in zoom-in-95">
              <div className="flex justify-between items-start">
                 <h3 className="font-bold text-white text-lg">Edycja komórki</h3>
@@ -498,7 +504,7 @@ export const WorkflowView: React.FC = () => {
       )}
 
       {isPropertyModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">
              <h3 className="font-bold text-white text-lg">Dodaj nowy obiekt</h3>
              <input autoFocus value={newPropertyName} onChange={e => setNewPropertyName(e.target.value)} placeholder="Nazwa obiektu (np. Willa Widok)" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" onKeyDown={e => e.key === 'Enter' && handleAddPropertyLocal()} />
@@ -511,7 +517,7 @@ export const WorkflowView: React.FC = () => {
       )}
 
       {isTaskModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">
              <h3 className="font-bold text-white text-lg">Nowa Kolumna Zadań</h3>
              <input autoFocus value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} placeholder="np. Sprzątanie końcowe" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" onKeyDown={e => e.key === 'Enter' && handleAddTask()} />
@@ -524,7 +530,7 @@ export const WorkflowView: React.FC = () => {
       )}
 
       {isStatusModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="bg-surface w-full max-w-lg rounded-xl border border-border shadow-2xl overflow-hidden animate-in zoom-in-95">
              <div className="p-4 border-b border-border flex justify-between items-center bg-slate-900/50">
                 <h3 className="font-bold text-white">Zarządzaj Statusami</h3>
