@@ -86,22 +86,27 @@ export const WorkflowView: React.FC = () => {
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
-  // Logic: Active first, then by position
+  // Improved sorting for properties
   const sortedProperties = useMemo(() => {
     return [...properties].sort((a, b) => {
         const activeA = a.workflow_is_active === false ? 0 : 1;
         const activeB = b.workflow_is_active === false ? 0 : 1;
         if (activeA !== activeB) return activeB - activeA;
-        return (a.workflow_position || 0) - (b.workflow_position || 0);
+        if ((a.workflow_position || 0) !== (b.workflow_position || 0)) {
+            return (a.workflow_position || 0) - (b.workflow_position || 0);
+        }
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
     });
   }, [properties]);
 
+  // Improved sorting for tasks
   const sortedTasks = useMemo(() => {
     return [...tasks].sort((a, b) => {
         const activeA = a.is_active === false ? 0 : 1;
         const activeB = b.is_active === false ? 0 : 1;
         if (activeA !== activeB) return activeB - activeA;
-        return a.position - b.position;
+        if (a.position !== b.position) return a.position - b.position;
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
     });
   }, [tasks]);
 
@@ -109,40 +114,59 @@ export const WorkflowView: React.FC = () => {
     return sortedProperties.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
   }, [sortedProperties, searchQuery]);
 
-  // Actions
+  // Fixed Move Task Logic
   const handleMoveTask = async (taskId: string, direction: 'left' | 'right') => {
-      const idx = tasks.findIndex(t => t.id === taskId);
-      if ((direction === 'left' && idx === 0) || (direction === 'right' && idx === tasks.length - 1)) return;
+      const currentSorted = sortedTasks; // Use memoized current view
+      const idx = currentSorted.findIndex(t => t.id === taskId);
+      if ((direction === 'left' && idx <= 0) || (direction === 'right' && idx >= currentSorted.length - 1)) return;
+      
       const targetIdx = direction === 'left' ? idx - 1 : idx + 1;
-      const updatedTasks = [...tasks];
-      const tempPos = updatedTasks[idx].position;
-      updatedTasks[idx].position = updatedTasks[targetIdx].position;
-      updatedTasks[targetIdx].position = tempPos;
+      const task1 = currentSorted[idx];
+      const task2 = currentSorted[targetIdx];
+
+      // Swapping positions
+      const newPos1 = task2.position;
+      const newPos2 = task1.position;
+
+      // Optimistic update
+      setTasks(prev => prev.map(t => {
+          if (t.id === task1.id) return { ...t, position: newPos1 };
+          if (t.id === task2.id) return { ...t, position: newPos2 };
+          return t;
+      }));
 
       await Promise.all([
-          supabase.from('workflow_tasks').update({ position: updatedTasks[idx].position }).eq('id', updatedTasks[idx].id),
-          supabase.from('workflow_tasks').update({ position: updatedTasks[targetIdx].position }).eq('id', updatedTasks[targetIdx].id)
+          supabase.from('workflow_tasks').update({ position: newPos1 }).eq('id', task1.id),
+          supabase.from('workflow_tasks').update({ position: newPos2 }).eq('id', task2.id)
       ]);
-      fetchTasks();
+  };
+
+  // Fixed Move Property Logic
+  const handleMoveProperty = async (propId: string, direction: 'up' | 'down') => {
+      const currentSorted = filteredProperties;
+      const idx = currentSorted.findIndex(p => p.id === propId);
+      if ((direction === 'up' && idx <= 0) || (direction === 'down' && idx >= currentSorted.length - 1)) return;
+      
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+      const p1 = currentSorted[idx];
+      const p2 = currentSorted[targetIdx];
+
+      const newPos1 = p2.workflow_position || 0;
+      const newPos2 = p1.workflow_position || 0;
+
+      // Handle cases where positions might both be 0
+      const finalPos1 = newPos1 === newPos2 ? (direction === 'up' ? newPos1 - 1 : newPos1 + 1) : newPos1;
+
+      await Promise.all([
+          supabase.from('properties').update({ workflow_position: finalPos1 }).eq('id', p1.id),
+          supabase.from('properties').update({ workflow_position: newPos2 }).eq('id', p2.id)
+      ]);
+      fetchProperties();
   };
 
   const handleToggleTaskActive = async (taskId: string, currentState: boolean) => {
       await supabase.from('workflow_tasks').update({ is_active: !currentState }).eq('id', taskId);
       fetchTasks();
-  };
-
-  const handleMoveProperty = async (propId: string, direction: 'up' | 'down') => {
-      const idx = properties.findIndex(p => p.id === propId);
-      if ((direction === 'up' && idx === 0) || (direction === 'down' && idx === properties.length - 1)) return;
-      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-      const p1 = properties[idx];
-      const p2 = properties[targetIdx];
-      
-      await Promise.all([
-          supabase.from('properties').update({ workflow_position: p2.workflow_position || 0 }).eq('id', p1.id),
-          supabase.from('properties').update({ workflow_position: p1.workflow_position || 0 }).eq('id', p2.id)
-      ]);
-      fetchProperties();
   };
 
   const handleTogglePropertyActive = async (propId: string, currentState: boolean) => {
@@ -154,7 +178,7 @@ export const WorkflowView: React.FC = () => {
     if (!newTaskTitle.trim()) return;
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    const maxPos = tasks.reduce((max, t) => Math.max(max, t.position), 0);
+    const maxPos = tasks.length > 0 ? Math.max(...tasks.map(t => t.position)) : 0;
     await supabase.from('workflow_tasks').insert({ title: newTaskTitle, user_id: user.id, position: maxPos + 1 });
     setNewTaskTitle(''); setIsTaskModalOpen(false);
     fetchTasks();
@@ -163,16 +187,15 @@ export const WorkflowView: React.FC = () => {
   const handleDeleteTask = async (id: string) => {
     if (!confirm("Trwale usunąć tę kolumnę danych?")) return;
     await supabase.from('workflow_tasks').delete().eq('id', id);
+    fetchTasks();
   };
 
-  // Fix: Added missing handleDeleteStatus function to remove workflow statuses
   const handleDeleteStatus = async (id: string) => {
     if (!confirm("Czy na pewno chcesz usunąć ten status?")) return;
     await supabase.from('workflow_statuses').delete().eq('id', id);
     fetchStatuses();
   };
 
-  // Fix: Added missing handleAddStatus function to create new workflow statuses
   const handleAddStatus = async () => {
     if (!newStatus.label.trim()) return;
     const { data: { user } } = await supabase.auth.getUser();
@@ -197,6 +220,7 @@ export const WorkflowView: React.FC = () => {
 
   const saveCell = async () => {
     if (!selectedCell) return;
+    // Re-fetch user each time to ensure we have the correct email
     const { data: { user } } = await supabase.auth.getUser();
     const existing = entries.find(e => e.property_id === selectedCell.propId && e.task_id === selectedCell.taskId);
     
@@ -240,28 +264,28 @@ export const WorkflowView: React.FC = () => {
         </div>
       </div>
 
-      {/* TABLE */}
+      {/* TABLE - FIXED ULTRAWIDE GAPS BY USING w-max ON TABLE AND overflow-auto ON PARENT */}
       <div className="flex-1 overflow-auto bg-surface rounded-xl border border-border shadow-xl custom-scrollbar">
-        <table className="min-w-full border-collapse">
+        <table className="w-max border-collapse">
           <thead className="sticky top-0 z-30">
             <tr>
-              <th className="p-4 bg-slate-900 text-slate-400 font-bold text-xs uppercase border-b border-r border-border sticky left-0 z-40 w-64">Obiekt</th>
+              <th className="p-4 bg-slate-900 text-slate-400 font-bold text-xs uppercase border-b border-r border-border sticky left-0 z-40 w-64 shadow-[2px_0_5px_rgba(0,0,0,0.3)]">Obiekt</th>
               {sortedTasks.map(task => (
                 <th key={task.id} className={`p-3 bg-slate-900 border-b border-border border-r border-slate-800 min-w-[220px] max-w-[280px] group ${!task.is_active ? 'opacity-40 grayscale' : ''}`}>
                    <div className="flex flex-col gap-2">
                        <div className="flex justify-between items-center text-white text-sm">
                            <span className="truncate font-bold" title={task.title}>{task.title}</span>
                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                               <button onClick={() => handleToggleTaskActive(task.id, task.is_active)} className="p-1 hover:text-indigo-400">
+                               <button onClick={() => handleToggleTaskActive(task.id, task.is_active)} className="p-1 hover:text-indigo-400" title="Aktywuj/Dezaktywuj">
                                    {task.is_active ? <Eye size={14} /> : <EyeOff size={14} />}
                                </button>
-                               <button onClick={() => handleDeleteTask(task.id)} className="p-1 hover:text-red-400"><Trash2 size={14} /></button>
+                               <button onClick={() => handleDeleteTask(task.id)} className="p-1 hover:text-red-400" title="Usuń"><Trash2 size={14} /></button>
                            </div>
                        </div>
-                       <div className="flex items-center gap-2 text-slate-600">
-                           <button onClick={() => handleMoveTask(task.id, 'left')} className="hover:text-white"><ChevronLeft size={16}/></button>
-                           <span className="text-[10px] uppercase font-bold tracking-widest">Kolejność</span>
-                           <button onClick={() => handleMoveTask(task.id, 'right')} className="hover:text-white"><ChevronRight size={16}/></button>
+                       <div className="flex items-center gap-2 text-slate-600 justify-center">
+                           <button onClick={() => handleMoveTask(task.id, 'left')} className="p-1 hover:text-white hover:bg-slate-800 rounded transition-colors"><ChevronLeft size={16}/></button>
+                           <span className="text-[10px] uppercase font-bold tracking-widest px-2">Pozycja</span>
+                           <button onClick={() => handleMoveTask(task.id, 'right')} className="p-1 hover:text-white hover:bg-slate-800 rounded transition-colors"><ChevronRight size={16}/></button>
                        </div>
                    </div>
                 </th>
@@ -273,13 +297,13 @@ export const WorkflowView: React.FC = () => {
               const rowIsActive = property.workflow_is_active !== false;
               return (
                 <tr key={property.id} className={`hover:bg-slate-800/30 transition-colors ${!rowIsActive ? 'opacity-40 bg-slate-900/50' : ''}`}>
-                  <td className="p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group">
-                    <div className="flex justify-between items-center">
+                  <td className="p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)]">
+                    <div className="flex justify-between items-center gap-2">
                         <div className="truncate w-40 font-medium text-white" title={property.name}>{property.name}</div>
                         <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => handleTogglePropertyActive(property.id, rowIsActive)} className="text-slate-500 hover:text-indigo-400"><Eye size={12}/></button>
-                            <button onClick={() => handleMoveProperty(property.id, 'up')} className="text-slate-500 hover:text-white"><ChevronUp size={12}/></button>
-                            <button onClick={() => handleMoveProperty(property.id, 'down')} className="text-slate-500 hover:text-white"><ChevronDown size={12}/></button>
+                            <button onClick={() => handleTogglePropertyActive(property.id, rowIsActive)} className="text-slate-500 hover:text-indigo-400" title="Aktywuj/Dezaktywuj"><Eye size={12}/></button>
+                            <button onClick={() => handleMoveProperty(property.id, 'up')} className="text-slate-500 hover:text-white" title="Góra"><ChevronUp size={12}/></button>
+                            <button onClick={() => handleMoveProperty(property.id, 'down')} className="text-slate-500 hover:text-white" title="Dół"><ChevronDown size={12}/></button>
                         </div>
                     </div>
                   </td>
@@ -289,13 +313,13 @@ export const WorkflowView: React.FC = () => {
                     const hasComment = entry?.comment && entry.comment.trim().length > 0;
                     
                     return (
-                      <td key={task.id} className="p-1 border-r border-b border-slate-800 cursor-pointer align-middle h-[80px]" onClick={() => openCellModal(property.id, task.id)}>
-                        <div className={`w-full h-full rounded flex flex-col justify-center px-4 py-2 transition-all border-2 max-w-[280px] ${status ? status.color + ' border-transparent' : 'bg-transparent border-transparent hover:border-slate-700 hover:bg-slate-800'} ${status ? 'text-white' : 'text-slate-500'}`}>
+                      <td key={task.id} className="p-1 border-r border-b border-slate-800 cursor-pointer align-middle h-[80px] min-w-[220px]" onClick={() => openCellModal(property.id, task.id)}>
+                        <div className={`w-full h-full rounded flex flex-col justify-center px-4 py-2 transition-all border-2 ${status ? status.color + ' border-transparent' : 'bg-transparent border-transparent hover:border-slate-700 hover:bg-slate-800'} ${status ? 'text-white' : 'text-slate-500'}`}>
                            <div className="flex items-center justify-between gap-2">
                                <span className="text-sm font-bold truncate">{status ? status.label : ''}</span>
                                {hasComment && <MessageSquare size={14} className={status ? 'text-white/80' : 'text-indigo-500'} />}
                            </div>
-                           {!status && !hasComment && <span className="text-[10px] uppercase font-black opacity-0 hover:opacity-10 transition-opacity">Edytuj</span>}
+                           {!status && !hasComment && <span className="text-[10px] uppercase font-black opacity-0 hover:opacity-10 transition-opacity text-center">Edytuj</span>}
                         </div>
                       </td>
                     );
@@ -312,8 +336,8 @@ export const WorkflowView: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-5 animate-in zoom-in-95">
              <div className="flex justify-between items-start">
-                <h3 className="font-bold text-white text-lg">Zmień status i uwagi</h3>
-                <button onClick={() => setIsCellModalOpen(false)} className="text-slate-500 hover:text-white"><X size={20}/></button>
+                <h3 className="font-bold text-white text-lg">Edycja komórki</h3>
+                <button onClick={() => setIsCellModalOpen(false)} className="text-slate-500 hover:text-white p-1 rounded-md hover:bg-slate-800 transition-colors"><X size={20}/></button>
              </div>
 
              {/* INFO OSTATNIA EDYCJA */}
@@ -324,8 +348,8 @@ export const WorkflowView: React.FC = () => {
                     </div>
                     {getEntry(selectedCell.propId, selectedCell.taskId) ? (
                         <div className="text-xs text-slate-300">
-                            <div className="flex items-center gap-1.5"><User size={12} className="text-indigo-400" /> {getEntry(selectedCell.propId, selectedCell.taskId)?.last_updated_by_email || 'Nieznany'}</div>
-                            <div className="mt-1 text-slate-500">{new Date(getEntry(selectedCell.propId, selectedCell.taskId)!.updated_at).toLocaleString()}</div>
+                            <div className="flex items-center gap-1.5 truncate"><User size={12} className="text-indigo-400 flex-shrink-0" /> {getEntry(selectedCell.propId, selectedCell.taskId)?.last_updated_by_email || 'Nieznany'}</div>
+                            <div className="mt-1 text-slate-500 pl-4">{new Date(getEntry(selectedCell.propId, selectedCell.taskId)!.updated_at).toLocaleString()}</div>
                         </div>
                     ) : (
                         <div className="text-xs text-slate-600 italic">Brak wcześniejszych wpisów</div>
@@ -336,20 +360,20 @@ export const WorkflowView: React.FC = () => {
              <div>
                  <label className="block text-xs font-bold text-slate-400 uppercase mb-3">Wybierz status:</label>
                  <div className="grid grid-cols-1 gap-2 max-h-[180px] overflow-y-auto pr-1 custom-scrollbar">
-                     <button onClick={() => setCellForm({...cellForm, statusId: ''})} className={`p-2.5 rounded-lg border text-sm text-left ${cellForm.statusId === '' ? 'border-indigo-500 bg-indigo-500/10 text-white' : 'border-slate-700 text-slate-500 hover:bg-slate-800'}`}>Brak statusu / Wyczyść</button>
+                     <button onClick={() => setCellForm({...cellForm, statusId: ''})} className={`p-2.5 rounded-lg border text-sm text-left transition-all ${cellForm.statusId === '' ? 'border-indigo-500 bg-indigo-500/10 text-white shadow-[0_0_10px_rgba(99,102,241,0.2)]' : 'border-slate-700 text-slate-500 hover:bg-slate-800 hover:text-slate-300'}`}>Brak statusu / Wyczyść</button>
                      {statuses.map(s => (
-                         <button key={s.id} onClick={() => setCellForm({...cellForm, statusId: s.id})} className={`p-2.5 rounded-lg border text-sm text-left flex items-center gap-3 ${cellForm.statusId === s.id ? 'border-white bg-slate-800 text-white' : 'border-slate-700 text-slate-300 hover:bg-slate-800'}`}>
+                         <button key={s.id} onClick={() => setCellForm({...cellForm, statusId: s.id})} className={`p-2.5 rounded-lg border text-sm text-left flex items-center gap-3 transition-all ${cellForm.statusId === s.id ? 'border-white bg-slate-800 text-white' : 'border-slate-700 text-slate-300 hover:bg-slate-800'}`}>
                             <div className={`w-3 h-3 rounded-full ${s.color}`}></div> {s.label}
                          </button>
                      ))}
                  </div>
              </div>
              <div>
-                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Notatki (widoczne po kliknięciu ikony):</label>
-                <textarea rows={4} value={cellForm.comment} onChange={e => setCellForm({...cellForm, comment: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none" placeholder="Wpisz uwagi..." />
+                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Notatki:</label>
+                <textarea rows={4} value={cellForm.comment} onChange={e => setCellForm({...cellForm, comment: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none transition-all" placeholder="Wpisz uwagi..." />
              </div>
              <div className="flex justify-end gap-2 pt-2">
-                 <button onClick={saveCell} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center justify-center gap-2 font-bold shadow-lg transition-all active:scale-95"><Save size={18}/> Zapisz zmiany</button>
+                 <button onClick={saveCell} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center justify-center gap-2 font-bold shadow-lg shadow-indigo-900/20 transition-all active:scale-95"><Save size={18}/> Zapisz zmiany</button>
              </div>
           </div>
         </div>
@@ -360,10 +384,10 @@ export const WorkflowView: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">
              <h3 className="font-bold text-white text-lg">Nowe Zadanie (Kolumna)</h3>
-             <input autoFocus value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} placeholder="np. Sprzątanie" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" />
+             <input autoFocus value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} placeholder="np. Sprzątanie" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" onKeyDown={e => e.key === 'Enter' && handleAddTask()} />
              <div className="flex justify-end gap-2">
-                 <button onClick={() => setIsTaskModalOpen(false)} className="px-4 py-2 text-slate-400">Anuluj</button>
-                 <button onClick={handleAddTask} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold">Dodaj</button>
+                 <button onClick={() => setIsTaskModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white transition-colors">Anuluj</button>
+                 <button onClick={handleAddTask} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-500 transition-colors">Dodaj</button>
              </div>
           </div>
         </div>
@@ -380,12 +404,12 @@ export const WorkflowView: React.FC = () => {
              <div className="p-6 space-y-6">
                 <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
                     {statuses.map(s => (
-                        <div key={s.id} className="flex items-center justify-between bg-slate-900 p-2 rounded border border-border">
+                        <div key={s.id} className="flex items-center justify-between bg-slate-900 p-2 rounded border border-border group/status">
                             <div className="flex items-center gap-3">
                                 <div className={`w-4 h-4 rounded-full ${s.color}`}></div>
                                 <span className="text-white text-sm">{s.label}</span>
                             </div>
-                            <button onClick={() => handleDeleteStatus(s.id)} className="text-slate-500 hover:text-red-400"><Trash2 size={16}/></button>
+                            <button onClick={() => handleDeleteStatus(s.id)} className="text-slate-500 hover:text-red-400 opacity-0 group-hover/status:opacity-100 transition-opacity"><Trash2 size={16}/></button>
                         </div>
                     ))}
                 </div>
