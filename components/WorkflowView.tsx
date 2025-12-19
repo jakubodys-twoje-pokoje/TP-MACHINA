@@ -68,7 +68,7 @@ export const WorkflowView: React.FC = () => {
 
   useEffect(() => {
     fetchWorkflowData();
-    const channel = supabase.channel('workflow-v15-complete-fix')
+    const channel = supabase.channel('workflow-v16-final-fix')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => { if (!isLocked.current) fetchTasks(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => fetchStatuses())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, (p) => handleEntryRealtime(p))
@@ -106,7 +106,7 @@ export const WorkflowView: React.FC = () => {
       }, 3000); 
   };
 
-  // --- KOLUMNY ---
+  // --- KOLUMNY (DRAG & DROP) ---
   const onTaskDragStart = (e: React.DragEvent, id: string) => { 
     e.dataTransfer.setData('text/plain', id);
     e.dataTransfer.effectAllowed = 'move';
@@ -137,23 +137,22 @@ export const WorkflowView: React.FC = () => {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error("Unauthorized");
 
-        // GWARANCJA RLS: Musimy przesłać 'title' i 'is_active', aby przejść walidację NOT NULL
-        const payload = tasksRef.current.map((t, i) => ({ 
-            id: t.id,
-            user_id: user.id,
-            title: t.title,
-            is_active: t.is_active,
-            position: i 
-        }));
+        // RLS FIX: Zamiast upsert używamy precyzyjnych update w pętli
+        // To omija polityki INSERT i skupia się tylko na uprawnieniach UPDATE dla własnych rekordów
+        const updates = tasksRef.current.map((t, i) => 
+            supabase.from('workflow_tasks')
+                .update({ position: i })
+                .eq('id', t.id)
+                .eq('user_id', user.id)
+        );
 
-        const { error } = await supabase
-            .from('workflow_tasks')
-            .upsert(payload, { onConflict: 'id' });
+        const results = await Promise.all(updates);
+        const firstError = results.find(r => r.error);
+        if (firstError) throw firstError.error;
 
-        if (error) throw error;
         await fetchTasks();
     } catch (e: any) { 
-        console.error("Column Save Error:", e);
+        console.error("Column RLS Error:", e);
         alert("Błąd zapisu kolumn: " + e.message);
         fetchTasks(); 
     } finally { 
@@ -163,10 +162,15 @@ export const WorkflowView: React.FC = () => {
     }
   };
 
-  // --- RZĘDY ---
+  // --- RZĘDY (DRAG & DROP) ---
   const onPropDragStart = (e: React.DragEvent, id: string) => { 
     e.dataTransfer.setData('text/plain', id);
     e.dataTransfer.effectAllowed = 'move';
+    // Wizualny ghost image dla rzędu
+    const dragImg = new Image();
+    dragImg.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    e.dataTransfer.setDragImage(dragImg, 0, 0);
+
     setIsDragging(true); 
     setDraggedPropId(id); 
     lockSync(); 
@@ -194,23 +198,21 @@ export const WorkflowView: React.FC = () => {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error("Unauthorized");
 
-        // GWARANCJA RLS: Musimy przesłać 'name', aby przejść walidację NOT NULL
-        const payload = propsRef.current.map((p, i) => ({
-            id: p.id,
-            user_id: user.id,
-            name: p.name,
-            workflow_is_active: p.workflow_is_active,
-            workflow_position: i
-        }));
+        // RLS FIX: Zamiast upsert używamy update, aby nie naruszać polityk INSERT bazy
+        const updates = propsRef.current.map((p, i) => 
+            supabase.from('properties')
+                .update({ workflow_position: i })
+                .eq('id', p.id)
+                .eq('user_id', user.id)
+        );
 
-        const { error } = await supabase
-            .from('properties')
-            .upsert(payload, { onConflict: 'id' });
+        const results = await Promise.all(updates);
+        const firstError = results.find(r => r.error);
+        if (firstError) throw firstError.error;
 
-        if (error) throw error;
         await fetchProperties();
     } catch (e: any) {
-        console.error("Row Save Error:", e);
+        console.error("Row RLS Error:", e);
         alert("Błąd zapisu rzędów: " + e.message);
         fetchProperties();
     } finally {
@@ -220,13 +222,12 @@ export const WorkflowView: React.FC = () => {
     }
   };
 
-  // --- WIDOK ---
+  // --- WIDOK I FILTROWANIE ---
   const sortedTasks = useMemo(() => [...tasks].sort((a, b) => a.position - b.position), [tasks]);
   
   const filteredProperties = useMemo(() => {
     let list = [...localProperties];
     
-    // Sortowanie bazodanowe tylko jeśli nie przeciągamy
     if (!isDragging) {
         list.sort((a, b) => {
             const activeA = a.workflow_is_active === false ? 0 : 1;
@@ -334,7 +335,7 @@ export const WorkflowView: React.FC = () => {
           </div>
           {isSavingOrder && (
               <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold animate-pulse">
-                  <Loader2 size={14} className="animate-spin" /> SYNCHRONIZACJA Z BAZĄ...
+                  <Loader2 size={14} className="animate-spin" /> SYNCHRONIZACJA KOLEJNOŚCI...
               </div>
           )}
         </div>
@@ -354,20 +355,25 @@ export const WorkflowView: React.FC = () => {
               {sortedTasks.map(task => (
                 <th 
                   key={task.id} 
-                  draggable
-                  onDragStart={(e) => onTaskDragStart(e, task.id)}
                   onDragEnter={() => onTaskDragEnter(task.id)}
                   onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
-                  onDragEnd={() => { setDraggedTaskId(null); setIsDragging(false); if(!isSavingOrder) isLocked.current = false; }}
-                  className={`p-3 bg-slate-900 border-b border-border border-r border-slate-800 w-[250px] group transition-all cursor-grab active:cursor-grabbing ${!task.is_active ? 'opacity-40 grayscale' : ''} ${draggedTaskId === task.id ? 'bg-indigo-900/60 border-indigo-400 ring-2 ring-indigo-500 z-50 scale-[1.02]' : ''}`}
+                  onDrop={handleSaveColumnOrder}
+                  className={`p-3 bg-slate-900 border-b border-border border-r border-slate-800 w-[250px] group transition-all ${!task.is_active ? 'opacity-40 grayscale' : ''} ${draggedTaskId === task.id ? 'bg-indigo-900/60 border-indigo-400 ring-2 ring-indigo-500 z-50 scale-[1.02]' : ''}`}
                 >
-                   <div className="flex flex-col gap-2 pointer-events-none">
+                   <div className="flex flex-col gap-2">
                        <div className="flex justify-between items-center text-white text-sm">
                            <div className="flex items-center gap-2 truncate">
-                               <GripVertical size={14} className="text-slate-600 flex-shrink-0" />
+                               <div 
+                                 draggable 
+                                 onDragStart={(e) => onTaskDragStart(e, task.id)}
+                                 onDragEnd={() => { setDraggedTaskId(null); setIsDragging(false); if(!isSavingOrder) isLocked.current = false; }}
+                                 className="cursor-grab active:cursor-grabbing p-1 hover:bg-slate-700 rounded transition-colors"
+                               >
+                                   <GripVertical size={14} className="text-slate-500" />
+                               </div>
                                <span className="truncate font-bold" title={task.title}>{task.title}</span>
                            </div>
-                           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-auto">
+                           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                <button onClick={(e) => { e.stopPropagation(); handleToggleTaskActive(task.id, task.is_active); }} className="p-1 hover:text-indigo-400 transition-colors">
                                    {task.is_active ? <Eye size={14} /> : <EyeOff size={14} />}
                                </button>
@@ -382,27 +388,33 @@ export const WorkflowView: React.FC = () => {
           <tbody className="divide-y divide-border">
             {filteredProperties.map(property => {
               const rowIsActive = property.workflow_is_active !== false;
+              const isBeingDragged = draggedPropId === property.id;
+              
               return (
                 <tr 
                   key={property.id} 
-                  draggable
-                  onDragStart={(e) => onPropDragStart(e, property.id)}
                   onDragEnter={() => onPropDragEnter(property.id)}
                   onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
-                  onDragEnd={() => { setDraggedPropId(null); setIsDragging(false); if(!isSavingOrder) isLocked.current = false; }}
-                  onDrop={(e) => { e.preventDefault(); handleSaveRowOrder(e); }}
-                  className={`hover:bg-slate-800/30 transition-colors cursor-grab active:cursor-grabbing ${!rowIsActive ? 'opacity-40 bg-slate-900/50' : ''} ${draggedPropId === property.id ? 'bg-indigo-900/40 ring-2 ring-indigo-500 z-10 relative' : ''}`}
+                  onDrop={handleSaveRowOrder}
+                  className={`hover:bg-slate-800/30 transition-all ${!rowIsActive ? 'opacity-40 bg-slate-900/50' : ''} ${isBeingDragged ? 'bg-indigo-900/40 opacity-50 ring-2 ring-indigo-500' : ''}`}
                 >
                   <td 
-                    className={`p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)] transition-colors ${draggedPropId === property.id ? 'bg-indigo-900/40' : ''}`}
+                    className={`p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)] transition-colors ${isBeingDragged ? 'bg-indigo-900/40' : ''}`}
                   >
                     <div className="flex justify-between items-center gap-2">
-                        <div className="flex items-center gap-3 flex-grow truncate pointer-events-none">
-                            <GripVertical size={16} className="text-slate-600 flex-shrink-0" />
+                        <div className="flex items-center gap-3 flex-grow truncate">
+                            <div 
+                              draggable 
+                              onDragStart={(e) => { e.stopPropagation(); onPropDragStart(e, property.id); }}
+                              onDragEnd={(e) => { e.stopPropagation(); setDraggedPropId(null); setIsDragging(false); if(!isSavingOrder) isLocked.current = false; }}
+                              className="cursor-grab active:cursor-grabbing p-2 hover:bg-slate-800 rounded-lg transition-colors flex-shrink-0"
+                            >
+                                <GripVertical size={16} className="text-slate-600" />
+                            </div>
                             <div className="truncate font-medium text-white text-sm" title={property.name}>{property.name}</div>
                         </div>
                         <div className="flex flex-col gap-0.5">
-                            <button onClick={(e) => { e.stopPropagation(); handleTogglePropertyActive(property.id, rowIsActive); }} className="text-slate-500 hover:text-indigo-400 transition-colors" title="Aktywuj/Dezaktywuj"><Eye size={14}/></button>
+                            <button onClick={(e) => { e.stopPropagation(); handleTogglePropertyActive(property.id, rowIsActive); }} className="text-slate-500 hover:text-indigo-400 transition-colors p-1" title="Aktywuj/Dezaktywuj"><Eye size={14}/></button>
                         </div>
                     </div>
                   </td>
