@@ -43,7 +43,9 @@ export const WorkflowView: React.FC = () => {
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dragType, setDragType] = useState<'task' | 'property' | null>(null);
 
-  // Funkcje pobierania danych
+  // Krytyczny ref do blokowania odświeżania podczas zapisu
+  const isSavingRef = useRef(false);
+
   const fetchTasks = useCallback(async () => {
     const { data } = await supabase.from('workflow_tasks').select('*').order('position', { ascending: true });
     if (data) setTasks(data);
@@ -59,7 +61,7 @@ export const WorkflowView: React.FC = () => {
     if (data) setEntries(data);
   }, []);
 
-  // Inicjalizacja i subskrypcja (WYŁĄCZNIE DLA KOMÓREK I STATUSÓW)
+  // Inicjalizacja
   useEffect(() => {
     const loadAll = async () => {
       setLoading(true);
@@ -68,11 +70,14 @@ export const WorkflowView: React.FC = () => {
     };
     loadAll();
 
-    // Nasłuchujemy tylko zmian merytorycznych (komórki, statusy), 
-    // ignorujemy zmiany pozycji, aby uniknąć pętli podczas DnD.
+    // Nasłuchujemy zmian - ale ignorujemy je, jeśli sami właśnie zapisujemy (isSavingRef)
     const channel = supabase.channel('workflow-stable')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, () => fetchEntries())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => fetchStatuses())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, () => {
+        if (!isSavingRef.current) fetchEntries();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => {
+        if (!isSavingRef.current) fetchStatuses();
+      })
       .subscribe();
       
     return () => { supabase.removeChannel(channel); };
@@ -105,23 +110,24 @@ export const WorkflowView: React.FC = () => {
     if (!sourceId || sourceId === targetId || !type || !isReorderMode) return;
 
     setIsSavingOrder(true);
+    isSavingRef.current = true; // ZABLOKUJ REALTIME
 
     try {
       if (type === 'task') {
-        const newList = [...tasks];
+        const newList = [...tasks].sort((a,b) => a.position - b.position);
         const sIdx = newList.findIndex(t => t.id === sourceId);
         const tIdx = newList.findIndex(t => t.id === targetId);
         const [moved] = newList.splice(sIdx, 1);
         newList.splice(tIdx, 0, moved);
         
-        // Lokalny update dla natychmiastowej reakcji
+        // Lokalny update (Optimistic UI)
         setTasks(newList.map((t, i) => ({ ...t, position: i })));
 
-        // Zapisz w DB
-        for (let i = 0; i < newList.length; i++) {
-            await supabase.from('workflow_tasks').update({ position: i }).eq('id', newList[i].id);
-        }
-        await fetchTasks();
+        // Zapisz w DB (Batch Parallel)
+        const updates = newList.map((item, idx) => 
+            supabase.from('workflow_tasks').update({ position: idx }).eq('id', item.id)
+        );
+        await Promise.all(updates);
       } 
       else if (type === 'property') {
         const newList = [...properties];
@@ -130,17 +136,22 @@ export const WorkflowView: React.FC = () => {
         const [moved] = newList.splice(sIdx, 1);
         newList.splice(tIdx, 0, moved);
 
-        // Zapisz w DB (sekwencyjnie, aby uniknąć konfliktów)
-        for (let i = 0; i < newList.length; i++) {
-            await supabase.from('properties').update({ workflow_position: i }).eq('id', newList[i].id);
-        }
+        // Zapisz w DB (Batch Parallel)
+        const updates = newList.map((item, idx) => 
+            supabase.from('properties').update({ workflow_position: idx }).eq('id', item.id)
+        );
+        await Promise.all(updates);
         await fetchProperties();
       }
     } catch (err: any) {
       console.error("Critical Reorder Error:", err);
-      alert("Błąd zapisu kolejności. Dane mogą być niespójne.");
+      alert("Błąd zapisu kolejności.");
     } finally {
       setIsSavingOrder(false);
+      // Odblokuj Realtime z lekkim opóźnieniem, aby baza "oddetchnęła"
+      setTimeout(() => {
+        isSavingRef.current = false;
+      }, 500);
     }
   };
 
@@ -150,7 +161,7 @@ export const WorkflowView: React.FC = () => {
   const filteredProperties = useMemo(() => {
     let list = [...properties];
     
-    // Stabilne sortowanie (tylko gdy nie przesuwamy)
+    // Sortujemy tylko gdy nie jesteśmy w trakcie DnD
     if (!dragType) {
         list.sort((a, b) => {
             const activeA = a.workflow_is_active === false ? 0 : 1;
@@ -396,6 +407,7 @@ export const WorkflowView: React.FC = () => {
         </div>
       )}
 
+      {/* Pozostałe modale pozostają bez zmian w logice */}
       {isPropertyModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">

@@ -1,5 +1,5 @@
 
-import React, { createContext, useState, useEffect, useContext, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, useContext, ReactNode, useCallback } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { Property, Unit, Availability, Notification, RatePlan } from '../types';
 
@@ -31,11 +31,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchProperties = async () => {
-    setLoading(true);
+  const fetchProperties = useCallback(async () => {
+    // Nie resetujemy loading do true przy każdym odświeżeniu, aby uniknąć migania UI
     setError(null);
     try {
-      // Sortujemy najpierw po pozycji w workflow, potem po dacie utworzenia
       const { data, error: dbError } = await supabase
         .from('properties')
         .select('*')
@@ -49,9 +48,9 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchNotifications = async () => {
+  const fetchNotifications = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
@@ -66,7 +65,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       setNotifications(data);
       setUnreadCount(data.filter(n => !n.is_read).length);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchProperties();
@@ -88,13 +87,12 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [fetchProperties, fetchNotifications]);
 
-  const addProperty = async (name: string, description: string | null, email: string | null, phone: string | null, hotresId: string | null) => {
+  const addProperty = useCallback(async (name: string, description: string | null, email: string | null, phone: string | null, hotresId: string | null) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Musisz być zalogowany");
 
-    // Ustawiamy workflow_position na koniec listy
     const maxPos = properties.length > 0 ? Math.max(...properties.map(p => p.workflow_position || 0)) : 0;
 
     const { data, error } = await supabase
@@ -115,15 +113,15 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     if (error) throw error;
     setProperties(prev => [data, ...prev]);
     return data;
-  };
+  }, [properties]);
 
-  const deleteProperty = async (id: string) => {
+  const deleteProperty = useCallback(async (id: string) => {
     const { error } = await supabase.from('properties').delete().eq('id', id);
     if (error) throw error;
     setProperties(prev => prev.filter(p => p.id !== id));
-  };
+  }, []);
 
-  const fetchWithProxy = async (targetUrl: string): Promise<string> => {
+  const fetchWithProxy = useCallback(async (targetUrl: string): Promise<string> => {
     const noCacheUrl = `${targetUrl}&_t=${Date.now()}`;
     const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(noCacheUrl)}`;
     
@@ -137,9 +135,9 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         if (!resDirect.ok) throw new Error(`Direct HTTP error: ${resDirect.status}`);
         return await resDirect.text();
     }
-  };
+  }, []);
 
-  const importFromHotres = async (oid: string, propertyId: string) => {
+  const importFromHotres = useCallback(async (oid: string, propertyId: string) => {
     const xmlText = await fetchWithProxy(`https://hotres.pl/xml/cennik_xml.php?oid=${oid}&kod_waluty=PLN`);
     const parser = new DOMParser();
     const xmlDoc = parser.parseFromString(xmlText, "text/xml");
@@ -184,7 +182,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         }
       }
     }
-  };
+  }, [fetchWithProxy]);
 
   const normalizeDate = (dateInput: string): string => {
       try {
@@ -205,7 +203,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     });
   };
 
-  const syncAvailability = async (oid: string, propertyId: string) => {
+  const syncAvailability = useCallback(async (oid: string, propertyId: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Brak autoryzacji");
 
@@ -318,9 +316,9 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         console.error("Sync Exception:", e);
         throw e;
     }
-  };
+  }, [fetchWithProxy]);
 
-  const syncRates = async (oid: string, propertyId: string) => {
+  const syncRates = useCallback(async (oid: string, propertyId: string) => {
     const apiUser = "admin@twojepokoje.com.pl";
     const apiPass = "Admin123@@";
     
@@ -366,35 +364,35 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         console.error("Sync Rates Exception:", e);
         throw e;
     }
-  };
+  }, [fetchWithProxy]);
 
-  const markNotificationAsRead = async (id: string) => {
+  const markNotificationAsRead = useCallback(async (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
     setUnreadCount(prev => Math.max(0, prev - 1));
     await supabase.from('notifications').update({ is_read: true }).eq('id', id);
-  };
+  }, []);
 
-  const markAllNotificationsAsRead = async () => {
+  const markAllNotificationsAsRead = useCallback(async () => {
     setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
     setUnreadCount(0);
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
       await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id);
     }
-  };
+  }, []);
   
-  const deleteAllReadNotifications = async () => {
+  const deleteAllReadNotifications = useCallback(async () => {
     setNotifications(prev => prev.filter(n => !n.is_read));
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
         await supabase.from('notifications').delete().eq('user_id', user.id).eq('is_read', true);
     }
-  }
+  }, []);
 
-  const deleteNotification = async (id: string) => {
+  const deleteNotification = useCallback(async (id: string) => {
     setNotifications(prev => prev.filter(n => n.id !== id));
     await supabase.from('notifications').delete().eq('id', id);
-  };
+  }, []);
 
   return (
     <PropertyContext.Provider value={{ 
