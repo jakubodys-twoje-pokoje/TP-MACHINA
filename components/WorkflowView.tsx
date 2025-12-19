@@ -75,7 +75,7 @@ export const WorkflowView: React.FC = () => {
     };
     loadAll();
 
-    const channel = supabase.channel('workflow-stable-v50')
+    const channel = supabase.channel('workflow-v77')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => fetchTasks())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => fetchStatuses())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, (p) => handleEntryRealtime(p))
@@ -99,9 +99,6 @@ export const WorkflowView: React.FC = () => {
     setIsSavingOrder(true);
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
       if (dragType === 'task') {
         const newList = [...tasks];
         const sIdx = newList.findIndex(t => t.id === draggedId);
@@ -109,12 +106,17 @@ export const WorkflowView: React.FC = () => {
         const [moved] = newList.splice(sIdx, 1);
         newList.splice(tIdx, 0, moved);
         
-        setTasks(newList);
+        setTasks(newList); // Optimistic UI
 
+        // Update pozycji kolumn (tasks)
         const updates = newList.map((t, i) => 
-          supabase.from('workflow_tasks').update({ position: i }).eq('id', t.id).eq('user_id', user.id)
+          supabase.from('workflow_tasks').update({ position: i }).eq('id', t.id)
         );
         await Promise.all(updates);
+        
+        // Wymuszone odświeżenie po zapisie
+        const { data } = await supabase.from('workflow_tasks').select('*').order('position', { ascending: true });
+        if (data) setTasks(data);
       } 
       else if (dragType === 'property') {
         const newList = [...localProperties];
@@ -123,18 +125,23 @@ export const WorkflowView: React.FC = () => {
         const [moved] = newList.splice(sIdx, 1);
         newList.splice(tIdx, 0, moved);
 
-        setLocalProperties(newList);
+        setLocalProperties(newList); // Optimistic UI
 
+        // Update pozycji rzędów (properties)
         const updates = newList.map((p, i) => 
-          supabase.from('properties').update({ workflow_position: i }).eq('id', p.id).eq('user_id', user.id)
+          supabase.from('properties').update({ workflow_position: i }).eq('id', p.id)
         );
         await Promise.all(updates);
-        await fetchProperties(); // Kluczowe dla trwałości
+        
+        // Wymuszone odświeżenie kontekstu
+        await fetchProperties();
       }
     } catch (err: any) {
       console.error("Błąd zapisu kolejności:", err);
-      alert("Błąd zapisu kolejności: " + err.message);
+      alert("Błąd zapisu: " + err.message);
       await fetchProperties();
+      const { data } = await supabase.from('workflow_tasks').select('*').order('position', { ascending: true });
+      if (data) setTasks(data);
     } finally {
       setDraggedId(null);
       setDropTargetId(null);
@@ -142,7 +149,7 @@ export const WorkflowView: React.FC = () => {
       setTimeout(() => {
         isProcessing.current = false;
         setIsSavingOrder(false);
-      }, 1000);
+      }, 800);
     }
   };
 
@@ -152,14 +159,14 @@ export const WorkflowView: React.FC = () => {
   const filteredProperties = useMemo(() => {
     let list = [...localProperties];
     
-    // Stabilne sortowanie (nie wyszarza rzędów)
+    // Stabilne sortowanie
     list.sort((a, b) => {
       // Aktywne zawsze u góry
       const activeA = a.workflow_is_active === false ? 0 : 1;
       const activeB = b.workflow_is_active === false ? 0 : 1;
       if (activeA !== activeB) return activeB - activeA;
       
-      // Potem po pozycji (workflow_position)
+      // Potem po pozycji
       const posA = a.workflow_position ?? 999;
       const posB = b.workflow_position ?? 999;
       return posA - posB;
@@ -264,7 +271,7 @@ export const WorkflowView: React.FC = () => {
           </div>
           {isSavingOrder && (
             <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold animate-pulse">
-              <Loader2 size={14} className="animate-spin" /> SYNCHRONIZACJA...
+              <Loader2 size={14} className="animate-spin" /> ZAPISYWANIE...
             </div>
           )}
         </div>
@@ -301,8 +308,8 @@ export const WorkflowView: React.FC = () => {
                            <span className="truncate font-bold">{task.title}</span>
                        </div>
                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                           <button onClick={() => handleToggleTaskActive(task.id, task.is_active)} className="p-1 hover:text-indigo-400">{task.is_active ? <Eye size={14} /> : <EyeOff size={14} />}</button>
-                           <button onClick={async () => { if(confirm("Usunąć kolumnę?")) { await supabase.from('workflow_tasks').delete().eq('id', task.id); fetchTasks(); }}} className="p-1 hover:text-red-400"><Trash2 size={14} /></button>
+                           <button onClick={() => handleToggleTaskActive(task.id, task.is_active)} title="Ukryj" className="p-1 hover:text-indigo-400">{task.is_active ? <Eye size={14} /> : <EyeOff size={14} />}</button>
+                           <button onClick={async () => { if(confirm("Usunąć kolumnę?")) { await supabase.from('workflow_tasks').delete().eq('id', task.id); fetchTasks(); }}} title="Usuń" className="p-1 hover:text-red-400"><Trash2 size={14} /></button>
                        </div>
                    </div>
                 </th>
@@ -321,7 +328,7 @@ export const WorkflowView: React.FC = () => {
                   onDragOver={(e) => { e.preventDefault(); if(dragType === 'property') setDropTargetId(property.id); }}
                   onDragLeave={() => setDropTargetId(null)}
                   onDrop={(e) => handleDrop(e, property.id)}
-                  className={`hover:bg-slate-800/30 transition-all ${!rowIsActive ? 'opacity-30 grayscale bg-slate-900/50' : ''} ${isTarget ? 'border-t-4 border-indigo-500 bg-indigo-900/10 shadow-[0_-5px_15px_-5px_rgba(79,70,229,0.5)]' : ''} ${isSource ? 'opacity-20' : ''}`}
+                  className={`hover:bg-slate-800/30 transition-all ${!rowIsActive ? 'opacity-30 grayscale bg-slate-900/50' : ''} ${isTarget ? 'border-t-4 border-indigo-500 bg-indigo-900/10 shadow-[0_-5px_15px_-5px_rgba(79,70,229,0.5)]' : ''} ${isSource ? 'opacity-20 pointer-events-none' : ''}`}
                 >
                   <td className={`p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)]`}>
                     <div className="flex justify-between items-center gap-2">
@@ -345,8 +352,8 @@ export const WorkflowView: React.FC = () => {
                     const status = entry ? getStatus(entry.status_id) : null;
                     const hasComment = entry?.comment && entry.comment.trim().length > 0;
                     return (
-                      <td key={task.id} className={`p-1 border-r border-b border-slate-800 cursor-pointer align-middle h-[80px] w-[250px]`} onClick={() => openCellModal(property.id, task.id)}>
-                        <div className={`w-full h-full rounded flex flex-col justify-center px-4 py-2 transition-all border-2 ${status ? status.color + ' border-transparent shadow-lg' : 'bg-transparent border-transparent hover:border-slate-700 hover:bg-slate-800'} ${status ? 'text-white font-bold' : 'text-slate-500'}`}>
+                      <td key={task.id} className="p-1 border-r border-b border-slate-800 cursor-pointer align-middle h-[80px] w-[250px]" onClick={() => openCellModal(property.id, task.id)}>
+                        <div className={`w-full h-full rounded flex flex-col justify-center px-4 py-2 transition-all border-2 ${status ? status.color + ' border-transparent shadow-lg shadow-black/40' : 'bg-transparent border-transparent hover:border-slate-700 hover:bg-slate-800'} ${status ? 'text-white font-bold' : 'text-slate-500'}`}>
                            <div className="flex items-center justify-between gap-2">
                                <span className="text-sm truncate">{status ? status.label : ''}</span>
                                {hasComment && <MessageSquare size={14} className={status ? 'text-white/80' : 'text-indigo-400'} />}
