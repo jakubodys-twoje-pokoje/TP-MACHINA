@@ -4,8 +4,7 @@ import { useProperties } from '../contexts/PropertyContext';
 import { WorkflowTask, WorkflowStatus, WorkflowEntry, Property } from '../types';
 import { 
   Plus, X, Loader2, Save, Trash2, Settings, MessageSquare, 
-  Search, BarChart3, Info, Eye, EyeOff, ChevronUp, ChevronDown, 
-  ChevronLeft, ChevronRight, User, Clock 
+  Search, BarChart3, Info, Eye, EyeOff, User, Clock, GripVertical 
 } from 'lucide-react';
 
 const COLORS = [
@@ -21,7 +20,7 @@ const COLORS = [
 ];
 
 export const WorkflowView: React.FC = () => {
-  const { properties, fetchProperties } = useProperties();
+  const { properties, fetchProperties, addProperty } = useProperties();
   const [tasks, setTasks] = useState<WorkflowTask[]>([]);
   const [statuses, setStatuses] = useState<WorkflowStatus[]>([]);
   const [entries, setEntries] = useState<WorkflowEntry[]>([]);
@@ -32,17 +31,23 @@ export const WorkflowView: React.FC = () => {
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
   const [isCellModalOpen, setIsCellModalOpen] = useState(false);
+  const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false);
 
   // Forms & Selections
   const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newPropertyName, setNewPropertyName] = useState('');
   const [newStatus, setNewStatus] = useState({ label: '', color: 'bg-slate-600' });
   const [selectedCell, setSelectedCell] = useState<{ propId: string, taskId: string } | null>(null);
   const [cellForm, setCellForm] = useState({ statusId: '', comment: '' });
 
+  // Drag states
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [draggedPropId, setDraggedPropId] = useState<string | null>(null);
+
   useEffect(() => {
     fetchWorkflowData();
 
-    const channels = supabase.channel('workflow-realtime')
+    const channels = supabase.channel('workflow-realtime-v2')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => fetchTasks())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => fetchStatuses())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, (p) => handleEntryRealtime(p))
@@ -86,7 +91,6 @@ export const WorkflowView: React.FC = () => {
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
-  // Improved sorting for properties
   const sortedProperties = useMemo(() => {
     return [...properties].sort((a, b) => {
         const activeA = a.workflow_is_active === false ? 0 : 1;
@@ -99,7 +103,6 @@ export const WorkflowView: React.FC = () => {
     });
   }, [properties]);
 
-  // Improved sorting for tasks
   const sortedTasks = useMemo(() => {
     return [...tasks].sort((a, b) => {
         const activeA = a.is_active === false ? 0 : 1;
@@ -114,54 +117,59 @@ export const WorkflowView: React.FC = () => {
     return sortedProperties.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
   }, [sortedProperties, searchQuery]);
 
-  // Fixed Move Task Logic
-  const handleMoveTask = async (taskId: string, direction: 'left' | 'right') => {
-      const currentSorted = sortedTasks; // Use memoized current view
-      const idx = currentSorted.findIndex(t => t.id === taskId);
-      if ((direction === 'left' && idx <= 0) || (direction === 'right' && idx >= currentSorted.length - 1)) return;
-      
-      const targetIdx = direction === 'left' ? idx - 1 : idx + 1;
-      const task1 = currentSorted[idx];
-      const task2 = currentSorted[targetIdx];
+  // Drag and Drop Logic for Tasks
+  const onTaskDragStart = (id: string) => setDraggedTaskId(id);
+  const onTaskDragOver = (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    if (draggedTaskId === targetId || !draggedTaskId) return;
+    const draggedIdx = tasks.findIndex(t => t.id === draggedTaskId);
+    const targetIdx = tasks.findIndex(t => t.id === targetId);
+    if (draggedIdx === -1 || targetIdx === -1) return;
 
-      // Swapping positions
-      const newPos1 = task2.position;
-      const newPos2 = task1.position;
-
-      // Optimistic update
-      setTasks(prev => prev.map(t => {
-          if (t.id === task1.id) return { ...t, position: newPos1 };
-          if (t.id === task2.id) return { ...t, position: newPos2 };
-          return t;
-      }));
-
-      await Promise.all([
-          supabase.from('workflow_tasks').update({ position: newPos1 }).eq('id', task1.id),
-          supabase.from('workflow_tasks').update({ position: newPos2 }).eq('id', task2.id)
-      ]);
+    const newTasks = [...tasks];
+    const [removed] = newTasks.splice(draggedIdx, 1);
+    newTasks.splice(targetIdx, 0, removed);
+    setTasks(newTasks.map((t, i) => ({ ...t, position: i })));
   };
 
-  // Fixed Move Property Logic
-  const handleMoveProperty = async (propId: string, direction: 'up' | 'down') => {
-      const currentSorted = filteredProperties;
-      const idx = currentSorted.findIndex(p => p.id === propId);
-      if ((direction === 'up' && idx <= 0) || (direction === 'down' && idx >= currentSorted.length - 1)) return;
-      
-      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
-      const p1 = currentSorted[idx];
-      const p2 = currentSorted[targetIdx];
+  const onTaskDrop = async () => {
+    if (!draggedTaskId) return;
+    const updates = tasks.map((t, i) => 
+        supabase.from('workflow_tasks').update({ position: i }).eq('id', t.id)
+    );
+    await Promise.all(updates);
+    setDraggedTaskId(null);
+  };
 
-      const newPos1 = p2.workflow_position || 0;
-      const newPos2 = p1.workflow_position || 0;
+  // Drag and Drop Logic for Properties
+  const onPropDragStart = (id: string) => setDraggedPropId(id);
+  const onPropDragOver = (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    if (draggedPropId === targetId || !draggedPropId) return;
+    const draggedIdx = properties.findIndex(p => p.id === draggedPropId);
+    const targetIdx = properties.findIndex(p => p.id === targetId);
+    if (draggedIdx === -1 || targetIdx === -1) return;
 
-      // Handle cases where positions might both be 0
-      const finalPos1 = newPos1 === newPos2 ? (direction === 'up' ? newPos1 - 1 : newPos1 + 1) : newPos1;
+    // Local swap for UI feedback is harder with context properties, 
+    // but we can just use the position in the UI sorting logic.
+  };
 
-      await Promise.all([
-          supabase.from('properties').update({ workflow_position: finalPos1 }).eq('id', p1.id),
-          supabase.from('properties').update({ workflow_position: newPos2 }).eq('id', p2.id)
-      ]);
-      fetchProperties();
+  const onPropDrop = async (targetId: string) => {
+    if (!draggedPropId || draggedPropId === targetId) return;
+    const targetProp = properties.find(p => p.id === targetId);
+    const draggedProp = properties.find(p => p.id === draggedPropId);
+    if (!targetProp || !draggedProp) return;
+
+    const targetPos = targetProp.workflow_position || 0;
+    const draggedPos = draggedProp.workflow_position || 0;
+
+    await Promise.all([
+      supabase.from('properties').update({ workflow_position: targetPos }).eq('id', draggedPropId),
+      supabase.from('properties').update({ workflow_position: draggedPos }).eq('id', targetId)
+    ]);
+    
+    setDraggedPropId(null);
+    fetchProperties();
   };
 
   const handleToggleTaskActive = async (taskId: string, currentState: boolean) => {
@@ -184,6 +192,13 @@ export const WorkflowView: React.FC = () => {
     fetchTasks();
   };
 
+  const handleAddPropertyLocal = async () => {
+      if (!newPropertyName.trim()) return;
+      await addProperty(newPropertyName, 'Dodane z Workflow', null, null, null);
+      setNewPropertyName('');
+      setIsPropertyModalOpen(false);
+  };
+
   const handleDeleteTask = async (id: string) => {
     if (!confirm("Trwale usunąć tę kolumnę danych?")) return;
     await supabase.from('workflow_tasks').delete().eq('id', id);
@@ -200,13 +215,11 @@ export const WorkflowView: React.FC = () => {
     if (!newStatus.label.trim()) return;
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    
     await supabase.from('workflow_statuses').insert({
       label: newStatus.label,
       color: newStatus.color,
       user_id: user.id
     });
-    
     setNewStatus({ label: '', color: 'bg-slate-600' });
     fetchStatuses();
   };
@@ -220,7 +233,6 @@ export const WorkflowView: React.FC = () => {
 
   const saveCell = async () => {
     if (!selectedCell) return;
-    // Re-fetch user each time to ensure we have the correct email
     const { data: { user } } = await supabase.auth.getUser();
     const existing = entries.find(e => e.property_id === selectedCell.propId && e.task_id === selectedCell.taskId);
     
@@ -259,34 +271,41 @@ export const WorkflowView: React.FC = () => {
           </div>
         </div>
         <div className="flex gap-2">
+            <button onClick={() => setIsPropertyModalOpen(true)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm flex items-center gap-2 border border-slate-700"><Plus size={16} /> Dodaj Obiekt</button>
             <button onClick={() => setIsStatusModalOpen(true)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm flex items-center gap-2 border border-slate-700"><Settings size={16} /> Statusy</button>
-            <button onClick={() => setIsTaskModalOpen(true)} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm flex items-center gap-2"><Plus size={16} /> Kolumna</button>
+            <button onClick={() => setIsTaskModalOpen(true)} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm flex items-center gap-2"><Plus size={16} /> Nowa Kolumna</button>
         </div>
       </div>
 
-      {/* TABLE - FIXED ULTRAWIDE GAPS BY USING w-max ON TABLE AND overflow-auto ON PARENT */}
+      {/* TABLE */}
       <div className="flex-1 overflow-auto bg-surface rounded-xl border border-border shadow-xl custom-scrollbar">
-        <table className="w-max border-collapse">
+        <table className="w-max border-separate border-spacing-0">
           <thead className="sticky top-0 z-30">
             <tr>
               <th className="p-4 bg-slate-900 text-slate-400 font-bold text-xs uppercase border-b border-r border-border sticky left-0 z-40 w-64 shadow-[2px_0_5px_rgba(0,0,0,0.3)]">Obiekt</th>
               {sortedTasks.map(task => (
-                <th key={task.id} className={`p-3 bg-slate-900 border-b border-border border-r border-slate-800 min-w-[220px] max-w-[280px] group ${!task.is_active ? 'opacity-40 grayscale' : ''}`}>
+                <th 
+                  key={task.id} 
+                  draggable
+                  onDragStart={() => onTaskDragStart(task.id)}
+                  onDragOver={(e) => onTaskDragOver(e, task.id)}
+                  onDrop={onTaskDrop}
+                  className={`p-3 bg-slate-900 border-b border-border border-r border-slate-800 w-[250px] group transition-all cursor-grab active:cursor-grabbing ${!task.is_active ? 'opacity-40 grayscale' : ''} ${draggedTaskId === task.id ? 'bg-indigo-900/40 border-indigo-500' : ''}`}
+                >
                    <div className="flex flex-col gap-2">
                        <div className="flex justify-between items-center text-white text-sm">
-                           <span className="truncate font-bold" title={task.title}>{task.title}</span>
+                           <div className="flex items-center gap-2 truncate">
+                               <GripVertical size={14} className="text-slate-600 flex-shrink-0" />
+                               <span className="truncate font-bold" title={task.title}>{task.title}</span>
+                           </div>
                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                               <button onClick={() => handleToggleTaskActive(task.id, task.is_active)} className="p-1 hover:text-indigo-400" title="Aktywuj/Dezaktywuj">
+                               <button onClick={(e) => { e.stopPropagation(); handleToggleTaskActive(task.id, task.is_active); }} className="p-1 hover:text-indigo-400">
                                    {task.is_active ? <Eye size={14} /> : <EyeOff size={14} />}
                                </button>
-                               <button onClick={() => handleDeleteTask(task.id)} className="p-1 hover:text-red-400" title="Usuń"><Trash2 size={14} /></button>
+                               <button onClick={(e) => { e.stopPropagation(); handleDeleteTask(task.id); }} className="p-1 hover:text-red-400"><Trash2 size={14} /></button>
                            </div>
                        </div>
-                       <div className="flex items-center gap-2 text-slate-600 justify-center">
-                           <button onClick={() => handleMoveTask(task.id, 'left')} className="p-1 hover:text-white hover:bg-slate-800 rounded transition-colors"><ChevronLeft size={16}/></button>
-                           <span className="text-[10px] uppercase font-bold tracking-widest px-2">Pozycja</span>
-                           <button onClick={() => handleMoveTask(task.id, 'right')} className="p-1 hover:text-white hover:bg-slate-800 rounded transition-colors"><ChevronRight size={16}/></button>
-                       </div>
+                       <div className="text-[9px] uppercase font-bold text-slate-600 tracking-widest text-center">Chwyć by przesunąć</div>
                    </div>
                 </th>
               ))}
@@ -296,14 +315,27 @@ export const WorkflowView: React.FC = () => {
             {filteredProperties.map(property => {
               const rowIsActive = property.workflow_is_active !== false;
               return (
-                <tr key={property.id} className={`hover:bg-slate-800/30 transition-colors ${!rowIsActive ? 'opacity-40 bg-slate-900/50' : ''}`}>
-                  <td className="p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)]">
+                <tr 
+                  key={property.id} 
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => onPropDrop(property.id)}
+                  className={`hover:bg-slate-800/30 transition-colors ${!rowIsActive ? 'opacity-40 bg-slate-900/50' : ''} ${draggedPropId === property.id ? 'opacity-20' : ''}`}
+                >
+                  <td 
+                    className="p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)]"
+                  >
                     <div className="flex justify-between items-center gap-2">
-                        <div className="truncate w-40 font-medium text-white" title={property.name}>{property.name}</div>
+                        <div 
+                          draggable 
+                          onDragStart={() => onPropDragStart(property.id)}
+                          onDragEnd={() => setDraggedPropId(null)}
+                          className="flex items-center gap-3 cursor-grab active:cursor-grabbing flex-grow truncate"
+                        >
+                            <GripVertical size={16} className="text-slate-600 flex-shrink-0 opacity-0 group-hover:opacity-100" />
+                            <div className="truncate font-medium text-white text-sm" title={property.name}>{property.name}</div>
+                        </div>
                         <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button onClick={() => handleTogglePropertyActive(property.id, rowIsActive)} className="text-slate-500 hover:text-indigo-400" title="Aktywuj/Dezaktywuj"><Eye size={12}/></button>
-                            <button onClick={() => handleMoveProperty(property.id, 'up')} className="text-slate-500 hover:text-white" title="Góra"><ChevronUp size={12}/></button>
-                            <button onClick={() => handleMoveProperty(property.id, 'down')} className="text-slate-500 hover:text-white" title="Dół"><ChevronDown size={12}/></button>
                         </div>
                     </div>
                   </td>
@@ -313,11 +345,11 @@ export const WorkflowView: React.FC = () => {
                     const hasComment = entry?.comment && entry.comment.trim().length > 0;
                     
                     return (
-                      <td key={task.id} className="p-1 border-r border-b border-slate-800 cursor-pointer align-middle h-[80px] min-w-[220px]" onClick={() => openCellModal(property.id, task.id)}>
-                        <div className={`w-full h-full rounded flex flex-col justify-center px-4 py-2 transition-all border-2 ${status ? status.color + ' border-transparent' : 'bg-transparent border-transparent hover:border-slate-700 hover:bg-slate-800'} ${status ? 'text-white' : 'text-slate-500'}`}>
+                      <td key={task.id} className="p-1 border-r border-b border-slate-800 cursor-pointer align-middle h-[80px] w-[250px]" onClick={() => openCellModal(property.id, task.id)}>
+                        <div className={`w-full h-full rounded flex flex-col justify-center px-4 py-2 transition-all border-2 ${status ? status.color + ' border-transparent shadow-lg' : 'bg-transparent border-transparent hover:border-slate-700 hover:bg-slate-800'} ${status ? 'text-white' : 'text-slate-500'}`}>
                            <div className="flex items-center justify-between gap-2">
                                <span className="text-sm font-bold truncate">{status ? status.label : ''}</span>
-                               {hasComment && <MessageSquare size={14} className={status ? 'text-white/80' : 'text-indigo-500'} />}
+                               {hasComment && <MessageSquare size={14} className={status ? 'text-white/80' : 'text-indigo-400'} />}
                            </div>
                            {!status && !hasComment && <span className="text-[10px] uppercase font-black opacity-0 hover:opacity-10 transition-opacity text-center">Edytuj</span>}
                         </div>
@@ -331,16 +363,15 @@ export const WorkflowView: React.FC = () => {
         </table>
       </div>
 
-      {/* MODAL EDIT CELL */}
+      {/* MODALS */}
       {isCellModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-5 animate-in zoom-in-95">
              <div className="flex justify-between items-start">
                 <h3 className="font-bold text-white text-lg">Edycja komórki</h3>
-                <button onClick={() => setIsCellModalOpen(false)} className="text-slate-500 hover:text-white p-1 rounded-md hover:bg-slate-800 transition-colors"><X size={20}/></button>
+                <button onClick={() => setIsCellModalOpen(false)} className="text-slate-500 hover:text-white transition-colors"><X size={20}/></button>
              </div>
 
-             {/* INFO OSTATNIA EDYCJA */}
              {selectedCell && (
                  <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-800 space-y-1.5">
                     <div className="flex items-center gap-2 text-[10px] text-slate-500 uppercase font-bold tracking-wider">
@@ -360,7 +391,7 @@ export const WorkflowView: React.FC = () => {
              <div>
                  <label className="block text-xs font-bold text-slate-400 uppercase mb-3">Wybierz status:</label>
                  <div className="grid grid-cols-1 gap-2 max-h-[180px] overflow-y-auto pr-1 custom-scrollbar">
-                     <button onClick={() => setCellForm({...cellForm, statusId: ''})} className={`p-2.5 rounded-lg border text-sm text-left transition-all ${cellForm.statusId === '' ? 'border-indigo-500 bg-indigo-500/10 text-white shadow-[0_0_10px_rgba(99,102,241,0.2)]' : 'border-slate-700 text-slate-500 hover:bg-slate-800 hover:text-slate-300'}`}>Brak statusu / Wyczyść</button>
+                     <button onClick={() => setCellForm({...cellForm, statusId: ''})} className={`p-2.5 rounded-lg border text-sm text-left ${cellForm.statusId === '' ? 'border-indigo-500 bg-indigo-500/10 text-white' : 'border-slate-700 text-slate-500 hover:bg-slate-800'}`}>Brak statusu / Wyczyść</button>
                      {statuses.map(s => (
                          <button key={s.id} onClick={() => setCellForm({...cellForm, statusId: s.id})} className={`p-2.5 rounded-lg border text-sm text-left flex items-center gap-3 transition-all ${cellForm.statusId === s.id ? 'border-white bg-slate-800 text-white' : 'border-slate-700 text-slate-300 hover:bg-slate-800'}`}>
                             <div className={`w-3 h-3 rounded-full ${s.color}`}></div> {s.label}
@@ -373,30 +404,41 @@ export const WorkflowView: React.FC = () => {
                 <textarea rows={4} value={cellForm.comment} onChange={e => setCellForm({...cellForm, comment: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none transition-all" placeholder="Wpisz uwagi..." />
              </div>
              <div className="flex justify-end gap-2 pt-2">
-                 <button onClick={saveCell} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center justify-center gap-2 font-bold shadow-lg shadow-indigo-900/20 transition-all active:scale-95"><Save size={18}/> Zapisz zmiany</button>
+                 <button onClick={saveCell} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center justify-center gap-2 font-bold shadow-lg transition-all active:scale-95"><Save size={18}/> Zapisz zmiany</button>
              </div>
           </div>
         </div>
       )}
 
-      {/* MODAL ADD TASK (Column) */}
+      {isPropertyModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">
+             <h3 className="font-bold text-white text-lg">Dodaj nowy obiekt</h3>
+             <input autoFocus value={newPropertyName} onChange={e => setNewPropertyName(e.target.value)} placeholder="Nazwa obiektu (np. Willa Widok)" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" />
+             <div className="flex justify-end gap-2">
+                 <button onClick={() => setIsPropertyModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white">Anuluj</button>
+                 <button onClick={handleAddPropertyLocal} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold">Dodaj Obiekt</button>
+             </div>
+          </div>
+        </div>
+      )}
+
       {isTaskModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">
-             <h3 className="font-bold text-white text-lg">Nowe Zadanie (Kolumna)</h3>
-             <input autoFocus value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} placeholder="np. Sprzątanie" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" onKeyDown={e => e.key === 'Enter' && handleAddTask()} />
+             <h3 className="font-bold text-white text-lg">Nowa Kolumna Zadań</h3>
+             <input autoFocus value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} placeholder="np. Sprzątanie końcowe" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" />
              <div className="flex justify-end gap-2">
-                 <button onClick={() => setIsTaskModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white transition-colors">Anuluj</button>
-                 <button onClick={handleAddTask} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-500 transition-colors">Dodaj</button>
+                 <button onClick={() => setIsTaskModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white">Anuluj</button>
+                 <button onClick={handleAddTask} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold">Utwórz Kolumnę</button>
              </div>
           </div>
         </div>
       )}
 
-      {/* MODAL MANAGE STATUSES */}
       {isStatusModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-          <div className="bg-surface w-full max-w-lg rounded-xl border border-border shadow-2xl overflow-hidden animate-in zoom-in-95">
+          <div className="bg-surface w-full max-w-lg rounded-xl border border-border shadow-2xl overflow-hidden">
              <div className="p-4 border-b border-border flex justify-between items-center bg-slate-900/50">
                 <h3 className="font-bold text-white">Zarządzaj Statusami</h3>
                 <button onClick={() => setIsStatusModalOpen(false)}><X className="text-slate-400 hover:text-white" /></button>
@@ -404,12 +446,12 @@ export const WorkflowView: React.FC = () => {
              <div className="p-6 space-y-6">
                 <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
                     {statuses.map(s => (
-                        <div key={s.id} className="flex items-center justify-between bg-slate-900 p-2 rounded border border-border group/status">
+                        <div key={s.id} className="flex items-center justify-between bg-slate-900 p-2 rounded border border-border group">
                             <div className="flex items-center gap-3">
                                 <div className={`w-4 h-4 rounded-full ${s.color}`}></div>
                                 <span className="text-white text-sm">{s.label}</span>
                             </div>
-                            <button onClick={() => handleDeleteStatus(s.id)} className="text-slate-500 hover:text-red-400 opacity-0 group-hover/status:opacity-100 transition-opacity"><Trash2 size={16}/></button>
+                            <button onClick={() => handleDeleteStatus(s.id)} className="text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16}/></button>
                         </div>
                     ))}
                 </div>
