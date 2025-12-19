@@ -1,3 +1,4 @@
+
 import React, { createContext, useState, useEffect, useContext, ReactNode } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { Property, Unit, Availability, Notification, RatePlan } from '../types';
@@ -34,10 +35,13 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     setLoading(true);
     setError(null);
     try {
+      // Sortujemy najpierw po pozycji w workflow, potem po dacie utworzenia
       const { data, error: dbError } = await supabase
         .from('properties')
         .select('*')
+        .order('workflow_position', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false });
+      
       if (dbError) throw dbError;
       setProperties(data || []);
     } catch (err: any) {
@@ -90,6 +94,9 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Musisz być zalogowany");
 
+    // Ustawiamy workflow_position na koniec listy
+    const maxPos = properties.length > 0 ? Math.max(...properties.map(p => p.workflow_position || 0)) : 0;
+
     const { data, error } = await supabase
       .from('properties')
       .insert([{ 
@@ -98,7 +105,9 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         description,
         email,
         phone,
-        hotres_id: hotresId
+        hotres_id: hotresId,
+        workflow_position: maxPos + 1,
+        workflow_is_active: true
       }])
       .select()
       .single();
@@ -115,7 +124,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   };
 
   const fetchWithProxy = async (targetUrl: string): Promise<string> => {
-    // Proste proxy, bez kombinacji - wersja stabilna
     const noCacheUrl = `${targetUrl}&_t=${Date.now()}`;
     const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(noCacheUrl)}`;
     
@@ -125,7 +133,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         return await res.text();
     } catch (e: any) {
         console.warn("Proxy failed, trying direct fetch...");
-        // Fallback dla wtyczek CORS lub localhost
         const resDirect = await fetch(noCacheUrl);
         if (!resDirect.ok) throw new Error(`Direct HTTP error: ${resDirect.status}`);
         return await resDirect.text();
@@ -191,7 +198,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       }
   };
 
-  // Prosty generator UUID v4
   const uuidv4 = () => {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
       const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
@@ -209,23 +215,18 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const apiUser = "admin@twojepokoje.com.pl";
         const apiPass = "Admin123@@";
 
-        // 1. Pobierz Kwatery
         const { data: units } = await supabase.from('units').select('id, name, external_id, external_type_id').eq('property_id', propertyId);
         if (!units || units.length === 0) throw new Error("Brak kwater w bazie.");
 
-        // Mapa ID -> Unit UUID
         const unitMap = new Map<string, string>();
         units.forEach((u: any) => {
             if (u.external_id) unitMap.set(String(u.external_id).trim(), u.id);
             if (u.external_type_id) unitMap.set(String(u.external_type_id).trim(), u.id);
         });
 
-        // 2. Pobierz dane z Hotres (tylko 2026)
         const year = 2026;
         const fromDate = `${year}-01-01`;
         const tillDate = `${year}-12-31`;
-        
-        console.log(`[SYNC] Pobieranie danych dla roku ${year}...`);
         
         const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`;
         const rawResponse = await fetchWithProxy(targetUrl);
@@ -252,9 +253,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             itemsToProcess = foundArr ? (foundArr as any[]) : vals.filter((v: any) => v && (v.type_id || v.dates));
         }
 
-        console.log(`[SYNC] Znaleziono ${itemsToProcess.length} kwater w API.`);
-
-        // 3. Pobierz aktualny stan z bazy
         const unitIds = units.map(u => u.id);
         const { data: existingRows } = await supabase
             .from('availability')
@@ -269,9 +267,8 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         });
 
         const rowsToUpsert: any[] = [];
-        const processedKeys = new Set<string>(); // Unikamy duplikatów w ramach jednego wsadu
+        const processedKeys = new Set<string>(); 
 
-        // 4. Mapowanie
         for (const item of itemsToProcess) {
             const extId = String(item.type_id).trim();
             const unitId = unitMap.get(extId);
@@ -279,15 +276,12 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             if (unitId && item.dates && Array.isArray(item.dates)) {
                 for (const d of item.dates) {
                     const dateStr = normalizeDate(d.date);
-                    
-                    // Deduplikacja w pamięci
                     const key = `${unitId}_${dateStr}`;
                     if (processedKeys.has(key)) continue;
                     processedKeys.add(key);
 
                     const isBooked = (d.available === 0 || d.available === '0' || d.available === false);
                     const targetStatus = isBooked ? 'booked' : 'available';
-
                     const existingRow = dbMap.get(key);
 
                     rowsToUpsert.push({
@@ -301,13 +295,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             }
         }
 
-        // 5. Zapis (w paczkach po 500)
         if (rowsToUpsert.length > 0) {
             const BATCH_SIZE = 500;
             for (let i = 0; i < rowsToUpsert.length; i += BATCH_SIZE) {
                 const batch = rowsToUpsert.slice(i, i + BATCH_SIZE);
-                // FIX: Dodano onConflict aby obsłużyć błąd "duplicate key value"
-                // Mówimy bazie: jeśli para (unit_id, date) już istnieje, zrób update, zamiast krzyczeć.
                 const { error: upsertError } = await supabase
                     .from('availability')
                     .upsert(batch, { onConflict: 'unit_id,date' });
@@ -333,7 +324,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     const apiUser = "admin@twojepokoje.com.pl";
     const apiPass = "Admin123@@";
     
-    // Używamy fetchWithProxy tak jak przy innych metodach
     const targetUrl = `https://panel.hotres.pl/api_rates?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
     
     try {
