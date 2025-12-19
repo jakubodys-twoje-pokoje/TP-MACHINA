@@ -43,7 +43,7 @@ export const WorkflowView: React.FC = () => {
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dragType, setDragType] = useState<'task' | 'property' | null>(null);
 
-  // Krytyczny ref do blokowania odświeżania podczas zapisu
+  // Krytyczny ref do blokowania odświeżania podczas zapisu pozycji
   const isSavingRef = useRef(false);
 
   const fetchTasks = useCallback(async () => {
@@ -61,7 +61,7 @@ export const WorkflowView: React.FC = () => {
     if (data) setEntries(data);
   }, []);
 
-  // Inicjalizacja
+  // Inicjalizacja i subskrypcje
   useEffect(() => {
     const loadAll = async () => {
       setLoading(true);
@@ -70,13 +70,16 @@ export const WorkflowView: React.FC = () => {
     };
     loadAll();
 
-    // Nasłuchujemy zmian - ale ignorujemy je, jeśli sami właśnie zapisujemy (isSavingRef)
+    // Słuchamy zmian w bazie, ale ignorujemy powiadomienia, gdy sami właśnie przesuwamy elementy
     const channel = supabase.channel('workflow-stable')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, () => {
         if (!isSavingRef.current) fetchEntries();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => {
         if (!isSavingRef.current) fetchStatuses();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => {
+        if (!isSavingRef.current) fetchTasks();
       })
       .subscribe();
       
@@ -110,7 +113,7 @@ export const WorkflowView: React.FC = () => {
     if (!sourceId || sourceId === targetId || !type || !isReorderMode) return;
 
     setIsSavingOrder(true);
-    isSavingRef.current = true; // ZABLOKUJ REALTIME
+    isSavingRef.current = true; // BLOKADA REALTIME
 
     try {
       if (type === 'task') {
@@ -120,14 +123,15 @@ export const WorkflowView: React.FC = () => {
         const [moved] = newList.splice(sIdx, 1);
         newList.splice(tIdx, 0, moved);
         
-        // Lokalny update (Optimistic UI)
-        setTasks(newList.map((t, i) => ({ ...t, position: i })));
+        // Optimistic UI
+        const updatedList = newList.map((t, i) => ({ ...t, position: i }));
+        setTasks(updatedList);
 
-        // Zapisz w DB (Batch Parallel)
-        const updates = newList.map((item, idx) => 
-            supabase.from('workflow_tasks').update({ position: idx }).eq('id', item.id)
-        );
-        await Promise.all(updates);
+        // Zapisz pozycje w DB
+        for (let i = 0; i < updatedList.length; i++) {
+           await supabase.from('workflow_tasks').update({ position: i }).eq('id', updatedList[i].id);
+        }
+        await fetchTasks(); // Re-sync
       } 
       else if (type === 'property') {
         const newList = [...properties];
@@ -136,22 +140,21 @@ export const WorkflowView: React.FC = () => {
         const [moved] = newList.splice(sIdx, 1);
         newList.splice(tIdx, 0, moved);
 
-        // Zapisz w DB (Batch Parallel)
-        const updates = newList.map((item, idx) => 
-            supabase.from('properties').update({ workflow_position: idx }).eq('id', item.id)
-        );
-        await Promise.all(updates);
-        await fetchProperties();
+        // Zapisz pozycje w DB
+        for (let i = 0; i < newList.length; i++) {
+           await supabase.from('properties').update({ workflow_position: i }).eq('id', newList[i].id);
+        }
+        await fetchProperties(); // Re-sync
       }
     } catch (err: any) {
       console.error("Critical Reorder Error:", err);
       alert("Błąd zapisu kolejności.");
     } finally {
       setIsSavingOrder(false);
-      // Odblokuj Realtime z lekkim opóźnieniem, aby baza "oddetchnęła"
+      // Odblokuj Realtime z lekkim lagiem
       setTimeout(() => {
         isSavingRef.current = false;
-      }, 500);
+      }, 800);
     }
   };
 
@@ -272,15 +275,14 @@ export const WorkflowView: React.FC = () => {
           </div>
           {isSavingOrder && (
             <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold animate-pulse bg-indigo-500/10 px-3 py-1 rounded-full">
-              <Loader2 size={14} className="animate-spin" /> ZAPISYWANIE...
+              <Loader2 size={14} className="animate-spin" /> ZAPISYWANIE KOLEJNOŚCI...
             </div>
           )}
         </div>
         <div className="flex gap-2">
             <button 
               onClick={() => setIsReorderMode(!isReorderMode)} 
-              className={`px-3 py-2 rounded-lg text-sm flex items-center gap-2 border transition-all ${isReorderMode ? 'bg-indigo-600 border-white text-white shadow-[0_0_15px_rgba(99,102,241,0.5)]' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'}`}
-              title="Przełącz tryb przesuwania rzędów i kolumn"
+              className={`px-4 py-2 rounded-lg text-sm flex items-center gap-2 border transition-all ${isReorderMode ? 'bg-indigo-600 border-white text-white shadow-[0_0_20px_rgba(99,102,241,0.6)] font-bold' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'}`}
             >
                 <Move size={16} /> {isReorderMode ? 'Zakończ układanie' : 'Zmień kolejność'}
             </button>
@@ -291,7 +293,7 @@ export const WorkflowView: React.FC = () => {
       </div>
 
       {/* TABLE */}
-      <div className={`flex-1 overflow-auto bg-surface rounded-xl border border-border shadow-2xl custom-scrollbar relative ${isReorderMode ? 'ring-2 ring-indigo-500 ring-inset' : ''}`}>
+      <div className={`flex-1 overflow-auto bg-surface rounded-xl border border-border shadow-2xl custom-scrollbar relative ${isReorderMode ? 'ring-2 ring-indigo-500 ring-inset cursor-crosshair' : ''}`}>
         <table className="w-max border-separate border-spacing-0">
           <thead className="sticky top-0 z-30">
             <tr>
@@ -301,7 +303,7 @@ export const WorkflowView: React.FC = () => {
                   key={task.id} 
                   onDragOver={(e) => handleDragOver(e, task.id, 'task')}
                   onDrop={(e) => handleDrop(e, task.id)}
-                  className={`p-3 bg-slate-900 border-b border-border border-r border-slate-800 w-[250px] group transition-all ${!task.is_active ? 'opacity-40 grayscale' : ''} ${dropTargetId === task.id && dragType === 'task' ? 'bg-indigo-500/20 ring-2 ring-inset ring-indigo-500' : ''}`}
+                  className={`p-3 bg-slate-900 border-b border-border border-r border-slate-800 w-[250px] group transition-all ${!task.is_active ? 'opacity-40 grayscale' : ''} ${dropTargetId === task.id && dragType === 'task' ? 'bg-indigo-500/30 ring-4 ring-inset ring-indigo-400' : ''}`}
                 >
                    <div className="flex justify-between items-center text-white text-sm">
                        <div className="flex items-center gap-2 truncate">
@@ -309,9 +311,9 @@ export const WorkflowView: React.FC = () => {
                                <div 
                                  draggable 
                                  onDragStart={() => handleDragStart(task.id, 'task')}
-                                 className="cursor-grab active:cursor-grabbing p-1 hover:bg-slate-700 rounded transition-colors"
+                                 className="cursor-grab active:cursor-grabbing p-1.5 bg-indigo-500/20 hover:bg-indigo-500/40 rounded transition-colors"
                                >
-                                   <GripVertical size={14} className="text-indigo-400" />
+                                   <GripVertical size={16} className="text-indigo-400" />
                                </div>
                            )}
                            <span className="truncate font-bold">{task.title}</span>
@@ -336,7 +338,7 @@ export const WorkflowView: React.FC = () => {
                   key={property.id} 
                   onDragOver={(e) => handleDragOver(e, property.id, 'property')}
                   onDrop={(e) => handleDrop(e, property.id)}
-                  className={`hover:bg-slate-800/30 transition-all ${!rowIsActive ? 'opacity-30 grayscale bg-slate-900/50' : ''} ${isTarget ? 'bg-indigo-500/10 shadow-[inset_0_4px_0_0_#6366f1,inset_0_-4px_0_0_#6366f1]' : ''} ${isSource ? 'opacity-20' : ''}`}
+                  className={`hover:bg-slate-800/30 transition-all ${!rowIsActive ? 'opacity-30 grayscale bg-slate-900/50' : ''} ${isTarget ? 'bg-indigo-500/20 shadow-[inset_0_4px_0_0_#818cf8,inset_0_-4px_0_0_#818cf8]' : ''} ${isSource ? 'opacity-20 bg-indigo-500/10' : ''}`}
                 >
                   <td className={`p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)]`}>
                     <div className="flex justify-between items-center gap-2">
@@ -345,7 +347,7 @@ export const WorkflowView: React.FC = () => {
                                 <div 
                                   draggable 
                                   onDragStart={() => handleDragStart(property.id, 'property')}
-                                  className="cursor-grab active:cursor-grabbing p-1 hover:bg-slate-700 rounded transition-colors"
+                                  className="cursor-grab active:cursor-grabbing p-1.5 bg-indigo-500/20 hover:bg-indigo-500/40 rounded transition-colors"
                                 >
                                     <GripVertical size={16} className="text-indigo-400" />
                                 </div>
@@ -363,7 +365,7 @@ export const WorkflowView: React.FC = () => {
                     const hasComment = entry?.comment && entry.comment.trim().length > 0;
                     return (
                       <td key={task.id} className="p-1 border-r border-b border-slate-800 cursor-pointer align-middle h-[80px] w-[250px]" onClick={() => !isReorderMode && openCellModal(property.id, task.id)}>
-                        <div className={`w-full h-full rounded flex flex-col justify-center px-4 py-2 transition-all border-2 ${status ? status.color + ' border-transparent shadow-lg shadow-black/40' : 'bg-transparent border-transparent hover:border-slate-700 hover:bg-slate-800'} ${status ? 'text-white font-bold' : 'text-slate-500'} ${isReorderMode ? 'opacity-50 pointer-events-none' : ''}`}>
+                        <div className={`w-full h-full rounded flex flex-col justify-center px-4 py-2 transition-all border-2 ${status ? status.color + ' border-transparent shadow-lg shadow-black/40' : 'bg-transparent border-transparent hover:border-slate-700 hover:bg-slate-800'} ${status ? 'text-white font-bold' : 'text-slate-500'} ${isReorderMode ? 'opacity-40 pointer-events-none' : ''}`}>
                            <div className="flex items-center justify-between gap-2">
                                <span className="text-sm truncate">{status ? status.label : ''}</span>
                                {hasComment && <MessageSquare size={14} className={status ? 'text-white/80' : 'text-indigo-400'} />}
@@ -407,7 +409,6 @@ export const WorkflowView: React.FC = () => {
         </div>
       )}
 
-      {/* Pozostałe modale pozostają bez zmian w logice */}
       {isPropertyModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">
