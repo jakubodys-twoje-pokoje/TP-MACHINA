@@ -71,7 +71,7 @@ export const WorkflowView: React.FC = () => {
 
   useEffect(() => {
     fetchWorkflowData();
-    const channel = supabase.channel('workflow-v12-final')
+    const channel = supabase.channel('workflow-v13-stable')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => { if (!isLocked.current) fetchTasks(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => fetchStatuses())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, (p) => handleEntryRealtime(p))
@@ -106,7 +106,7 @@ export const WorkflowView: React.FC = () => {
       cooldownTimer.current = window.setTimeout(() => {
           isLocked.current = false;
           setIsSavingOrder(false);
-      }, 2500); 
+      }, 3000); 
   };
 
   const onTaskDragStart = (id: string) => { setIsDragging(true); setDraggedTaskId(id); lockSync(); };
@@ -125,14 +125,32 @@ export const WorkflowView: React.FC = () => {
     });
   };
 
-  const handleSaveColumnOrder = async () => {
+  const handleSaveColumnOrder = async (e?: React.DragEvent) => {
+    if (e) e.preventDefault();
     if (!draggedTaskId) return;
     setIsSavingOrder(true);
     try {
-        const payload = tasksRef.current.map((t, i) => ({ id: t.id, position: i }));
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) throw new Error("Unauthorized");
+
+        const payload = tasksRef.current.map((t, i) => ({ 
+            ...t,
+            user_id: user.id,
+            position: i 
+        }));
+
         const { error } = await supabase.from('workflow_tasks').upsert(payload);
         if (error) throw error;
-    } catch (e) { console.error(e); fetchTasks(); } finally { setDraggedTaskId(null); setIsDragging(false); releaseSync(); }
+        await fetchTasks();
+    } catch (e: any) { 
+        console.error("Column save error:", e);
+        alert("Błąd zapisu kolumn: " + e.message);
+        fetchTasks(); 
+    } finally { 
+        setDraggedTaskId(null); 
+        setIsDragging(false); 
+        releaseSync(); 
+    }
   };
 
   const onPropDragStart = (id: string) => { setIsDragging(true); setDraggedPropId(id); lockSync(); };
@@ -151,16 +169,16 @@ export const WorkflowView: React.FC = () => {
     });
   };
 
-  const handleSaveRowOrder = async () => {
+  const handleSaveRowOrder = async (e?: React.DragEvent) => {
+    if (e) e.preventDefault();
     if (!draggedPropId) return;
     setIsSavingOrder(true);
     try {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error("Unauthorized");
 
-        // GWARANCJA: Używamy pełnej listy z referencji i dodajemy user_id dla RLS
         const payload = propsRef.current.map((p, i) => ({
-            id: p.id,
+            ...p,
             user_id: user.id,
             workflow_position: i
         }));
@@ -170,9 +188,13 @@ export const WorkflowView: React.FC = () => {
             .upsert(payload, { onConflict: 'id' });
 
         if (error) throw error;
+        
+        // Wymuś odświeżenie kontekstu globalnego
+        await fetchProperties();
         console.log("Rows persisted successfully");
-    } catch (e) {
+    } catch (e: any) {
         console.error("Row save failed:", e);
+        alert("Błąd zapisu rzędów: " + e.message);
         fetchProperties();
     } finally {
         setDraggedPropId(null);
@@ -189,7 +211,6 @@ export const WorkflowView: React.FC = () => {
           const activeA = a.workflow_is_active === false ? 0 : 1;
           const activeB = b.workflow_is_active === false ? 0 : 1;
           if (activeA !== activeB) return activeB - activeA;
-          // Podczas przeciągania nie sortujemy wg pozycji bazy, bo to psuje UX "onEnter"
           if (isDragging) return 0; 
           return (a.workflow_position || 0) - (b.workflow_position || 0);
       })
@@ -287,7 +308,7 @@ export const WorkflowView: React.FC = () => {
           </div>
           {isSavingOrder && (
               <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold animate-pulse">
-                  <Loader2 size={14} className="animate-spin" /> ZAPIS KOLEJNOŚCI DO BAZY...
+                  <Loader2 size={14} className="animate-spin" /> SYNCHRONIZACJA Z BAZĄ...
               </div>
           )}
         </div>
@@ -340,7 +361,7 @@ export const WorkflowView: React.FC = () => {
                   key={property.id} 
                   onDragEnter={() => onPropDragEnter(property.id)}
                   onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
-                  onDrop={(e) => { e.preventDefault(); handleSaveRowOrder(); }}
+                  onDrop={(e) => { e.preventDefault(); handleSaveRowOrder(e); }}
                   className={`hover:bg-slate-800/30 transition-colors ${!rowIsActive ? 'opacity-40 bg-slate-900/50' : ''} ${draggedPropId === property.id ? 'bg-indigo-900/40 ring-2 ring-indigo-500 z-10 relative' : ''}`}
                 >
                   <td 
