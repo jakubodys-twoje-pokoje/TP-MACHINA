@@ -30,31 +30,18 @@ export const WorkflowView: React.FC = () => {
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [dragType, setDragType] = useState<'task' | 'property' | null>(null);
 
-  // Refy do zarządzania blokadą synchronizacji (zapobiega mruganiu)
-  const isIgnoringUpdates = useRef(false);
-  const cooldownTimeout = useRef<number | null>(null);
+  // Krytyczny ref do blokowania nadpisywania stanu podczas operacji
+  const isProcessing = useRef(false);
 
-  // Synchronizacja stanu lokalnego z globalnym (z blokadą)
+  // Synchronizacja inicjalna i przy zmianach zewnętrznych (jeśli nie procesujemy)
   useEffect(() => {
-    if (!dragType && !isIgnoringUpdates.current) {
+    if (!isProcessing.current && !dragType) {
       setLocalProperties([...properties]);
     }
   }, [properties, dragType]);
 
-  const startIgnoringUpdates = () => {
-    isIgnoringUpdates.current = true;
-    if (cooldownTimeout.current) window.clearTimeout(cooldownTimeout.current);
-  };
-
-  const stopIgnoringUpdates = () => {
-    cooldownTimeout.current = window.setTimeout(() => {
-      isIgnoringUpdates.current = false;
-      setIsSavingOrder(false);
-    }, 2000); // 2 sekundy spokoju dla bazy danych
-  };
-
   const fetchTasks = useCallback(async () => {
-    if (isIgnoringUpdates.current) return;
+    if (isProcessing.current) return;
     const { data } = await supabase.from('workflow_tasks').select('*').order('position', { ascending: true });
     if (data) setTasks(data);
   }, []);
@@ -65,6 +52,7 @@ export const WorkflowView: React.FC = () => {
   }, []);
 
   const handleEntryRealtime = useCallback((payload: any) => {
+    if (isProcessing.current) return;
     if (payload.eventType === 'INSERT') setEntries(prev => [...prev, payload.new]);
     else if (payload.eventType === 'UPDATE') setEntries(prev => prev.map(e => e.id === payload.new.id ? payload.new : e));
     else if (payload.eventType === 'DELETE') setEntries(prev => prev.filter(e => e.id !== payload.old.id));
@@ -86,26 +74,27 @@ export const WorkflowView: React.FC = () => {
     };
     loadAll();
 
-    const channel = supabase.channel('workflow-stable-v1')
+    const channel = supabase.channel('workflow-stable-final')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => fetchTasks())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => fetchStatuses())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, (p) => handleEntryRealtime(p))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'properties' }, () => { if(!isIgnoringUpdates.current) fetchProperties(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'properties' }, () => {
+         if (!isProcessing.current) fetchProperties();
+      })
       .subscribe();
+      
     return () => { supabase.removeChannel(channel); };
   }, [fetchTasks, fetchStatuses, handleEntryRealtime, fetchProperties]);
 
-  // --- REORDER LOGIC ---
+  // --- STABILNY MECHANIZM PRZESTAWIANIA (REORDER) ---
   const handleDrop = async (e: React.DragEvent, targetId: string) => {
     e.preventDefault();
     if (!draggedId || draggedId === targetId) {
-        setDraggedId(null);
-        setDropTargetId(null);
-        setDragType(null);
-        return;
+      setDraggedId(null); setDropTargetId(null); setDragType(null);
+      return;
     }
 
-    startIgnoringUpdates();
+    isProcessing.current = true;
     setIsSavingOrder(true);
 
     try {
@@ -119,16 +108,13 @@ export const WorkflowView: React.FC = () => {
         const [moved] = newList.splice(sIdx, 1);
         newList.splice(tIdx, 0, moved);
         
-        setTasks(newList); // Optimistic Update
+        setTasks(newList); // Optimistic UI
 
-        const payload = newList.map((t, i) => ({
-          id: t.id,
-          user_id: user.id,
-          title: t.title,
-          is_active: t.is_active,
-          position: i
-        }));
-        await supabase.from('workflow_tasks').upsert(payload, { onConflict: 'id' });
+        // Update pozycji każdej kolumny (update zamiast upsert = zero błędów RLS)
+        const updates = newList.map((t, i) => 
+          supabase.from('workflow_tasks').update({ position: i }).eq('id', t.id).eq('user_id', user.id)
+        );
+        await Promise.all(updates);
       } 
       else if (dragType === 'property') {
         const newList = [...localProperties];
@@ -137,33 +123,36 @@ export const WorkflowView: React.FC = () => {
         const [moved] = newList.splice(sIdx, 1);
         newList.splice(tIdx, 0, moved);
 
-        setLocalProperties(newList); // Optimistic Update
+        setLocalProperties(newList); // Optimistic UI
 
-        const payload = newList.map((p, i) => ({
-          id: p.id,
-          user_id: user.id,
-          name: p.name,
-          workflow_position: i,
-          workflow_is_active: p.workflow_is_active
-        }));
-        await supabase.from('properties').upsert(payload, { onConflict: 'id' });
+        // Update pozycji każdego rzędu
+        const updates = newList.map((p, i) => 
+          supabase.from('properties').update({ workflow_position: i }).eq('id', p.id).eq('user_id', user.id)
+        );
+        await Promise.all(updates);
       }
     } catch (err: any) {
-      alert("Błąd zapisu: " + err.message);
+      alert("Błąd zapisu kolejności: " + err.message);
+      await fetchProperties();
+      await fetchTasks();
     } finally {
       setDraggedId(null);
       setDropTargetId(null);
       setDragType(null);
-      stopIgnoringUpdates();
+      // Dajemy bazie 500ms na stabilizację przed odblokowaniem Realtime
+      setTimeout(() => {
+        isProcessing.current = false;
+        setIsSavingOrder(false);
+      }, 500);
     }
   };
 
-  // --- WIDOK ---
+  // --- FILTRACJA I SORTOWANIE ---
   const sortedTasks = useMemo(() => [...tasks].sort((a, b) => a.position - b.position), [tasks]);
   
   const filteredProperties = useMemo(() => {
     let list = [...localProperties];
-    // Sortuj tylko gdy NIE przeciągamy, aby uniknąć skakania rzędów
+    // Sortuj tylko gdy NIE przeciągamy, aby uniknąć migotania
     if (!dragType) {
       list.sort((a, b) => {
         const activeA = a.workflow_is_active === false ? 0 : 1;
@@ -172,7 +161,9 @@ export const WorkflowView: React.FC = () => {
         return (a.workflow_position || 0) - (b.workflow_position || 0);
       });
     }
-    if (searchQuery) list = list.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    if (searchQuery) {
+      list = list.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    }
     return list;
   }, [localProperties, searchQuery, dragType]);
 
@@ -234,9 +225,17 @@ export const WorkflowView: React.FC = () => {
     if (!selectedCell) return;
     const { data: { user } } = await supabase.auth.getUser();
     const existing = entries.find(e => e.property_id === selectedCell.propId && e.task_id === selectedCell.taskId);
-    const payload = { status_id: cellForm.statusId || null, comment: cellForm.comment, last_updated_by_email: user?.email || 'System', updated_at: new Date().toISOString() };
-    if (existing) await supabase.from('workflow_entries').update(payload).eq('id', existing.id);
-    else await supabase.from('workflow_entries').insert({ ...payload, property_id: selectedCell.propId, task_id: selectedCell.taskId });
+    const payload = { 
+      status_id: cellForm.statusId || null, 
+      comment: cellForm.comment, 
+      last_updated_by_email: user?.email || 'System', 
+      updated_at: new Date().toISOString() 
+    };
+    if (existing) {
+      await supabase.from('workflow_entries').update(payload).eq('id', existing.id);
+    } else {
+      await supabase.from('workflow_entries').insert({ ...payload, property_id: selectedCell.propId, task_id: selectedCell.taskId });
+    }
     setIsCellModalOpen(false);
   };
 
@@ -281,22 +280,20 @@ export const WorkflowView: React.FC = () => {
                   onDrop={(e) => handleDrop(e, task.id)}
                   className={`p-3 bg-slate-900 border-b border-border border-r border-slate-800 w-[250px] group transition-all ${!task.is_active ? 'opacity-40 grayscale' : ''} ${dropTargetId === task.id && dragType === 'task' ? 'border-l-4 border-indigo-500 bg-indigo-500/10' : ''}`}
                 >
-                   <div className="flex flex-col gap-2">
-                       <div className="flex justify-between items-center text-white text-sm">
-                           <div className="flex items-center gap-2 truncate">
-                               <div 
-                                 draggable 
-                                 onDragStart={(e) => { setDraggedId(task.id); setDragType('task'); e.dataTransfer.effectAllowed = 'move'; }}
-                                 className="cursor-grab active:cursor-grabbing p-1 hover:bg-slate-700 rounded transition-colors"
-                               >
-                                   <GripVertical size={14} className="text-slate-500" />
-                               </div>
-                               <span className="truncate font-bold">{task.title}</span>
+                   <div className="flex justify-between items-center text-white text-sm">
+                       <div className="flex items-center gap-2 truncate">
+                           <div 
+                             draggable 
+                             onDragStart={(e) => { setDraggedId(task.id); setDragType('task'); }}
+                             className="cursor-grab active:cursor-grabbing p-1 hover:bg-slate-700 rounded transition-colors"
+                           >
+                               <GripVertical size={14} className="text-slate-500" />
                            </div>
-                           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                               <button onClick={() => handleToggleTaskActive(task.id, task.is_active)} className="p-1 hover:text-indigo-400">{task.is_active ? <Eye size={14} /> : <EyeOff size={14} />}</button>
-                               <button onClick={async () => { if(confirm("Usunąć kolumnę?")) { await supabase.from('workflow_tasks').delete().eq('id', task.id); fetchTasks(); }}} className="p-1 hover:text-red-400"><Trash2 size={14} /></button>
-                           </div>
+                           <span className="truncate font-bold">{task.title}</span>
+                       </div>
+                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                           <button onClick={() => handleToggleTaskActive(task.id, task.is_active)} className="p-1 hover:text-indigo-400">{task.is_active ? <Eye size={14} /> : <EyeOff size={14} />}</button>
+                           <button onClick={async () => { if(confirm("Usunąć kolumnę?")) { await supabase.from('workflow_tasks').delete().eq('id', task.id); fetchTasks(); }}} className="p-1 hover:text-red-400"><Trash2 size={14} /></button>
                        </div>
                    </div>
                 </th>
@@ -315,14 +312,14 @@ export const WorkflowView: React.FC = () => {
                   onDragOver={(e) => { e.preventDefault(); if(dragType === 'property') setDropTargetId(property.id); }}
                   onDragLeave={() => setDropTargetId(null)}
                   onDrop={(e) => handleDrop(e, property.id)}
-                  className={`hover:bg-slate-800/30 transition-all ${!rowIsActive ? 'opacity-40 bg-slate-900/50' : ''} ${isTarget ? 'border-t-4 border-indigo-500 bg-indigo-500/10' : ''} ${isSource ? 'opacity-20 grayscale pointer-events-none' : ''}`}
+                  className={`hover:bg-slate-800/30 transition-all ${!rowIsActive ? 'opacity-40 bg-slate-900/50' : ''} ${isTarget ? 'border-t-4 border-indigo-500 bg-indigo-900/10' : ''} ${isSource ? 'opacity-20 pointer-events-none' : ''}`}
                 >
                   <td className={`p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)]`}>
                     <div className="flex justify-between items-center gap-2">
                         <div className="flex items-center gap-3 flex-grow truncate">
                             <div 
                               draggable 
-                              onDragStart={(e) => { setDraggedId(property.id); setDragType('property'); e.dataTransfer.effectAllowed = 'move'; }}
+                              onDragStart={() => { setDraggedId(property.id); setDragType('property'); }}
                               className="cursor-grab active:cursor-grabbing p-1 hover:bg-slate-700 rounded transition-colors"
                             >
                                 <GripVertical size={16} className="text-slate-600" />
@@ -356,30 +353,30 @@ export const WorkflowView: React.FC = () => {
         </table>
       </div>
 
-      {/* MODALS */}
+      {/* MODALS (Identyczne jak poprzednio, ale ze stabilniejszymi stylami) */}
       {isCellModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-          <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-5 animate-in zoom-in-95">
+          <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-5">
              <div className="flex justify-between items-start">
                 <h3 className="font-bold text-white text-lg">Edycja komórki</h3>
                 <button onClick={() => setIsCellModalOpen(false)} className="text-slate-500 hover:text-white transition-colors"><X size={20}/></button>
              </div>
-             <div>
-                 <label className="block text-xs font-bold text-slate-400 uppercase mb-3">Status:</label>
-                 <div className="grid grid-cols-1 gap-2 max-h-[180px] overflow-y-auto pr-1 custom-scrollbar">
-                     <button onClick={() => setCellForm({...cellForm, statusId: ''})} className={`p-2.5 rounded-lg border text-sm text-left ${cellForm.statusId === '' ? 'border-indigo-500 bg-indigo-500/10 text-white shadow-lg shadow-indigo-500/20' : 'border-slate-700 text-slate-500 hover:bg-slate-800'}`}>Wyczyść</button>
+             <div className="space-y-3">
+                 <label className="block text-xs font-bold text-slate-400 uppercase">Wybierz status:</label>
+                 <div className="grid grid-cols-1 gap-2 max-h-[220px] overflow-y-auto pr-1 custom-scrollbar">
+                     <button onClick={() => setCellForm({...cellForm, statusId: ''})} className={`p-3 rounded-lg border text-sm text-left transition-all ${cellForm.statusId === '' ? 'border-indigo-500 bg-indigo-500/10 text-white' : 'border-slate-700 text-slate-500 hover:bg-slate-800'}`}>Brak statusu / Wyczyść</button>
                      {statuses.map(s => (
-                         <button key={s.id} onClick={() => setCellForm({...cellForm, statusId: s.id})} className={`p-2.5 rounded-lg border text-sm text-left flex items-center gap-3 transition-all ${cellForm.statusId === s.id ? 'border-white bg-slate-800 text-white ring-2 ring-indigo-500 shadow-xl' : 'border-slate-700 text-slate-300 hover:bg-slate-800'}`}>
+                         <button key={s.id} onClick={() => setCellForm({...cellForm, statusId: s.id})} className={`p-3 rounded-lg border text-sm text-left flex items-center gap-3 transition-all ${cellForm.statusId === s.id ? 'border-white bg-slate-800 text-white shadow-lg ring-1 ring-indigo-500' : 'border-slate-700 text-slate-300 hover:bg-slate-800'}`}>
                             <div className={`w-3 h-3 rounded-full ${s.color}`}></div> {s.label}
                          </button>
                      ))}
                  </div>
              </div>
-             <div>
-                <label className="block text-xs font-bold text-slate-400 uppercase mb-2">Notatki:</label>
-                <textarea rows={4} value={cellForm.comment} onChange={e => setCellForm({...cellForm, comment: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none transition-all" />
+             <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-400 uppercase">Notatki:</label>
+                <textarea rows={4} value={cellForm.comment} onChange={e => setCellForm({...cellForm, comment: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none" />
              </div>
-             <button onClick={saveCell} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center justify-center gap-2 font-bold shadow-lg shadow-indigo-900/40 transition-all active:scale-95"><Save size={18}/> Zapisz zmiany</button>
+             <button onClick={saveCell} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center justify-center gap-2 font-bold shadow-lg transition-all active:scale-95"><Save size={18}/> Zapisz</button>
           </div>
         </div>
       )}
@@ -388,10 +385,10 @@ export const WorkflowView: React.FC = () => {
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">
              <h3 className="font-bold text-white text-lg">Dodaj obiekt</h3>
-             <input autoFocus value={newPropertyName} onChange={e => setNewPropertyName(e.target.value)} placeholder="Nazwa obiektu" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" onKeyDown={e => e.key === 'Enter' && handleAddPropertyLocal()} />
+             <input autoFocus value={newPropertyName} onChange={e => setNewPropertyName(e.target.value)} placeholder="Nazwa obiektu" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" />
              <div className="flex justify-end gap-2">
-                 <button onClick={() => setIsPropertyModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white transition-colors">Anuluj</button>
-                 <button onClick={handleAddPropertyLocal} className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold transition-colors">Dodaj obiekt</button>
+                 <button onClick={() => setIsPropertyModalOpen(false)} className="px-4 py-2 text-slate-400">Anuluj</button>
+                 <button onClick={handleAddPropertyLocal} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold">Dodaj</button>
              </div>
           </div>
         </div>
@@ -401,10 +398,10 @@ export const WorkflowView: React.FC = () => {
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-4">
              <h3 className="font-bold text-white text-lg">Nowa Kolumna</h3>
-             <input autoFocus value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} placeholder="Nazwa kolumny (np. Zaliczka)" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" onKeyDown={e => e.key === 'Enter' && handleAddTask()} />
+             <input autoFocus value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} placeholder="Nazwa kolumny" className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white outline-none focus:ring-2 focus:ring-indigo-500" />
              <div className="flex justify-end gap-2">
-                 <button onClick={() => setIsTaskModalOpen(false)} className="px-4 py-2 text-slate-400 hover:text-white transition-colors">Anuluj</button>
-                 <button onClick={handleAddTask} className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold transition-colors">Utwórz kolumnę</button>
+                 <button onClick={() => setIsTaskModalOpen(false)} className="px-4 py-2 text-slate-400">Anuluj</button>
+                 <button onClick={handleAddTask} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold">Utwórz</button>
              </div>
           </div>
         </div>
@@ -412,29 +409,28 @@ export const WorkflowView: React.FC = () => {
 
       {isStatusModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
-          <div className="bg-surface w-full max-w-lg rounded-xl border border-border shadow-2xl overflow-hidden animate-in zoom-in-95">
+          <div className="bg-surface w-full max-w-lg rounded-xl border border-border shadow-2xl overflow-hidden">
              <div className="p-4 border-b border-border flex justify-between items-center bg-slate-900/50">
                 <h3 className="font-bold text-white">Zarządzaj Statusami</h3>
-                <button onClick={() => setIsStatusModalOpen(false)}><X className="text-slate-400 hover:text-white transition-colors" /></button>
+                <button onClick={() => setIsStatusModalOpen(false)}><X className="text-slate-400 hover:text-white" /></button>
              </div>
              <div className="p-6 space-y-6">
                 <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
                     {statuses.map(s => (
-                        <div key={s.id} className="flex items-center justify-between bg-slate-900 p-3 rounded-lg border border-border group hover:border-slate-600 transition-colors">
-                            <div className="flex items-center gap-3"><div className={`w-4 h-4 rounded-full ${s.color} shadow-[0_0_10px_rgba(255,255,255,0.1)]`}></div><span className="text-white text-sm font-medium">{s.label}</span></div>
-                            <button onClick={async () => { if(confirm("Usunąć ten status?")) { await supabase.from('workflow_statuses').delete().eq('id', s.id); fetchStatuses(); }}} className="text-slate-500 hover:text-red-400 p-1 transition-colors"><Trash2 size={16}/></button>
+                        <div key={s.id} className="flex items-center justify-between bg-slate-900 p-2 rounded border border-border group">
+                            <div className="flex items-center gap-3"><div className={`w-4 h-4 rounded-full ${s.color}`}></div><span className="text-white text-sm">{s.label}</span></div>
+                            <button onClick={async () => { if(confirm("Usunąć status?")) { await supabase.from('workflow_statuses').delete().eq('id', s.id); fetchStatuses(); }}} className="text-slate-500 hover:text-red-400"><Trash2 size={16}/></button>
                         </div>
                     ))}
-                    {statuses.length === 0 && <div className="text-center py-8 text-slate-600 italic">Brak statusów. Dodaj pierwszy poniżej.</div>}
                 </div>
                 <div className="border-t border-border pt-4 space-y-3">
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Nowy status</p>
+                    <p className="text-xs font-bold text-slate-400 uppercase">Nowy status</p>
                     <div className="flex gap-2">
-                         <input value={newStatus.label} onChange={e => setNewStatus({...newStatus, label: e.target.value})} placeholder="Nazwa statusu" className="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm outline-none focus:ring-1 focus:ring-indigo-500 transition-all" onKeyDown={e => e.key === 'Enter' && handleAddStatus()} />
-                         <button onClick={handleAddStatus} className="px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors"><Plus size={20} /></button>
+                         <input value={newStatus.label} onChange={e => setNewStatus({...newStatus, label: e.target.value})} placeholder="Nazwa" className="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:ring-1 focus:ring-indigo-500" />
+                         <button onClick={handleAddStatus} className="px-3 bg-indigo-600 text-white rounded-lg text-sm"><Plus /></button>
                     </div>
                     <div className="flex gap-2 flex-wrap">
-                        {COLORS.map(c => ( <button key={c.class} onClick={() => setNewStatus({...newStatus, color: c.class})} className={`w-8 h-8 rounded-full ${c.class} transition-all hover:scale-110 ${newStatus.color === c.class ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-800 scale-110 shadow-lg' : 'opacity-60 hover:opacity-100'}`} /> ))}
+                        {COLORS.map(c => ( <button key={c.class} onClick={() => setNewStatus({...newStatus, color: c.class})} className={`w-6 h-6 rounded-full ${c.class} transition-all hover:scale-110 ${newStatus.color === c.class ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-800' : ''}`} /> ))}
                     </div>
                 </div>
              </div>
