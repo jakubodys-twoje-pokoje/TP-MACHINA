@@ -28,8 +28,14 @@ export const WorkflowView: React.FC = () => {
   const [isSavingOrder, setIsSavingOrder] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
-  // Guard for Realtime updates to prevent "jumping" back to old state during/after save
-  const ignoreUpdatesUntil = useRef<number>(0);
+  // CRITICAL: Refs to avoid stale closures in D&D handlers
+  const tasksRef = useRef<WorkflowTask[]>([]);
+  const propertiesRef = useRef<Property[]>([]);
+  const isSyncLocked = useRef<boolean>(false);
+
+  // Keep refs in sync with state
+  useEffect(() => { tasksRef.current = tasks; }, [tasks]);
+  useEffect(() => { propertiesRef.current = localProperties; }, [properties]);
 
   const [localProperties, setLocalProperties] = useState<Property[]>([]);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
@@ -51,20 +57,21 @@ export const WorkflowView: React.FC = () => {
   useEffect(() => {
     fetchWorkflowData();
 
-    const channel = supabase.channel('workflow-realtime-v8')
+    const channel = supabase.channel('workflow-realtime-final')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => {
-          if (Date.now() > ignoreUpdatesUntil.current) fetchTasks();
+          if (!isSyncLocked.current) fetchTasks();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => fetchStatuses())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, (p) => handleEntryRealtime(p))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'properties' }, () => {
-          if (Date.now() > ignoreUpdatesUntil.current) fetchProperties();
+          if (!isSyncLocked.current) fetchProperties();
       })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
   }, []);
 
+  // Sync local properties with context when not dragging
   useEffect(() => {
     if (!draggedPropId) {
         setLocalProperties([...properties]);
@@ -129,53 +136,58 @@ export const WorkflowView: React.FC = () => {
     return sortedProperties.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
   }, [sortedProperties, searchQuery]);
 
-  // --- DRAG AND DROP TASKS ---
+  // --- DRAG AND DROP TASKS (COLUMNS) ---
   const onTaskDragStart = (id: string) => setDraggedTaskId(id);
   
   const onTaskDragOver = (e: React.DragEvent, targetId: string) => {
     e.preventDefault();
     if (!draggedTaskId || draggedTaskId === targetId) return;
     
+    // Use functional state update to ensure we have the absolute latest order
     setTasks(prev => {
         const draggedIdx = prev.findIndex(t => t.id === draggedTaskId);
         const targetIdx = prev.findIndex(t => t.id === targetId);
         if (draggedIdx === -1 || targetIdx === -1) return prev;
 
-        const newTasks = [...prev];
-        const [removed] = newTasks.splice(draggedIdx, 1);
-        newTasks.splice(targetIdx, 0, removed);
+        const updated = [...prev];
+        const [removed] = updated.splice(draggedIdx, 1);
+        updated.splice(targetIdx, 0, removed);
         
-        return newTasks.map((t, i) => ({ ...t, position: i }));
+        return updated.map((t, i) => ({ ...t, position: i }));
     });
   };
 
-  const onTaskDrop = async () => {
+  const onTaskDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
     if (!draggedTaskId) return;
+    
     setIsSavingOrder(true);
-    // Block realtime updates for 1.5 seconds to let DB settle
-    ignoreUpdatesUntil.current = Date.now() + 1500;
+    isSyncLocked.current = true; // Lock realtime updates
 
     try {
-        const updates = tasks.map((t, i) => ({
+        // Use the current Ref which was kept in sync with the functional updates in DragOver
+        const finalOrder = tasksRef.current.map((t, i) => ({
             id: t.id,
             position: i
         }));
-        
+
         const { error } = await supabase
             .from('workflow_tasks')
-            .upsert(updates, { onConflict: 'id' });
-            
+            .upsert(finalOrder, { onConflict: 'id' });
+
         if (error) throw error;
     } catch (e) {
-        console.error("Persistence failed:", e);
-        fetchTasks();
+        console.error("Column persistence error:", e);
+        fetchTasks(); // Recovery
     } finally {
         setDraggedTaskId(null);
         setIsSavingOrder(false);
+        // Delay unlocking to let Supabase propagate
+        setTimeout(() => { isSyncLocked.current = false; }, 1000);
     }
   };
 
-  // --- DRAG AND DROP PROPERTIES ---
+  // --- DRAG AND DROP PROPERTIES (ROWS) ---
   const onPropDragStart = (id: string) => setDraggedPropId(id);
 
   const onPropDragOver = (e: React.DragEvent, targetId: string) => {
@@ -195,28 +207,31 @@ export const WorkflowView: React.FC = () => {
     });
   };
 
-  const onPropDrop = async () => {
+  const onPropDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
     if (!draggedPropId) return;
+
     setIsSavingOrder(true);
-    ignoreUpdatesUntil.current = Date.now() + 1500;
+    isSyncLocked.current = true;
 
     try {
-        const updates = localProperties.map((p, i) => ({
+        const finalOrder = localProperties.map((p, i) => ({
             id: p.id,
             workflow_position: i
         }));
-        
+
         const { error } = await supabase
             .from('properties')
-            .upsert(updates, { onConflict: 'id' });
-            
+            .upsert(finalOrder, { onConflict: 'id' });
+
         if (error) throw error;
     } catch (e) {
-        console.error("Row persistence failed:", e);
+        console.error("Row persistence error:", e);
+        fetchProperties(); // Recovery
     } finally {
         setDraggedPropId(null);
         setIsSavingOrder(false);
-        fetchProperties();
+        setTimeout(() => { isSyncLocked.current = false; }, 1000);
     }
   };
 
@@ -337,7 +352,7 @@ export const WorkflowView: React.FC = () => {
           </div>
           {isSavingOrder && (
               <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold animate-pulse">
-                  <Loader2 size={14} className="animate-spin" /> Synchronizacja z bazą...
+                  <Loader2 size={14} className="animate-spin" /> Trwały zapis w bazie danych...
               </div>
           )}
         </div>
@@ -377,7 +392,7 @@ export const WorkflowView: React.FC = () => {
                                <button onClick={(e) => { e.stopPropagation(); handleDeleteTask(task.id); }} className="p-1 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
                            </div>
                        </div>
-                       <div className="text-[9px] uppercase font-bold text-slate-600 tracking-widest text-center">Zmień kolejność</div>
+                       <div className="text-[9px] uppercase font-bold text-slate-600 tracking-widest text-center">Złap i przesuń</div>
                    </div>
                 </th>
               ))}
