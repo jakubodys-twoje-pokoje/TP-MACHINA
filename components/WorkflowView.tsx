@@ -11,12 +11,9 @@ const COLORS = [
   { label: 'Szary', class: 'bg-slate-600' },
   { label: 'Czerwony', class: 'bg-red-600' },
   { label: 'Pomarańczowy', class: 'bg-orange-500' },
-  { label: 'Żółty', class: 'bg-yellow-500 text-black' },
-  { label: 'Zielony', class: 'bg-green-600' },
-  { label: 'Niebieski', class: 'bg-blue-600' },
   { label: 'Indygo', class: 'bg-indigo-600' },
   { label: 'Fioletowy', class: 'bg-purple-600' },
-  { label: 'Różowy', class: 'bg-pink-600' },
+  { label: 'Zielony', class: 'bg-green-600' },
 ];
 
 export const WorkflowView: React.FC = () => {
@@ -38,6 +35,7 @@ export const WorkflowView: React.FC = () => {
   const isLocked = useRef<boolean>(false);
   const cooldownTimer = useRef<number | null>(null);
 
+  // Synchronizacja stanu lokalnego z globalnym, jeśli nie trwa przeciąganie
   useEffect(() => {
     if (!isDragging && !isLocked.current) {
         setLocalProperties([...properties]);
@@ -71,7 +69,7 @@ export const WorkflowView: React.FC = () => {
 
   useEffect(() => {
     fetchWorkflowData();
-    const channel = supabase.channel('workflow-v13-stable')
+    const channel = supabase.channel('workflow-v14-rls-fix')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => { if (!isLocked.current) fetchTasks(); })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => fetchStatuses())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, (p) => handleEntryRealtime(p))
@@ -109,6 +107,7 @@ export const WorkflowView: React.FC = () => {
       }, 3000); 
   };
 
+  // --- KOLUMNY ---
   const onTaskDragStart = (id: string) => { setIsDragging(true); setDraggedTaskId(id); lockSync(); };
   
   const onTaskDragEnter = (targetId: string) => {
@@ -133,18 +132,22 @@ export const WorkflowView: React.FC = () => {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error("Unauthorized");
 
+        // GWARANCJA RLS: Wysyłamy TYLKO niezbędne pola
         const payload = tasksRef.current.map((t, i) => ({ 
-            ...t,
+            id: t.id,
             user_id: user.id,
             position: i 
         }));
 
-        const { error } = await supabase.from('workflow_tasks').upsert(payload);
+        const { error } = await supabase
+            .from('workflow_tasks')
+            .upsert(payload, { onConflict: 'id' });
+
         if (error) throw error;
         await fetchTasks();
     } catch (e: any) { 
-        console.error("Column save error:", e);
-        alert("Błąd zapisu kolumn: " + e.message);
+        console.error("Column RLS Error:", e);
+        alert("Błąd zapisu kolumn (RLS): " + e.message);
         fetchTasks(); 
     } finally { 
         setDraggedTaskId(null); 
@@ -153,7 +156,12 @@ export const WorkflowView: React.FC = () => {
     }
   };
 
-  const onPropDragStart = (id: string) => { setIsDragging(true); setDraggedPropId(id); lockSync(); };
+  // --- RZĘDY ---
+  const onPropDragStart = (id: string) => { 
+    setIsDragging(true); 
+    setDraggedPropId(id); 
+    lockSync(); 
+  };
 
   const onPropDragEnter = (targetId: string) => {
     if (!draggedPropId || draggedPropId === targetId) return;
@@ -177,8 +185,9 @@ export const WorkflowView: React.FC = () => {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error("Unauthorized");
 
+        // GWARANCJA RLS: Wysyłamy TYLKO niezbędne pola
         const payload = propsRef.current.map((p, i) => ({
-            ...p,
+            id: p.id,
             user_id: user.id,
             workflow_position: i
         }));
@@ -188,13 +197,10 @@ export const WorkflowView: React.FC = () => {
             .upsert(payload, { onConflict: 'id' });
 
         if (error) throw error;
-        
-        // Wymuś odświeżenie kontekstu globalnego
         await fetchProperties();
-        console.log("Rows persisted successfully");
     } catch (e: any) {
-        console.error("Row save failed:", e);
-        alert("Błąd zapisu rzędów: " + e.message);
+        console.error("Row RLS Error:", e);
+        alert("Błąd zapisu rzędów (RLS): " + e.message);
         fetchProperties();
     } finally {
         setDraggedPropId(null);
@@ -203,18 +209,28 @@ export const WorkflowView: React.FC = () => {
     }
   };
 
+  // --- WIDOK ---
   const sortedTasks = useMemo(() => [...tasks].sort((a, b) => a.position - b.position), [tasks]);
   
   const filteredProperties = useMemo(() => {
-    return [...localProperties]
-      .sort((a, b) => {
-          const activeA = a.workflow_is_active === false ? 0 : 1;
-          const activeB = b.workflow_is_active === false ? 0 : 1;
-          if (activeA !== activeB) return activeB - activeA;
-          if (isDragging) return 0; 
-          return (a.workflow_position || 0) - (b.workflow_position || 0);
-      })
-      .filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    // Podczas przeciągania WYŁĄCZAMY sortowanie bazodanowe, 
+    // polegamy na kolejności w tablicy localProperties uzyskanej przez splice
+    let list = [...localProperties];
+    
+    if (!isDragging) {
+        list.sort((a, b) => {
+            const activeA = a.workflow_is_active === false ? 0 : 1;
+            const activeB = b.workflow_is_active === false ? 0 : 1;
+            if (activeA !== activeB) return activeB - activeA;
+            return (a.workflow_position || 0) - (b.workflow_position || 0);
+        });
+    }
+
+    if (searchQuery) {
+        list = list.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    }
+    
+    return list;
   }, [localProperties, searchQuery, isDragging]);
 
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -308,7 +324,7 @@ export const WorkflowView: React.FC = () => {
           </div>
           {isSavingOrder && (
               <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold animate-pulse">
-                  <Loader2 size={14} className="animate-spin" /> SYNCHRONIZACJA Z BAZĄ...
+                  <Loader2 size={14} className="animate-spin" /> SYNCHRONIZACJA KOLEJNOŚCI...
               </div>
           )}
         </div>
@@ -353,32 +369,30 @@ export const WorkflowView: React.FC = () => {
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-border" onDrop={handleSaveRowOrder} onDragOver={(e) => e.preventDefault()}>
+          <tbody className="divide-y divide-border">
             {filteredProperties.map(property => {
               const rowIsActive = property.workflow_is_active !== false;
               return (
                 <tr 
                   key={property.id} 
+                  draggable
+                  onDragStart={() => onPropDragStart(property.id)}
                   onDragEnter={() => onPropDragEnter(property.id)}
                   onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                  onDragEnd={() => { setDraggedPropId(null); setIsDragging(false); if(!isSavingOrder) isLocked.current = false; }}
                   onDrop={(e) => { e.preventDefault(); handleSaveRowOrder(e); }}
-                  className={`hover:bg-slate-800/30 transition-colors ${!rowIsActive ? 'opacity-40 bg-slate-900/50' : ''} ${draggedPropId === property.id ? 'bg-indigo-900/40 ring-2 ring-indigo-500 z-10 relative' : ''}`}
+                  className={`hover:bg-slate-800/30 transition-colors cursor-grab active:cursor-grabbing ${!rowIsActive ? 'opacity-40 bg-slate-900/50' : ''} ${draggedPropId === property.id ? 'bg-indigo-900/40 ring-2 ring-indigo-500 z-10 relative' : ''}`}
                 >
                   <td 
                     className={`p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)] transition-colors ${draggedPropId === property.id ? 'bg-indigo-900/40' : ''}`}
                   >
-                    <div className="flex justify-between items-center gap-2">
-                        <div 
-                          draggable 
-                          onDragStart={() => onPropDragStart(property.id)}
-                          onDragEnd={() => { setDraggedPropId(null); setIsDragging(false); if(!isSavingOrder) isLocked.current = false; }}
-                          className="flex items-center gap-3 cursor-grab active:cursor-grabbing flex-grow truncate"
-                        >
-                            <GripVertical size={16} className="text-slate-600 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <div className="flex justify-between items-center gap-2 pointer-events-none">
+                        <div className="flex items-center gap-3 flex-grow truncate">
+                            <GripVertical size={16} className="text-slate-600 flex-shrink-0" />
                             <div className="truncate font-medium text-white text-sm" title={property.name}>{property.name}</div>
                         </div>
-                        <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => handleTogglePropertyActive(property.id, rowIsActive)} className="text-slate-500 hover:text-indigo-400" title="Aktywuj/Dezaktywuj"><Eye size={12}/></button>
+                        <div className="flex flex-col gap-0.5 pointer-events-auto">
+                            <button onClick={(e) => { e.stopPropagation(); handleTogglePropertyActive(property.id, rowIsActive); }} className="text-slate-500 hover:text-indigo-400" title="Aktywuj/Dezaktywuj"><Eye size={12}/></button>
                         </div>
                     </div>
                   </td>
