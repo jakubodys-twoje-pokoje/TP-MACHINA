@@ -48,7 +48,7 @@ export const WorkflowView: React.FC = () => {
   useEffect(() => {
     fetchWorkflowData();
 
-    const channels = supabase.channel('workflow-realtime-v3')
+    const channels = supabase.channel('workflow-realtime-v4')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => fetchTasks())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => fetchStatuses())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, (p) => handleEntryRealtime(p))
@@ -92,6 +92,7 @@ export const WorkflowView: React.FC = () => {
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
+  // Properties sorted for workflow
   const sortedProperties = useMemo(() => {
     return [...properties].sort((a, b) => {
         const activeA = a.workflow_is_active === false ? 0 : 1;
@@ -104,11 +105,9 @@ export const WorkflowView: React.FC = () => {
     });
   }, [properties]);
 
+  // Tasks sorted by position
   const sortedTasks = useMemo(() => {
     return [...tasks].sort((a, b) => {
-        const activeA = a.is_active === false ? 0 : 1;
-        const activeB = b.is_active === false ? 0 : 1;
-        if (activeA !== activeB) return activeB - activeA;
         if (a.position !== b.position) return a.position - b.position;
         return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
     });
@@ -118,48 +117,52 @@ export const WorkflowView: React.FC = () => {
     return sortedProperties.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
   }, [sortedProperties, searchQuery]);
 
-  // Persistent Task Reordering
+  // --- DRAG AND DROP TASKS (COLUMNS) ---
   const onTaskDragStart = (id: string) => setDraggedTaskId(id);
+  
   const onTaskDragOver = (e: React.DragEvent, targetId: string) => {
     e.preventDefault();
-    if (draggedTaskId === targetId || !draggedTaskId) return;
+    if (!draggedTaskId || draggedTaskId === targetId) return;
     
-    const draggedIdx = tasks.findIndex(t => t.id === draggedTaskId);
-    const targetIdx = tasks.findIndex(t => t.id === targetId);
-    if (draggedIdx === -1 || targetIdx === -1) return;
+    setTasks(prev => {
+        const draggedIdx = prev.findIndex(t => t.id === draggedTaskId);
+        const targetIdx = prev.findIndex(t => t.id === targetId);
+        if (draggedIdx === -1 || targetIdx === -1) return prev;
 
-    const newTasks = [...tasks];
-    const [removed] = newTasks.splice(draggedIdx, 1);
-    newTasks.splice(targetIdx, 0, removed);
-    setTasks(newTasks);
+        const newTasks = [...prev];
+        const [removed] = newTasks.splice(draggedIdx, 1);
+        newTasks.splice(targetIdx, 0, removed);
+        
+        // CRITICAL: Update positions locally so the sort memo doesn't jump back
+        return newTasks.map((t, i) => ({ ...t, position: i }));
+    });
   };
 
   const onTaskDrop = async () => {
     if (!draggedTaskId) return;
     setIsSavingOrder(true);
     try {
-        // Update all tasks with their new positions to ensure absolute persistence
         const updates = tasks.map((t, i) => 
             supabase.from('workflow_tasks').update({ position: i }).eq('id', t.id)
         );
         await Promise.all(updates);
     } catch (e) {
-        console.error("Failed to save task order", e);
+        console.error("Task persistence failed", e);
     } finally {
         setDraggedTaskId(null);
         setIsSavingOrder(false);
-        fetchTasks();
     }
   };
 
-  // Persistent Property Reordering
+  // --- DRAG AND DROP PROPERTIES (ROWS) ---
   const onPropDragStart = (id: string) => setDraggedPropId(id);
+
   const onPropDragOver = (e: React.DragEvent, targetId: string) => {
     e.preventDefault();
-    if (draggedPropId === targetId || !draggedPropId) return;
+    if (!draggedPropId || draggedPropId === targetId) return;
 
-    // To provide smooth feedback, we reorder locally if possible 
-    // or just allow the drop. Given the context, we'll process order on drop.
+    // Row reordering feedback is harder through PropertyContext directly,
+    // so we handle it on drop to persist the entire set.
   };
 
   const onPropDrop = async (targetId: string) => {
@@ -173,17 +176,15 @@ export const WorkflowView: React.FC = () => {
 
     setIsSavingOrder(true);
     try {
-        // Reorder list locally first
         const [removed] = currentList.splice(draggedIdx, 1);
         currentList.splice(targetIdx, 0, removed);
 
-        // Map and save all workflow_positions for the entire filtered set
         const updates = currentList.map((p, i) => 
             supabase.from('properties').update({ workflow_position: i }).eq('id', p.id)
         );
         await Promise.all(updates);
     } catch (e) {
-        console.error("Failed to save property order", e);
+        console.error("Property persistence failed", e);
     } finally {
         setDraggedPropId(null);
         setIsSavingOrder(false);
@@ -308,7 +309,7 @@ export const WorkflowView: React.FC = () => {
           </div>
           {isSavingOrder && (
               <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold animate-pulse">
-                  <Loader2 size={14} className="animate-spin" /> Zapisywanie kolejności...
+                  <Loader2 size={14} className="animate-spin" /> Aktualizuję bazę...
               </div>
           )}
         </div>
@@ -334,20 +335,20 @@ export const WorkflowView: React.FC = () => {
                   onDrop={onTaskDrop}
                   className={`p-3 bg-slate-900 border-b border-border border-r border-slate-800 w-[250px] group transition-all cursor-grab active:cursor-grabbing ${!task.is_active ? 'opacity-40 grayscale' : ''} ${draggedTaskId === task.id ? 'bg-indigo-900/60 border-indigo-400' : ''}`}
                 >
-                   <div className="flex flex-col gap-2">
+                   <div className="flex flex-col gap-2 pointer-events-none">
                        <div className="flex justify-between items-center text-white text-sm">
-                           <div className="flex items-center gap-2 truncate pointer-events-none">
+                           <div className="flex items-center gap-2 truncate">
                                <GripVertical size={14} className="text-slate-600 flex-shrink-0" />
                                <span className="truncate font-bold" title={task.title}>{task.title}</span>
                            </div>
-                           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-auto">
                                <button onClick={(e) => { e.stopPropagation(); handleToggleTaskActive(task.id, task.is_active); }} className="p-1 hover:text-indigo-400 transition-colors">
                                    {task.is_active ? <Eye size={14} /> : <EyeOff size={14} />}
                                </button>
                                <button onClick={(e) => { e.stopPropagation(); handleDeleteTask(task.id); }} className="p-1 hover:text-red-400 transition-colors"><Trash2 size={14} /></button>
                            </div>
                        </div>
-                       <div className="text-[9px] uppercase font-bold text-slate-600 tracking-widest text-center pointer-events-none">Chwyć by przesunąć</div>
+                       <div className="text-[9px] uppercase font-bold text-slate-600 tracking-widest text-center">Chwyć by przesunąć</div>
                    </div>
                 </th>
               ))}
