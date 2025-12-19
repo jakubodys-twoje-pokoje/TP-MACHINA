@@ -28,14 +28,8 @@ export const WorkflowView: React.FC = () => {
   const [isSavingOrder, setIsSavingOrder] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
-  // Ref for persistence logic
-  const tasksRef = useRef<WorkflowTask[]>([]);
-  const isSavingRef = useRef(false);
-  
-  // Sync tasksRef with tasks state
-  useEffect(() => { tasksRef.current = tasks; }, [tasks]);
-  // Sync isSavingRef with isSavingOrder state
-  useEffect(() => { isSavingRef.current = isSavingOrder; }, [isSavingOrder]);
+  // Guard for Realtime updates to prevent "jumping" back to old state during/after save
+  const ignoreUpdatesUntil = useRef<number>(0);
 
   const [localProperties, setLocalProperties] = useState<Property[]>([]);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
@@ -57,20 +51,19 @@ export const WorkflowView: React.FC = () => {
   useEffect(() => {
     fetchWorkflowData();
 
-    // Stable realtime channel - no dependency on isSavingOrder to prevent flickering
-    const channel = supabase.channel('workflow-realtime-v7')
+    const channel = supabase.channel('workflow-realtime-v8')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => {
-          if (!isSavingRef.current) fetchTasks();
+          if (Date.now() > ignoreUpdatesUntil.current) fetchTasks();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => fetchStatuses())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_entries' }, (p) => handleEntryRealtime(p))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'properties' }, () => {
-          if (!isSavingRef.current) fetchProperties();
+          if (Date.now() > ignoreUpdatesUntil.current) fetchProperties();
       })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, []); // Run only once
+  }, []);
 
   useEffect(() => {
     if (!draggedPropId) {
@@ -143,38 +136,39 @@ export const WorkflowView: React.FC = () => {
     e.preventDefault();
     if (!draggedTaskId || draggedTaskId === targetId) return;
     
-    const currentTasks = [...tasks];
-    const draggedIdx = currentTasks.findIndex(t => t.id === draggedTaskId);
-    const targetIdx = currentTasks.findIndex(t => t.id === targetId);
-    if (draggedIdx === -1 || targetIdx === -1) return;
+    setTasks(prev => {
+        const draggedIdx = prev.findIndex(t => t.id === draggedTaskId);
+        const targetIdx = prev.findIndex(t => t.id === targetId);
+        if (draggedIdx === -1 || targetIdx === -1) return prev;
 
-    const [removed] = currentTasks.splice(draggedIdx, 1);
-    currentTasks.splice(targetIdx, 0, removed);
-    
-    // Update locally for smooth UI
-    setTasks(currentTasks.map((t, i) => ({ ...t, position: i })));
+        const newTasks = [...prev];
+        const [removed] = newTasks.splice(draggedIdx, 1);
+        newTasks.splice(targetIdx, 0, removed);
+        
+        return newTasks.map((t, i) => ({ ...t, position: i }));
+    });
   };
 
   const onTaskDrop = async () => {
     if (!draggedTaskId) return;
     setIsSavingOrder(true);
+    // Block realtime updates for 1.5 seconds to let DB settle
+    ignoreUpdatesUntil.current = Date.now() + 1500;
+
     try {
-        // Use the current state captured in the ref
-        const finalTasks = tasksRef.current.map((t, i) => ({
-            ...t,
+        const updates = tasks.map((t, i) => ({
+            id: t.id,
             position: i
         }));
         
-        // Single batch upsert
         const { error } = await supabase
             .from('workflow_tasks')
-            .upsert(finalTasks, { onConflict: 'id' });
+            .upsert(updates, { onConflict: 'id' });
             
         if (error) throw error;
-        console.log("Kolejność kolumn zapisana pomyślnie.");
     } catch (e) {
-        console.error("Column save failed:", e);
-        fetchTasks(); // Restore from server on error
+        console.error("Persistence failed:", e);
+        fetchTasks();
     } finally {
         setDraggedTaskId(null);
         setIsSavingOrder(false);
@@ -188,33 +182,37 @@ export const WorkflowView: React.FC = () => {
     e.preventDefault();
     if (!draggedPropId || draggedPropId === targetId) return;
 
-    const list = [...localProperties];
-    const draggedIdx = list.findIndex(p => p.id === draggedPropId);
-    const targetIdx = list.findIndex(p => p.id === targetId);
-    if (draggedIdx === -1 || targetIdx === -1) return;
+    setLocalProperties(prev => {
+        const list = [...prev];
+        const draggedIdx = list.findIndex(p => p.id === draggedPropId);
+        const targetIdx = list.findIndex(p => p.id === targetId);
+        if (draggedIdx === -1 || targetIdx === -1) return prev;
 
-    const [removed] = list.splice(draggedIdx, 1);
-    list.splice(targetIdx, 0, removed);
-    
-    setLocalProperties(list.map((p, i) => ({ ...p, workflow_position: i })));
+        const [removed] = list.splice(draggedIdx, 1);
+        list.splice(targetIdx, 0, removed);
+        
+        return list.map((p, i) => ({ ...p, workflow_position: i }));
+    });
   };
 
   const onPropDrop = async () => {
     if (!draggedPropId) return;
     setIsSavingOrder(true);
+    ignoreUpdatesUntil.current = Date.now() + 1500;
+
     try {
-        const finalProps = localProperties.map((p, i) => ({
-            ...p,
+        const updates = localProperties.map((p, i) => ({
+            id: p.id,
             workflow_position: i
         }));
         
         const { error } = await supabase
             .from('properties')
-            .upsert(finalProps, { onConflict: 'id' });
+            .upsert(updates, { onConflict: 'id' });
             
         if (error) throw error;
     } catch (e) {
-        console.error("Row save failed:", e);
+        console.error("Row persistence failed:", e);
     } finally {
         setDraggedPropId(null);
         setIsSavingOrder(false);
@@ -338,8 +336,8 @@ export const WorkflowView: React.FC = () => {
             <input type="text" placeholder="Szukaj obiektu..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg py-2.5 pl-10 pr-4 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500 transition-all" />
           </div>
           {isSavingOrder && (
-              <div className="flex items-center gap-2 text-green-400 text-xs font-bold animate-pulse">
-                  <Loader2 size={14} className="animate-spin" /> Zapis trwały...
+              <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold animate-pulse">
+                  <Loader2 size={14} className="animate-spin" /> Synchronizacja z bazą...
               </div>
           )}
         </div>
