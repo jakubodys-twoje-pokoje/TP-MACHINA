@@ -209,15 +209,26 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const name = room.title || room.name || `Pokój ${externalId}`;
         const type = roomType.title || roomType.name || 'Standard';
 
-        // Oblicz capacity na podstawie łóżek
+        // Liczba łóżek
         const single = parseInt(room.single || '0');
         const double = parseInt(room.double || '0');
         const sofa = parseInt(room.sofa || '0');
-        const capacity = single + (double * 2) + sofa;
+        const sofaSingle = parseInt(room.sofa_single || '0');
+        const capacity = single + (double * 2) + sofa + sofaSingle;
 
+        // Dane techniczne
         const area = room.area ? parseInt(room.area) : null;
+        const maxAdults = room.max_adults ? parseInt(room.max_adults) : null;
+        const bathroomCount = room.bathroom_cnt ? parseInt(room.bathroom_cnt) : null;
+        const floorNum = room.floor ? parseInt(room.floor) : null;
 
-        console.log('Importing:', { externalId, name, type, capacity, area });
+        // Opis i udogodnienia
+        const description = room.description || room.advert || null;
+        const facilities = room.facilities || null;
+        const photoUrl = room.photo || null;
+        const photos = room.photos || null;
+
+        console.log('Importing:', { externalId, name, type, capacity, area, floor: floorNum, bathrooms: bathroomCount });
 
         if (externalId && name) {
           const { data: existingUnit } = await supabase
@@ -236,7 +247,17 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
               area: area,
               external_id: String(externalId),
               external_type_id: String(externalTypeId),
-              description: `Import z Hotres (OID: ${oid})`
+              description: description,
+              beds_single: single,
+              beds_double: double,
+              beds_sofa: sofa,
+              beds_sofa_single: sofaSingle,
+              max_adults: maxAdults,
+              bathroom_count: bathroomCount,
+              floor: floorNum,
+              facilities: facilities,
+              photo_url: photoUrl,
+              photos: photos
             });
             console.log(`Imported room: ${name} (ID: ${externalId}, Type: ${externalTypeId})`);
           } else {
