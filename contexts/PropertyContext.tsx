@@ -203,12 +203,17 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       console.log(`Processing ${rooms.length} rooms for type ${typeId}`);
 
       for (const room of rooms) {
+        console.log('Processing room object:', room);
+        console.log('Room keys:', Object.keys(room));
+
         const externalId = room.room_id || room.id;
         const externalTypeId = typeId;
         const name = room.title || room.name || `Pokój ${externalId}`;
         const type = roomType.title || roomType.name || 'Standard';
         const capacity = parseInt(room.persons || room.capacity || '2');
         const area = room.area ? parseInt(room.area) : null;
+
+        console.log('Extracted values:', { externalId, externalTypeId, name, type, capacity, area });
 
         if (externalId && name) {
           const { data: existingUnit } = await supabase
