@@ -29,9 +29,27 @@ const App: React.FC = () => {
   };
 
   const subscribeToPush = async (userId: string) => {
-    if (!('serviceWorker' in navigator) || !window.PushManager) return;
+    if (!('serviceWorker' in navigator) || !window.PushManager) {
+      console.log("Push notifications not supported");
+      return;
+    }
     try {
+      // Check if service worker is registered
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      if (registrations.length === 0) {
+        console.log("No service worker registered, skipping push subscription");
+        return;
+      }
+
       const registration = await navigator.serviceWorker.ready;
+
+      // Check if already subscribed
+      const existingSubscription = await registration.pushManager.getSubscription();
+      if (existingSubscription) {
+        console.log("Already subscribed to push notifications");
+        return;
+      }
+
       const subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
@@ -41,8 +59,11 @@ const App: React.FC = () => {
         subscription: subscription
       });
       if (error) console.error("Subscription save error:", error);
-    } catch (error) {
-      console.error("Push subscription failed:", error);
+    } catch (error: any) {
+      // Only log if it's not a registration error (which is expected without SW)
+      if (error.name !== 'AbortError' && error.name !== 'InvalidStateError') {
+        console.error("Push subscription failed:", error);
+      }
     }
   };
 

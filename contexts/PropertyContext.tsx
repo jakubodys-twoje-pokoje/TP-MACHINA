@@ -123,17 +123,41 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const fetchWithProxy = useCallback(async (targetUrl: string): Promise<string> => {
     const noCacheUrl = `${targetUrl}&_t=${Date.now()}`;
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(noCacheUrl)}`;
-    
+
+    // Try multiple proxy services in order
+    const proxyServices = [
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(noCacheUrl)}`,
+      `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(noCacheUrl)}`,
+      `https://corsproxy.io/?${encodeURIComponent(noCacheUrl)}`
+    ];
+
+    for (const proxyUrl of proxyServices) {
+      try {
+        const res = await fetch(proxyUrl, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/xml, text/xml, */*'
+          }
+        });
+        if (res.ok) {
+          const text = await res.text();
+          if (text && text.length > 0) {
+            return text;
+          }
+        }
+      } catch (e: any) {
+        console.warn(`Proxy ${proxyUrl} failed:`, e.message);
+      }
+    }
+
+    // If all proxies fail, try direct fetch (will likely fail due to CORS)
+    console.warn("All proxies failed, trying direct fetch...");
     try {
-        const res = await fetch(proxyUrl);
-        if (!res.ok) throw new Error(`Proxy HTTP error: ${res.status}`);
-        return await res.text();
+      const resDirect = await fetch(noCacheUrl);
+      if (!resDirect.ok) throw new Error(`Direct HTTP error: ${resDirect.status}`);
+      return await resDirect.text();
     } catch (e: any) {
-        console.warn("Proxy failed, trying direct fetch...");
-        const resDirect = await fetch(noCacheUrl);
-        if (!resDirect.ok) throw new Error(`Direct HTTP error: ${resDirect.status}`);
-        return await resDirect.text();
+      throw new Error(`All proxy attempts failed. Direct fetch also failed: ${e.message}`);
     }
   }, []);
 
