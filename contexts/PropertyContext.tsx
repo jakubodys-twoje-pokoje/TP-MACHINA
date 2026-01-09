@@ -203,17 +203,21 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       console.log(`Processing ${rooms.length} rooms for type ${typeId}`);
 
       for (const room of rooms) {
-        console.log('Processing room object:', room);
-        console.log('Room keys:', Object.keys(room));
-
-        const externalId = room.room_id || room.id;
+        // W API Hotres type_id jest unikalnym identyfikatorem pokoju
+        const externalId = room.type_id || typeId;
         const externalTypeId = typeId;
         const name = room.title || room.name || `Pokój ${externalId}`;
         const type = roomType.title || roomType.name || 'Standard';
-        const capacity = parseInt(room.persons || room.capacity || '2');
+
+        // Oblicz capacity na podstawie łóżek
+        const single = parseInt(room.single || '0');
+        const double = parseInt(room.double || '0');
+        const sofa = parseInt(room.sofa || '0');
+        const capacity = single + (double * 2) + sofa;
+
         const area = room.area ? parseInt(room.area) : null;
 
-        console.log('Extracted values:', { externalId, externalTypeId, name, type, capacity, area });
+        console.log('Importing:', { externalId, name, type, capacity, area });
 
         if (externalId && name) {
           const { data: existingUnit } = await supabase
