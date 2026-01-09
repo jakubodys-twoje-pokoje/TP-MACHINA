@@ -159,47 +159,72 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   }, []);
 
   const importFromHotres = useCallback(async (oid: string, propertyId: string) => {
-    const xmlText = await fetchWithProxy(`https://hotres.pl/xml/cennik_xml.php?oid=${oid}&kod_waluty=PLN`);
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+    const apiUser = "admin@twojepokoje.com.pl";
+    const apiPass = "Admin123@@";
 
-    const rooms = Array.from(xmlDoc.getElementsByTagName("pokoj"));
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) throw new Error("Musisz być zalogowany");
 
-    for (const room of rooms) {
-      const externalId = room.getElementsByTagName("id_pokoju")[0]?.textContent;
-      const externalTypeId = room.getElementsByTagName("id_typu")[0]?.textContent || null;
-      const name = room.getElementsByTagName("nazwa")[0]?.textContent;
-      const type = room.getElementsByTagName("typ")[0]?.textContent || 'Standard';
-      
-      const structure = room.getElementsByTagName("struktura")[0];
-      let capacity = 2;
-      let area = null;
-      if (structure) {
-        capacity = parseInt(structure.getElementsByTagName("osob")[0]?.textContent || "2");
-        area = parseInt(structure.getElementsByTagName("metraz")[0]?.textContent || "0");
-      }
+    // 1. Pobierz informacje o obiekcie (opcjonalne, dla logu)
+    const objectUrl = `https://panel.hotres.pl/api_object?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
+    const objectResponse = await fetchWithProxy(objectUrl);
+    const objectData = JSON.parse(objectResponse);
+    console.log('Object info:', objectData);
 
-      if (externalId && name) {
-        const { data: existingUnit } = await supabase
-          .from('units')
-          .select('id')
-          .eq('property_id', propertyId)
-          .eq('external_id', externalId)
-          .single();
+    // 2. Pobierz typy pokoi
+    const roomTypesUrl = `https://panel.hotres.pl/api_roomstypes?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
+    const roomTypesResponse = await fetchWithProxy(roomTypesUrl);
+    const roomTypes = JSON.parse(roomTypesResponse);
 
-        if (!existingUnit) {
-          await supabase.from('units').insert({
-            property_id: propertyId,
-            name: name,
-            type: type,
-            capacity: capacity,
-            area: area,
-            external_id: externalId,
-            external_type_id: externalTypeId,
-            description: `Import z Hotres (OID: ${oid})`
-          });
+    if (!Array.isArray(roomTypes)) {
+      throw new Error('Nieprawidłowy format odpowiedzi z api_roomstypes');
+    }
+
+    console.log(`Found ${roomTypes.length} room types`);
+
+    // 3. Dla każdego typu pokoju, pobierz szczegóły
+    for (const roomType of roomTypes) {
+      const typeId = roomType.type_id;
+      if (!typeId) continue;
+
+      const roomTypeUrl = `https://panel.hotres.pl/api_roomtype?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl&type_id=${typeId}`;
+      const roomTypeResponse = await fetchWithProxy(roomTypeUrl);
+      const roomTypeData = JSON.parse(roomTypeResponse);
+
+      // roomTypeData może zawierać tablicę pokoi lub pojedynczy pokój
+      const rooms = Array.isArray(roomTypeData) ? roomTypeData : [roomTypeData];
+
+      for (const room of rooms) {
+        const externalId = room.room_id || room.id;
+        const externalTypeId = typeId;
+        const name = room.title || room.name || `Pokój ${externalId}`;
+        const type = roomType.title || roomType.name || 'Standard';
+        const capacity = parseInt(room.persons || room.capacity || '2');
+        const area = room.area ? parseInt(room.area) : null;
+
+        if (externalId && name) {
+          const { data: existingUnit } = await supabase
+            .from('units')
+            .select('id')
+            .eq('property_id', propertyId)
+            .eq('external_id', String(externalId))
+            .single();
+
+          if (!existingUnit) {
+            await supabase.from('units').insert({
+              property_id: propertyId,
+              name: name,
+              type: type,
+              capacity: capacity,
+              area: area,
+              external_id: String(externalId),
+              external_type_id: String(externalTypeId),
+              description: `Import z Hotres (OID: ${oid})`
+            });
+            console.log(`Imported room: ${name} (ID: ${externalId}, Type: ${externalTypeId})`);
+          } else {
+            console.log(`Room already exists: ${name} (ID: ${externalId})`);
+          }
         }
       }
     }
