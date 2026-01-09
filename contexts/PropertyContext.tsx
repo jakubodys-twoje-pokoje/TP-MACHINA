@@ -122,31 +122,38 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   }, []);
 
   const fetchWithProxy = useCallback(async (targetUrl: string): Promise<string> => {
-    const noCacheUrl = `${targetUrl}&_t=${Date.now()}`;
-
     try {
-      const res = await fetch(noCacheUrl, {
-        method: 'GET',
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not authenticated');
+
+      const functionUrl = 'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/hotres-proxy';
+
+      const res = await fetch(functionUrl, {
+        method: 'POST',
         headers: {
-          'Accept': 'application/xml, text/xml, application/json, */*',
-          'Cache-Control': 'no-cache'
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
         },
-        mode: 'cors',
-        credentials: 'omit'
+        body: JSON.stringify({ url: targetUrl })
       });
 
       if (!res.ok) {
-        throw new Error(`HTTP error: ${res.status} ${res.statusText}`);
+        throw new Error(`Proxy error: ${res.status} ${res.statusText}`);
       }
 
-      const text = await res.text();
-      if (!text || text.length === 0) {
+      const json = await res.json();
+
+      if (json.error) {
+        throw new Error(json.error);
+      }
+
+      if (!json.data || json.data.length === 0) {
         throw new Error('Empty response from server');
       }
 
-      return text;
+      return json.data;
     } catch (e: any) {
-      console.error(`Direct fetch failed for ${targetUrl}:`, e.message);
+      console.error(`Fetch via proxy failed for ${targetUrl}:`, e.message);
       throw new Error(`Failed to fetch data: ${e.message}`);
     }
   }, []);
