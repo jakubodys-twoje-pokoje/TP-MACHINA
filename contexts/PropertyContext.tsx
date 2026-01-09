@@ -124,40 +124,30 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   const fetchWithProxy = useCallback(async (targetUrl: string): Promise<string> => {
     const noCacheUrl = `${targetUrl}&_t=${Date.now()}`;
 
-    // Try multiple proxy services in order
-    const proxyServices = [
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(noCacheUrl)}`,
-      `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(noCacheUrl)}`,
-      `https://corsproxy.io/?${encodeURIComponent(noCacheUrl)}`
-    ];
-
-    for (const proxyUrl of proxyServices) {
-      try {
-        const res = await fetch(proxyUrl, {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/xml, text/xml, */*'
-          }
-        });
-        if (res.ok) {
-          const text = await res.text();
-          if (text && text.length > 0) {
-            return text;
-          }
-        }
-      } catch (e: any) {
-        console.warn(`Proxy ${proxyUrl} failed:`, e.message);
-      }
-    }
-
-    // If all proxies fail, try direct fetch (will likely fail due to CORS)
-    console.warn("All proxies failed, trying direct fetch...");
     try {
-      const resDirect = await fetch(noCacheUrl);
-      if (!resDirect.ok) throw new Error(`Direct HTTP error: ${resDirect.status}`);
-      return await resDirect.text();
+      const res = await fetch(noCacheUrl, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/xml, text/xml, application/json, */*',
+          'Cache-Control': 'no-cache'
+        },
+        mode: 'cors',
+        credentials: 'omit'
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP error: ${res.status} ${res.statusText}`);
+      }
+
+      const text = await res.text();
+      if (!text || text.length === 0) {
+        throw new Error('Empty response from server');
+      }
+
+      return text;
     } catch (e: any) {
-      throw new Error(`All proxy attempts failed. Direct fetch also failed: ${e.message}`);
+      console.error(`Direct fetch failed for ${targetUrl}:`, e.message);
+      throw new Error(`Failed to fetch data: ${e.message}`);
     }
   }, []);
 
