@@ -185,14 +185,22 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     // 3. Dla każdego typu pokoju, pobierz szczegóły
     for (const roomType of roomTypes) {
       const typeId = roomType.type_id;
-      if (!typeId) continue;
+      if (!typeId) {
+        console.warn('Skipping room type without type_id:', roomType);
+        continue;
+      }
+
+      console.log(`Fetching details for room type ${typeId}:`, roomType);
 
       const roomTypeUrl = `https://panel.hotres.pl/api_roomtype?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl&type_id=${typeId}`;
       const roomTypeResponse = await fetchWithProxy(roomTypeUrl);
       const roomTypeData = JSON.parse(roomTypeResponse);
 
+      console.log(`Room type ${typeId} data:`, roomTypeData);
+
       // roomTypeData może zawierać tablicę pokoi lub pojedynczy pokój
       const rooms = Array.isArray(roomTypeData) ? roomTypeData : [roomTypeData];
+      console.log(`Processing ${rooms.length} rooms for type ${typeId}`);
 
       for (const room of rooms) {
         const externalId = room.room_id || room.id;
