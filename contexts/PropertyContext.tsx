@@ -176,7 +176,19 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     console.log('🔍 DEBUG objectData.facilities type:', typeof objectData.facilities);
     console.log('🔍 DEBUG objectData.facilities isArray:', Array.isArray(objectData.facilities));
     console.log('🔍 DEBUG objectData.facilities value:', objectData.facilities);
-    console.log('🔍 DEBUG All objectData keys:', Object.keys(objectData));
+    console.log('🔍 DEBUG All objectData keys:', Object.keys(objectData).join(', '));
+
+    // Szukaj facilities gdzie indziej w strukturze
+    const possibleFacilityFields = Object.keys(objectData).filter(k =>
+      k.toLowerCase().includes('facilit') ||
+      k.toLowerCase().includes('equipment') ||
+      k.toLowerCase().includes('amenity') ||
+      k.toLowerCase().includes('udog')
+    );
+    console.log('🔍 Possible facility-related fields:', possibleFacilityFields);
+    possibleFacilityFields.forEach(field => {
+      console.log(`🔍 ${field}:`, objectData[field]);
+    });
 
     const facilityMap = new Map<string, string>();
     if (objectData.facilities && Array.isArray(objectData.facilities)) {
@@ -385,7 +397,19 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     console.log('🔍 DEBUG objectData.facilities type:', typeof objectData.facilities);
     console.log('🔍 DEBUG objectData.facilities isArray:', Array.isArray(objectData.facilities));
     console.log('🔍 DEBUG objectData.facilities value:', objectData.facilities);
-    console.log('🔍 DEBUG All objectData keys:', Object.keys(objectData));
+    console.log('🔍 DEBUG All objectData keys:', Object.keys(objectData).join(', '));
+
+    // Szukaj facilities gdzie indziej w strukturze
+    const possibleFacilityFields = Object.keys(objectData).filter(k =>
+      k.toLowerCase().includes('facilit') ||
+      k.toLowerCase().includes('equipment') ||
+      k.toLowerCase().includes('amenity') ||
+      k.toLowerCase().includes('udog')
+    );
+    console.log('🔍 Possible facility-related fields:', possibleFacilityFields);
+    possibleFacilityFields.forEach(field => {
+      console.log(`🔍 ${field}:`, objectData[field]);
+    });
 
     const facilityMap = new Map<string, string>();
     if (objectData.facilities && Array.isArray(objectData.facilities)) {
