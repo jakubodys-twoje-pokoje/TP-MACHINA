@@ -200,6 +200,22 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       propertyUpdateData.maps_link = `https://www.google.com/maps?q=${objectData.google_x},${objectData.google_y}`;
     }
 
+    // Konwertuj facility IDs na nazwy dla obiektu (tak samo jak dla pokoi)
+    const objectFacilitiesField = objectData.object_facilities || objectData.equipment || objectData.amenities;
+    if (objectFacilitiesField && typeof objectFacilitiesField === 'string') {
+      const facilityIds = objectFacilitiesField.split(',').map((id: string) => id.trim());
+      const facilityNames = facilityIds
+        .map((id: string) => facilityMap.get(id))
+        .filter((name): name is string => !!name);
+
+      if (facilityNames.length > 0) {
+        propertyUpdateData.amenities = JSON.stringify(facilityNames);
+        console.log(`✓ Mapped ${facilityNames.length} object amenities:`, facilityNames);
+      }
+    } else {
+      console.log('Available objectData keys:', Object.keys(objectData).filter(k => k !== 'facilities' && k !== 'currencies' && k !== 'countries'));
+    }
+
     if (Object.keys(propertyUpdateData).length > 0) {
       const { error: updateError } = await supabase
         .from('properties')
