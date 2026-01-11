@@ -169,34 +169,29 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     // 1. Pobierz informacje o obiekcie wraz ze słownikiem facilities
     const objectUrl = `https://panel.hotres.pl/api_object?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
     const objectResponse = await fetchWithProxy(objectUrl);
-    const objectData = JSON.parse(objectResponse);
-    console.log('Object info:', objectData);
+    let objectData = JSON.parse(objectResponse);
+
+    // API może zwracać zagnieżdżony obiekt - sprawdź czy to wrapper
+    if (objectData.data) {
+      console.log('Found nested data, unwrapping...');
+      objectData = objectData.data;
+    }
+
+    console.log('Object info keys:', Object.keys(objectData));
 
     // Tworzę mapę facility ID -> nazwa
-    console.log('🔍 DEBUG objectData.facilities type:', typeof objectData.facilities);
-    console.log('🔍 DEBUG objectData.facilities isArray:', Array.isArray(objectData.facilities));
-    console.log('🔍 DEBUG objectData.facilities value:', objectData.facilities);
-    console.log('🔍 DEBUG All objectData keys:', Object.keys(objectData).join(', '));
-
-    // Szukaj facilities gdzie indziej w strukturze
-    const possibleFacilityFields = Object.keys(objectData).filter(k =>
-      k.toLowerCase().includes('facilit') ||
-      k.toLowerCase().includes('equipment') ||
-      k.toLowerCase().includes('amenity') ||
-      k.toLowerCase().includes('udog')
-    );
-    console.log('🔍 Possible facility-related fields:', possibleFacilityFields);
-    possibleFacilityFields.forEach(field => {
-      console.log(`🔍 ${field}:`, objectData[field]);
-    });
-
     const facilityMap = new Map<string, string>();
     if (objectData.facilities && Array.isArray(objectData.facilities)) {
       objectData.facilities.forEach((facility: any) => {
-        facilityMap.set(facility.id, facility.code);
+        if (facility.id && facility.code) {
+          facilityMap.set(String(facility.id), facility.code);
+        }
       });
+      console.log(`✓ Loaded ${facilityMap.size} facility mappings`);
+    } else {
+      console.error('❌ No facilities array found in objectData');
+      console.log('Available keys:', Object.keys(objectData));
     }
-    console.log(`Loaded ${facilityMap.size} facility mappings`);
 
     // Aktualizuj property danymi z api_object
     const propertyUpdateData: any = {};
@@ -218,21 +213,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       propertyUpdateData.maps_link = `https://www.google.com/maps?q=${objectData.google_x},${objectData.google_y}`;
     }
 
-    // Konwertuj facility IDs na nazwy dla obiektu (tak samo jak dla pokoi)
-    const objectFacilitiesField = objectData.object_facilities || objectData.equipment || objectData.amenities;
-    if (objectFacilitiesField && typeof objectFacilitiesField === 'string') {
-      const facilityIds = objectFacilitiesField.split(',').map((id: string) => id.trim());
-      const facilityNames = facilityIds
-        .map((id: string) => facilityMap.get(id))
-        .filter((name): name is string => !!name);
-
-      if (facilityNames.length > 0) {
-        propertyUpdateData.amenities = JSON.stringify(facilityNames);
-        console.log(`✓ Mapped ${facilityNames.length} object amenities:`, facilityNames);
-      }
-    } else {
-      console.log('Available objectData keys:', Object.keys(objectData).filter(k => k !== 'facilities' && k !== 'currencies' && k !== 'countries'));
-    }
+    // Property amenities - pominięte, skupiamy się tylko na udogodnieniach pokoi
 
     if (Object.keys(propertyUpdateData).length > 0) {
       const { error: updateError } = await supabase
@@ -390,34 +371,29 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     // Pobierz informacje o obiekcie wraz ze słownikiem facilities
     const objectUrl = `https://panel.hotres.pl/api_object?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
     const objectResponse = await fetchWithProxy(objectUrl);
-    const objectData = JSON.parse(objectResponse);
-    console.log('Object info:', objectData);
+    let objectData = JSON.parse(objectResponse);
+
+    // API może zwracać zagnieżdżony obiekt - sprawdź czy to wrapper
+    if (objectData.data) {
+      console.log('Found nested data, unwrapping...');
+      objectData = objectData.data;
+    }
+
+    console.log('Object info keys:', Object.keys(objectData));
 
     // Tworzę mapę facility ID -> nazwa
-    console.log('🔍 DEBUG objectData.facilities type:', typeof objectData.facilities);
-    console.log('🔍 DEBUG objectData.facilities isArray:', Array.isArray(objectData.facilities));
-    console.log('🔍 DEBUG objectData.facilities value:', objectData.facilities);
-    console.log('🔍 DEBUG All objectData keys:', Object.keys(objectData).join(', '));
-
-    // Szukaj facilities gdzie indziej w strukturze
-    const possibleFacilityFields = Object.keys(objectData).filter(k =>
-      k.toLowerCase().includes('facilit') ||
-      k.toLowerCase().includes('equipment') ||
-      k.toLowerCase().includes('amenity') ||
-      k.toLowerCase().includes('udog')
-    );
-    console.log('🔍 Possible facility-related fields:', possibleFacilityFields);
-    possibleFacilityFields.forEach(field => {
-      console.log(`🔍 ${field}:`, objectData[field]);
-    });
-
     const facilityMap = new Map<string, string>();
     if (objectData.facilities && Array.isArray(objectData.facilities)) {
       objectData.facilities.forEach((facility: any) => {
-        facilityMap.set(facility.id, facility.code);
+        if (facility.id && facility.code) {
+          facilityMap.set(String(facility.id), facility.code);
+        }
       });
+      console.log(`✓ Loaded ${facilityMap.size} facility mappings`);
+    } else {
+      console.error('❌ No facilities array found in objectData');
+      console.log('Available keys:', Object.keys(objectData));
     }
-    console.log(`Loaded ${facilityMap.size} facility mappings`);
 
     // Aktualizuj property danymi z api_object
     const propertyUpdateData: any = {};
@@ -439,21 +415,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       propertyUpdateData.maps_link = `https://www.google.com/maps?q=${objectData.google_x},${objectData.google_y}`;
     }
 
-    // Konwertuj facility IDs na nazwy dla obiektu
-    const objectFacilitiesField = objectData.object_facilities || objectData.equipment || objectData.amenities;
-    if (objectFacilitiesField && typeof objectFacilitiesField === 'string') {
-      const facilityIds = objectFacilitiesField.split(',').map((id: string) => id.trim());
-      const facilityNames = facilityIds
-        .map((id: string) => facilityMap.get(id))
-        .filter((name): name is string => !!name);
-
-      if (facilityNames.length > 0) {
-        propertyUpdateData.amenities = JSON.stringify(facilityNames);
-        console.log(`✓ Mapped ${facilityNames.length} object amenities:`, facilityNames);
-      }
-    } else {
-      console.log('Available objectData keys:', Object.keys(objectData).filter(k => k !== 'facilities' && k !== 'currencies' && k !== 'countries'));
-    }
+    // Property amenities - pominięte, skupiamy się tylko na udogodnieniach pokoi
 
     if (Object.keys(propertyUpdateData).length > 0) {
       const { error: updateError } = await supabase
