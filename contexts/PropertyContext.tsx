@@ -165,11 +165,20 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Musisz być zalogowany");
 
-    // 1. Pobierz informacje o obiekcie (opcjonalne, dla logu)
+    // 1. Pobierz informacje o obiekcie wraz ze słownikiem facilities
     const objectUrl = `https://panel.hotres.pl/api_object?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
     const objectResponse = await fetchWithProxy(objectUrl);
     const objectData = JSON.parse(objectResponse);
     console.log('Object info:', objectData);
+
+    // Tworzę mapę facility ID -> nazwa
+    const facilityMap = new Map<string, string>();
+    if (objectData.facilities && Array.isArray(objectData.facilities)) {
+      objectData.facilities.forEach((facility: any) => {
+        facilityMap.set(facility.id, facility.code);
+      });
+    }
+    console.log(`Loaded ${facilityMap.size} facility mappings`);
 
     // 2. Pobierz typy pokoi
     const roomTypesUrl = `https://panel.hotres.pl/api_roomstypes?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
@@ -224,7 +233,18 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
         // Opis i udogodnienia
         const description = room.description || room.advert || null;
-        const facilities = room.facilities || null;
+
+        // Konwertuj facility IDs na nazwy
+        let facilities = null;
+        if (room.facilities && typeof room.facilities === 'string') {
+          const facilityIds = room.facilities.split(',').map((id: string) => id.trim());
+          const facilityNames = facilityIds
+            .map((id: string) => facilityMap.get(id))
+            .filter((name): name is string => !!name); // filtruj undefined
+
+          facilities = facilityNames.length > 0 ? JSON.stringify(facilityNames) : null;
+        }
+
         const photoUrl = room.photo || null;
         const photos = room.photos || null;
 
