@@ -166,32 +166,31 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Musisz być zalogowany");
 
-    // 1. Pobierz informacje o obiekcie wraz ze słownikiem facilities
+    // 1. Pobierz informacje o obiekcie (do aktualizacji danych property)
     const objectUrl = `https://panel.hotres.pl/api_object?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
     const objectResponse = await fetchWithProxy(objectUrl);
-    let objectData = JSON.parse(objectResponse);
+    const objectData = JSON.parse(objectResponse);
 
-    // API może zwracać zagnieżdżony obiekt - sprawdź czy to wrapper
-    if (objectData.data) {
-      console.log('Found nested data, unwrapping...');
-      objectData = objectData.data;
-    }
-
-    console.log('Object info keys:', Object.keys(objectData));
-
-    // Tworzę mapę facility ID -> nazwa
-    const facilityMap = new Map<string, string>();
-    if (objectData.facilities && Array.isArray(objectData.facilities)) {
-      objectData.facilities.forEach((facility: any) => {
-        if (facility.id && facility.code) {
-          facilityMap.set(String(facility.id), facility.code);
-        }
-      });
-      console.log(`✓ Loaded ${facilityMap.size} facility mappings`);
-    } else {
-      console.error('❌ No facilities array found in objectData');
-      console.log('Available keys:', Object.keys(objectData));
-    }
+    // Tworzę mapę facility ID -> nazwa (zahardkodowane ze słownika Hotres)
+    const facilityMap = new Map<string, string>([
+      ["3", "TV"], ["1", "WiFi"], ["10", "Parking darmowy"], ["22", "Balkon"],
+      ["69", "Taras"], ["76", "Prysznic"], ["75", "Wanna"], ["71", "netflix"],
+      ["2", "Kuchnia, aneks"], ["24", "Czajnik"], ["7", "Klimatyzacja"], ["16", "Kominek"],
+      ["70", "Talerze"], ["5", "Szampon, mydło"], ["17", "Żelazko"], ["77", "Widok na ogród"],
+      ["64", "Bezpośrednio przy plaży"], ["60", "Widok na morze"], ["59", "Widok na morze / boczny"],
+      ["4", "Ręczniki"], ["15", "Winda"], ["65", "Kapcie"], ["78", "Basen odkryty"],
+      ["55", "Palenie zabronione"], ["58", "Sauna"], ["6", "Ogrzewanie"], ["52", "Siłownia"],
+      ["8", "Pralka"], ["68", "Szlafroki"], ["79", "Basen kryty"], ["9", "Suszarka do włosów"],
+      ["66", "Leżaki"], ["67", "Parawan"], ["63", "Sejf"], ["19", "Lodówka"],
+      ["12", "Akceptujemy zwierzęta"], ["13", "Palenie dozwolone"], ["23", "Ekspres do kawy"],
+      ["14", "Przyjazny niepełnosprawnym"], ["21", "Opiekacz, toster"], ["20", "Mikrofalówka"],
+      ["18", "Zmywarka"], ["57", "Jacuzzi"], ["85", "Widok na rzekę"], ["84", "Widok na miasto"],
+      ["83", "Widok na las"], ["86", "Parking płatny"], ["61", "Widok na góry / boczny"],
+      ["82", "Widok na jezioro"], ["74", "Meble ogrodowe"], ["73", "Grill"], ["72", "Piekarnik"],
+      ["62", "Widok na góry"], ["88", "Widok na basen"], ["89", "Widok na teren wewnętrzny"],
+      ["90", "Balia wodna"], ["91", "Nie akceptujemy zwierząt"], ["92", "Pościel"]
+    ]);
+    console.log(`✓ Loaded ${facilityMap.size} facility mappings`);
 
     // Aktualizuj property danymi z api_object
     const propertyUpdateData: any = {};
@@ -379,21 +378,26 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       objectData = objectData.data;
     }
 
-    console.log('Object info keys:', Object.keys(objectData));
-
-    // Tworzę mapę facility ID -> nazwa
-    const facilityMap = new Map<string, string>();
-    if (objectData.facilities && Array.isArray(objectData.facilities)) {
-      objectData.facilities.forEach((facility: any) => {
-        if (facility.id && facility.code) {
-          facilityMap.set(String(facility.id), facility.code);
-        }
-      });
-      console.log(`✓ Loaded ${facilityMap.size} facility mappings`);
-    } else {
-      console.error('❌ No facilities array found in objectData');
-      console.log('Available keys:', Object.keys(objectData));
-    }
+    // Tworzę mapę facility ID -> nazwa (zahardkodowane ze słownika Hotres)
+    const facilityMap = new Map<string, string>([
+      ["3", "TV"], ["1", "WiFi"], ["10", "Parking darmowy"], ["22", "Balkon"],
+      ["69", "Taras"], ["76", "Prysznic"], ["75", "Wanna"], ["71", "netflix"],
+      ["2", "Kuchnia, aneks"], ["24", "Czajnik"], ["7", "Klimatyzacja"], ["16", "Kominek"],
+      ["70", "Talerze"], ["5", "Szampon, mydło"], ["17", "Żelazko"], ["77", "Widok na ogród"],
+      ["64", "Bezpośrednio przy plaży"], ["60", "Widok na morze"], ["59", "Widok na morze / boczny"],
+      ["4", "Ręczniki"], ["15", "Winda"], ["65", "Kapcie"], ["78", "Basen odkryty"],
+      ["55", "Palenie zabronione"], ["58", "Sauna"], ["6", "Ogrzewanie"], ["52", "Siłownia"],
+      ["8", "Pralka"], ["68", "Szlafroki"], ["79", "Basen kryty"], ["9", "Suszarka do włosów"],
+      ["66", "Leżaki"], ["67", "Parawan"], ["63", "Sejf"], ["19", "Lodówka"],
+      ["12", "Akceptujemy zwierzęta"], ["13", "Palenie dozwolone"], ["23", "Ekspres do kawy"],
+      ["14", "Przyjazny niepełnosprawnym"], ["21", "Opiekacz, toster"], ["20", "Mikrofalówka"],
+      ["18", "Zmywarka"], ["57", "Jacuzzi"], ["85", "Widok na rzekę"], ["84", "Widok na miasto"],
+      ["83", "Widok na las"], ["86", "Parking płatny"], ["61", "Widok na góry / boczny"],
+      ["82", "Widok na jezioro"], ["74", "Meble ogrodowe"], ["73", "Grill"], ["72", "Piekarnik"],
+      ["62", "Widok na góry"], ["88", "Widok na basen"], ["89", "Widok na teren wewnętrzny"],
+      ["90", "Balia wodna"], ["91", "Nie akceptujemy zwierząt"], ["92", "Pościel"]
+    ]);
+    console.log(`✓ Loaded ${facilityMap.size} facility mappings`);
 
     // Aktualizuj property danymi z api_object
     const propertyUpdateData: any = {};
