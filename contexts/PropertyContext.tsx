@@ -13,6 +13,7 @@ interface PropertyContextType {
   addProperty: (name: string, description: string | null, email: string | null, phone: string | null, hotresId: string | null) => Promise<Property | null>;
   deleteProperty: (id: string) => Promise<void>;
   importFromHotres: (oid: string, propertyId: string) => Promise<void>;
+  refreshPropertyData: (oid: string, propertyId: string) => Promise<void>;
   syncAvailability: (oid: string, propertyId: string) => Promise<string>;
   syncRates: (oid: string, propertyId: string) => Promise<string>;
   fetchNotifications: () => Promise<void>;
@@ -172,6 +173,11 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     console.log('Object info:', objectData);
 
     // Tworzę mapę facility ID -> nazwa
+    console.log('🔍 DEBUG objectData.facilities type:', typeof objectData.facilities);
+    console.log('🔍 DEBUG objectData.facilities isArray:', Array.isArray(objectData.facilities));
+    console.log('🔍 DEBUG objectData.facilities value:', objectData.facilities);
+    console.log('🔍 DEBUG All objectData keys:', Object.keys(objectData));
+
     const facilityMap = new Map<string, string>();
     if (objectData.facilities && Array.isArray(objectData.facilities)) {
       objectData.facilities.forEach((facility: any) => {
@@ -286,12 +292,21 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         // Konwertuj facility IDs na nazwy
         let facilities = null;
         if (room.facilities && typeof room.facilities === 'string') {
+          console.log(`Room ${name} raw facilities:`, room.facilities);
           const facilityIds = room.facilities.split(',').map((id: string) => id.trim());
+          console.log(`Facility IDs:`, facilityIds);
           const facilityNames = facilityIds
-            .map((id: string) => facilityMap.get(id))
-            .filter((name): name is string => !!name); // filtruj undefined
+            .map((id: string) => {
+              const mapped = facilityMap.get(id);
+              if (!mapped) console.warn(`No mapping for facility ID ${id}`);
+              return mapped;
+            })
+            .filter((name): name is string => !!name);
 
           facilities = facilityNames.length > 0 ? JSON.stringify(facilityNames) : null;
+          console.log(`Mapped facilities for ${name}:`, facilities);
+        } else {
+          console.log(`Room ${name} has no facilities field or it's not a string:`, typeof room.facilities, room.facilities);
         }
 
         const photoUrl = room.photo || null;
@@ -350,6 +365,88 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       }
     }
   }, [fetchWithProxy]);
+
+  const refreshPropertyData = useCallback(async (oid: string, propertyId: string) => {
+    const apiUser = "admin@twojepokoje.com.pl";
+    const apiPass = "Admin123@@";
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Musisz być zalogowany");
+
+    console.log('🔄 Refreshing property data...');
+
+    // Pobierz informacje o obiekcie wraz ze słownikiem facilities
+    const objectUrl = `https://panel.hotres.pl/api_object?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
+    const objectResponse = await fetchWithProxy(objectUrl);
+    const objectData = JSON.parse(objectResponse);
+    console.log('Object info:', objectData);
+
+    // Tworzę mapę facility ID -> nazwa
+    console.log('🔍 DEBUG objectData.facilities type:', typeof objectData.facilities);
+    console.log('🔍 DEBUG objectData.facilities isArray:', Array.isArray(objectData.facilities));
+    console.log('🔍 DEBUG objectData.facilities value:', objectData.facilities);
+    console.log('🔍 DEBUG All objectData keys:', Object.keys(objectData));
+
+    const facilityMap = new Map<string, string>();
+    if (objectData.facilities && Array.isArray(objectData.facilities)) {
+      objectData.facilities.forEach((facility: any) => {
+        facilityMap.set(facility.id, facility.code);
+      });
+    }
+    console.log(`Loaded ${facilityMap.size} facility mappings`);
+
+    // Aktualizuj property danymi z api_object
+    const propertyUpdateData: any = {};
+
+    if (objectData.name) propertyUpdateData.name = objectData.name;
+    if (objectData.description) propertyUpdateData.description = objectData.description;
+    if (objectData.address) {
+      const fullAddress = [objectData.address, objectData.city, objectData.zip]
+        .filter(Boolean)
+        .join(', ');
+      propertyUpdateData.address = fullAddress;
+    }
+    if (objectData.email) propertyUpdateData.email = objectData.email;
+    if (objectData.phone) {
+      const phonePrefix = objectData.phone_prefix || '48';
+      propertyUpdateData.phone = `+${phonePrefix}${objectData.phone}`;
+    }
+    if (objectData.google_x && objectData.google_y) {
+      propertyUpdateData.maps_link = `https://www.google.com/maps?q=${objectData.google_x},${objectData.google_y}`;
+    }
+
+    // Konwertuj facility IDs na nazwy dla obiektu
+    const objectFacilitiesField = objectData.object_facilities || objectData.equipment || objectData.amenities;
+    if (objectFacilitiesField && typeof objectFacilitiesField === 'string') {
+      const facilityIds = objectFacilitiesField.split(',').map((id: string) => id.trim());
+      const facilityNames = facilityIds
+        .map((id: string) => facilityMap.get(id))
+        .filter((name): name is string => !!name);
+
+      if (facilityNames.length > 0) {
+        propertyUpdateData.amenities = JSON.stringify(facilityNames);
+        console.log(`✓ Mapped ${facilityNames.length} object amenities:`, facilityNames);
+      }
+    } else {
+      console.log('Available objectData keys:', Object.keys(objectData).filter(k => k !== 'facilities' && k !== 'currencies' && k !== 'countries'));
+    }
+
+    if (Object.keys(propertyUpdateData).length > 0) {
+      const { error: updateError } = await supabase
+        .from('properties')
+        .update(propertyUpdateData)
+        .eq('id', propertyId);
+
+      if (updateError) {
+        console.error('Failed to update property:', updateError);
+        throw updateError;
+      } else {
+        console.log('✓ Updated property with data from Hotres:', propertyUpdateData);
+        // Odśwież listę properties w kontekście
+        await fetchProperties();
+      }
+    }
+  }, [fetchWithProxy, fetchProperties]);
 
   const normalizeDate = (dateInput: string): string => {
       try {
