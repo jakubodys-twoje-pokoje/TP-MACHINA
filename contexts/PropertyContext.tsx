@@ -284,21 +284,13 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         // Konwertuj facility IDs na nazwy
         let facilities = null;
         if (room.facilities && typeof room.facilities === 'string') {
-          console.log(`Room ${name} raw facilities:`, room.facilities);
           const facilityIds = room.facilities.split(',').map((id: string) => id.trim());
-          console.log(`Facility IDs:`, facilityIds);
           const facilityNames = facilityIds
-            .map((id: string) => {
-              const mapped = facilityMap.get(id);
-              if (!mapped) console.warn(`No mapping for facility ID ${id}`);
-              return mapped;
-            })
+            .map((id: string) => facilityMap.get(id))
             .filter((name): name is string => !!name);
 
-          facilities = facilityNames.length > 0 ? JSON.stringify(facilityNames) : null;
-          console.log(`Mapped facilities for ${name}:`, facilities);
-        } else {
-          console.log(`Room ${name} has no facilities field or it's not a string:`, typeof room.facilities, room.facilities);
+          facilities = facilityNames.length > 0 ? facilityNames.join(', ') : null;
+          console.log(`✓ Mapped ${facilityNames.length} facilities for ${name}`);
         }
 
         const photoUrl = room.photo || null;
