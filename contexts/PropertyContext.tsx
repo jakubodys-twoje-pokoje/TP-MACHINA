@@ -180,6 +180,39 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
     console.log(`Loaded ${facilityMap.size} facility mappings`);
 
+    // Aktualizuj property danymi z api_object
+    const propertyUpdateData: any = {};
+
+    if (objectData.name) propertyUpdateData.name = objectData.name;
+    if (objectData.description) propertyUpdateData.description = objectData.description;
+    if (objectData.address) {
+      const fullAddress = [objectData.address, objectData.city, objectData.zip]
+        .filter(Boolean)
+        .join(', ');
+      propertyUpdateData.address = fullAddress;
+    }
+    if (objectData.email) propertyUpdateData.email = objectData.email;
+    if (objectData.phone) {
+      const phonePrefix = objectData.phone_prefix || '48';
+      propertyUpdateData.phone = `+${phonePrefix}${objectData.phone}`;
+    }
+    if (objectData.google_x && objectData.google_y) {
+      propertyUpdateData.maps_link = `https://www.google.com/maps?q=${objectData.google_x},${objectData.google_y}`;
+    }
+
+    if (Object.keys(propertyUpdateData).length > 0) {
+      const { error: updateError } = await supabase
+        .from('properties')
+        .update(propertyUpdateData)
+        .eq('id', propertyId);
+
+      if (updateError) {
+        console.error('Failed to update property:', updateError);
+      } else {
+        console.log('✓ Updated property with data from Hotres:', propertyUpdateData);
+      }
+    }
+
     // 2. Pobierz typy pokoi
     const roomTypesUrl = `https://panel.hotres.pl/api_roomstypes?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
     const roomTypesResponse = await fetchWithProxy(roomTypesUrl);
