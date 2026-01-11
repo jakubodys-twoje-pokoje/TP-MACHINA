@@ -239,7 +239,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             .single();
 
           if (!existingUnit) {
-            await supabase.from('units').insert({
+            const insertData = {
               property_id: propertyId,
               name: name,
               type: type,
@@ -258,10 +258,24 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
               facilities: facilities,
               photo_url: photoUrl,
               photos: photos
-            });
-            console.log(`Imported room: ${name} (ID: ${externalId}, Type: ${externalTypeId})`);
+            };
+
+            console.log('Inserting data:', insertData);
+
+            const { data: insertedRoom, error: insertError } = await supabase
+              .from('units')
+              .insert(insertData)
+              .select()
+              .single();
+
+            if (insertError) {
+              console.error(`Failed to insert room ${name}:`, insertError);
+              throw insertError;
+            }
+
+            console.log(`✓ Imported room: ${name} (ID: ${externalId})`, insertedRoom);
           } else {
-            console.log(`Room already exists: ${name} (ID: ${externalId})`);
+            console.log(`⊘ Room already exists: ${name} (ID: ${externalId})`);
           }
         }
       }
