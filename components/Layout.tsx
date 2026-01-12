@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
 import { supabase, VAPID_PUBLIC_KEY } from '../services/supabaseClient';
-import { LogOut, BellRing, RefreshCw } from 'lucide-react';
+import { LogOut, BellRing, RefreshCw, CheckCircle, XCircle, Clock } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useProperties } from '../contexts/PropertyContext';
 
@@ -27,7 +27,22 @@ const urlBase64ToUint8Array = (base64String: string) => {
 export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const location = useLocation();
-  const { autoSyncEnabled, toggleAutoSync } = useProperties();
+  const { autoSyncEnabled, toggleAutoSync, syncLogs } = useProperties();
+
+  // Get last sync status
+  const lastSync = syncLogs[0];
+  const getSyncStatusIcon = () => {
+    if (!lastSync) {
+      return <Clock size={14} className="text-slate-500" />;
+    }
+    if (lastSync.errorCount > 0) {
+      return <XCircle size={14} className="text-red-400" />;
+    }
+    if (lastSync.successCount > 0) {
+      return <CheckCircle size={14} className="text-green-400" />;
+    }
+    return <Clock size={14} className="text-slate-500" />;
+  };
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -90,15 +105,18 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
         <div className="p-4 border-t border-border bg-slate-900/50 space-y-2">
           <button
             onClick={toggleAutoSync}
-            className={`w-full flex items-center gap-2 px-3 py-2 text-xs rounded transition-colors ${
+            className={`w-full flex items-center justify-between px-3 py-2 text-xs rounded transition-colors ${
               autoSyncEnabled
                 ? 'text-green-400 bg-green-500/10 hover:bg-green-500/20'
                 : 'text-red-400 bg-red-500/10 hover:bg-red-500/20'
             }`}
             title={autoSyncEnabled ? 'Kliknij, aby wyłączyć synchronizację' : 'Kliknij, aby włączyć synchronizację'}
           >
-            <RefreshCw size={14} />
-            {autoSyncEnabled ? 'Synchronizacja: ON' : 'Synchronizacja: OFF'}
+            <div className="flex items-center gap-2">
+              <RefreshCw size={14} />
+              {autoSyncEnabled ? 'Synchronizacja: ON' : 'Synchronizacja: OFF'}
+            </div>
+            {getSyncStatusIcon()}
           </button>
           <button
             onClick={handleEnablePush}
