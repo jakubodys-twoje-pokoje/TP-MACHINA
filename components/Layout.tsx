@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
 import { supabase, VAPID_PUBLIC_KEY } from '../services/supabaseClient';
-import { LogOut, BellRing } from 'lucide-react';
+import { LogOut, BellRing, RefreshCw } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
+import { useProperties } from '../contexts/PropertyContext';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -26,6 +27,7 @@ const urlBase64ToUint8Array = (base64String: string) => {
 export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const location = useLocation();
+  const { autoSyncEnabled, toggleAutoSync } = useProperties();
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -86,7 +88,19 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
             <Sidebar />
         </div>
         <div className="p-4 border-t border-border bg-slate-900/50 space-y-2">
-          <button 
+          <button
+            onClick={toggleAutoSync}
+            className={`w-full flex items-center gap-2 px-3 py-2 text-xs rounded transition-colors ${
+              autoSyncEnabled
+                ? 'text-green-400 bg-green-500/10 hover:bg-green-500/20'
+                : 'text-red-400 bg-red-500/10 hover:bg-red-500/20'
+            }`}
+            title={autoSyncEnabled ? 'Kliknij, aby wyłączyć synchronizację' : 'Kliknij, aby włączyć synchronizację'}
+          >
+            <RefreshCw size={14} />
+            {autoSyncEnabled ? 'Synchronizacja: ON' : 'Synchronizacja: OFF'}
+          </button>
+          <button
             onClick={handleEnablePush}
             className="w-full flex items-center gap-2 px-3 py-2 text-xs text-indigo-400 hover:bg-indigo-500/10 rounded transition-colors"
           >

@@ -9,6 +9,8 @@ interface PropertyContextType {
   unreadCount: number;
   loading: boolean;
   error: string | null;
+  autoSyncEnabled: boolean;
+  toggleAutoSync: () => void;
   fetchProperties: () => Promise<void>;
   addProperty: (name: string, description: string | null, email: string | null, phone: string | null, hotresId: string | null) => Promise<Property | null>;
   deleteProperty: (id: string) => Promise<void>;
@@ -31,7 +33,20 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => {
+    const saved = localStorage.getItem('autoSyncEnabled');
+    return saved !== null ? saved === 'true' : true; // domyślnie włączone
+  });
   const globalSyncTimerRef = useRef<number | null>(null);
+
+  const toggleAutoSync = useCallback(() => {
+    setAutoSyncEnabled(prev => {
+      const newValue = !prev;
+      localStorage.setItem('autoSyncEnabled', String(newValue));
+      console.log(`🔄 Auto-sync ${newValue ? 'enabled' : 'disabled'}`);
+      return newValue;
+    });
+  }, []);
 
   const fetchProperties = useCallback(async () => {
     // Nie resetujemy loading do true przy każdym odświeżeniu, aby uniknąć migania UI
@@ -648,6 +663,12 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       clearInterval(globalSyncTimerRef.current);
     }
 
+    // Check if auto-sync is enabled
+    if (!autoSyncEnabled) {
+      console.log('⊘ Auto-sync is disabled');
+      return;
+    }
+
     // Get all properties with hotres_id
     const propertiesWithHotres = properties.filter(p => p.hotres_id);
 
@@ -658,9 +679,31 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
     let currentIndex = 0;
 
+    // Check if current time is within allowed hours (04:00 - 01:00 Polish time)
+    const isWithinAllowedHours = () => {
+      const now = new Date();
+      const polandTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Warsaw' }));
+      const hour = polandTime.getHours();
+
+      // Allowed: 04:00 - 01:00 (czyli blocked: 01:00 - 04:00)
+      // Jeśli godzina >= 4 ALBO godzina < 1, to OK
+      const isAllowed = hour >= 4 || hour < 1;
+
+      if (!isAllowed) {
+        console.log(`⏸️  Sync paused (downtime 01:00-04:00 Polish time), current: ${hour}:${polandTime.getMinutes()}`);
+      }
+
+      return isAllowed;
+    };
+
     // Function to sync next property in the queue
     const syncNextProperty = async () => {
       if (propertiesWithHotres.length === 0) return;
+
+      // Check if we're within allowed hours
+      if (!isWithinAllowedHours()) {
+        return; // Skip this sync cycle
+      }
 
       const property = propertiesWithHotres[currentIndex];
 
@@ -686,7 +729,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       syncNextProperty();
     }, 10000);
 
-    console.log(`⏰ Global auto-sync enabled: ${propertiesWithHotres.length} properties, one every 10 seconds`);
+    console.log(`⏰ Global auto-sync enabled: ${propertiesWithHotres.length} properties, one every 10 seconds (04:00-01:00 Polish time)`);
 
     return () => {
       clearTimeout(initialTimeout);
@@ -694,19 +737,22 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         clearInterval(globalSyncTimerRef.current);
       }
     };
-  }, [properties, syncAvailability]);
+  }, [properties, syncAvailability, autoSyncEnabled]);
 
   return (
-    <PropertyContext.Provider value={{ 
-      properties, 
-      notifications, 
-      unreadCount, 
-      loading, 
-      error, 
-      fetchProperties, 
-      addProperty, 
-      deleteProperty, 
+    <PropertyContext.Provider value={{
+      properties,
+      notifications,
+      unreadCount,
+      loading,
+      error,
+      autoSyncEnabled,
+      toggleAutoSync,
+      fetchProperties,
+      addProperty,
+      deleteProperty,
       importFromHotres,
+      refreshPropertyData,
       syncAvailability,
       syncRates,
       fetchNotifications,
