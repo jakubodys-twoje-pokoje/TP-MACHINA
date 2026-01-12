@@ -1,9 +1,8 @@
-import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import React, { useEffect, useState, useMemo } from 'react';
+import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { Property, Availability, Unit } from '../types';
-import { RefreshCw, Loader2, Power, Timer, ChevronLeft, ChevronRight, Settings, Calendar, Table } from 'lucide-react';
-import { useProperties } from '../contexts/PropertyContext';
+import { Loader2, ChevronLeft, ChevronRight, Calendar, Table } from 'lucide-react';
 
 type ViewMode = 'calendar' | 'table';
 
@@ -171,14 +170,6 @@ export const CalendarView: React.FC = () => {
   const [loadingUnits, setLoadingUnits] = useState(true);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
 
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [isAutoSync, setIsAutoSync] = useState(false);
-  const [intervalSeconds, setIntervalSeconds] = useState(3600);
-  const [lastSyncMessage, setLastSyncMessage] = useState<string>('Naciśnij, aby pobrać dane.');
-  const timerRef = useRef<number | null>(null);
-  
-  const { syncAvailability } = useProperties();
-
   useEffect(() => {
     if (propertyId) {
       fetchPropertyAndUnits();
@@ -204,10 +195,6 @@ export const CalendarView: React.FC = () => {
     setLoadingUnits(true);
     const { data: propData } = await supabase.from('properties').select('*').eq('id', propertyId).single();
     setProperty(propData);
-    if(propData) {
-        setIsAutoSync(propData.auto_sync_enabled || false);
-        setIntervalSeconds(propData.auto_sync_interval || 3600);
-    }
 
     const { data: unitsData } = await supabase.from('units').select('*').eq('property_id', propertyId).order('name');
     setUnits(unitsData || []);
@@ -271,64 +258,6 @@ export const CalendarView: React.FC = () => {
     setAllUnitsAvailability(newAllUnitsMap);
     setLoadingAvailability(false);
   };
-
-  const handleSync = useCallback(async () => {
-    if (!property) return;
-
-    // Bezpośrednie użycie kolumny hotres_id
-    if (!property.hotres_id) {
-      setLastSyncMessage("BŁĄD: Brak 'OID' w ustawieniach obiektu.");
-      alert("Aby synchronizacja działała, przejdź do Ustawień obiektu i wypełnij pole 'ID Hotres (OID)'.");
-      return;
-    }
-    
-    setIsSyncing(prev => {
-        if (prev) return true; 
-        return true;
-    });
-    setIsSyncing(true);
-
-    try {
-      const resultMessage = await syncAvailability(property.hotres_id, property.id);
-      
-      await fetchAvailabilityForMonth();
-      
-      const syncTime = new Date().toLocaleTimeString();
-      setLastSyncMessage(`OK (${syncTime}). ${resultMessage}`);
-    } catch (err: any) {
-      console.error(err);
-      setLastSyncMessage(`Błąd: ${err.message}`);
-    } finally {
-      setIsSyncing(false);
-    }
-  }, [property, propertyId, selectedUnitId, currentDate, syncAvailability]); 
-
-  // Update DB when toggling auto-sync
-  const toggleAutoSync = async () => {
-      const newState = !isAutoSync;
-      setIsAutoSync(newState);
-      if(propertyId) {
-          await supabase.from('properties').update({ auto_sync_enabled: newState }).eq('id', propertyId);
-      }
-  }
-
-  const changeInterval = async (val: number) => {
-      setIntervalSeconds(val);
-      if(propertyId) {
-          await supabase.from('properties').update({ auto_sync_interval: val }).eq('id', propertyId);
-      }
-  }
-
-  useEffect(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    
-    if (isAutoSync && intervalSeconds > 0 && propertyId) {
-      timerRef.current = window.setInterval(() => {
-          handleSync();
-      }, intervalSeconds * 1000);
-    }
-    return () => { if (timerRef.current) clearInterval(timerRef.current) };
-  }, [isAutoSync, intervalSeconds, propertyId, handleSync]); 
 
   const calendarGrid = useMemo(() => {
     const year = currentDate.getFullYear();
@@ -453,60 +382,6 @@ export const CalendarView: React.FC = () => {
           }}
         />
       )}
-
-      {/* SYNC PANEL */}
-      <div className="bg-surface rounded-xl border border-border p-6 shadow-lg">
-        <div className="flex items-center justify-between mb-2">
-           <h3 className="text-lg font-bold text-white">Synchronizacja z Hotres</h3>
-           {propertyId && (
-               <Link to={`/property/${propertyId}/details`} className="text-xs text-indigo-400 hover:underline flex items-center gap-1">
-                   <Settings size={12} /> Ustawienia OID
-               </Link>
-           )}
-        </div>
-        <p className="text-sm text-slate-400 mb-6">Pobierz i zaktualizuj stany dostępności dla wszystkich kwater w tym obiekcie na rok 2026.</p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-          <div className="space-y-4">
-             <button 
-              onClick={handleSync}
-              disabled={isSyncing}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-wait text-white px-4 py-3 rounded-lg font-medium flex items-center justify-center gap-2 transition-colors text-base"
-            >
-              {isSyncing ? <Loader2 size={20} className="animate-spin" /> : <RefreshCw size={20} />}
-              {isSyncing ? 'Synchronizuję dane...' : 'Synchronizuj teraz'}
-            </button>
-            <p className={`text-xs text-center ${lastSyncMessage.includes('BŁĄD') ? 'text-red-400 font-bold' : 'text-slate-500'}`}>
-              {lastSyncMessage}
-            </p>
-          </div>
-          <div className="bg-slate-900/50 p-4 rounded-lg border border-border space-y-4">
-              <div className="flex items-center justify-between">
-                <label htmlFor="auto-sync-toggle" className="flex items-center gap-2 font-medium text-slate-300 cursor-pointer">
-                  <Power size={16} className={isAutoSync ? 'text-green-500' : 'text-slate-600'} />
-                  Automatyczna synchronizacja
-                </label>
-                 <button
-                    id="auto-sync-toggle"
-                    onClick={toggleAutoSync}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isAutoSync ? 'bg-green-600' : 'bg-slate-700'}`}
-                >
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isAutoSync ? 'translate-x-6' : 'translate-x-1'}`} />
-                </button>
-              </div>
-              <div className="flex items-center gap-3">
-                 <label className="flex items-center gap-2 text-sm text-slate-400 whitespace-nowrap"><Timer size={16}/> Interwał:</label>
-                 <input 
-                    type="number" 
-                    value={intervalSeconds}
-                    onChange={(e) => changeInterval(Number(e.target.value))}
-                    disabled={!isAutoSync}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-md p-2 text-white text-sm outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
-                 />
-                 <span className="text-sm text-slate-500">sek.</span>
-              </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };

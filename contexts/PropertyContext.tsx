@@ -31,6 +31,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const globalSyncTimerRef = useRef<number | null>(null);
 
   const fetchProperties = useCallback(async () => {
     // Nie resetujemy loading do true przy każdym odświeżeniu, aby uniknąć migania UI
@@ -639,6 +640,61 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     setNotifications(prev => prev.filter(n => n.id !== id));
     await supabase.from('notifications').delete().eq('id', id);
   }, []);
+
+  // Global auto-sync: sync properties in batches (one at a time every 10 seconds)
+  useEffect(() => {
+    // Clear any existing timer
+    if (globalSyncTimerRef.current) {
+      clearInterval(globalSyncTimerRef.current);
+    }
+
+    // Get all properties with hotres_id
+    const propertiesWithHotres = properties.filter(p => p.hotres_id);
+
+    if (propertiesWithHotres.length === 0) {
+      console.log('⊘ No properties with Hotres ID to sync');
+      return;
+    }
+
+    let currentIndex = 0;
+
+    // Function to sync next property in the queue
+    const syncNextProperty = async () => {
+      if (propertiesWithHotres.length === 0) return;
+
+      const property = propertiesWithHotres[currentIndex];
+
+      try {
+        console.log(`🔄 [${currentIndex + 1}/${propertiesWithHotres.length}] Syncing ${property.name} at ${new Date().toLocaleTimeString()}`);
+        await syncAvailability(property.hotres_id!, property.id);
+        console.log(`✓ Synced ${property.name}`);
+      } catch (error: any) {
+        console.error(`✗ Failed to sync ${property.name}:`, error.message);
+      }
+
+      // Move to next property (loop back to start when done)
+      currentIndex = (currentIndex + 1) % propertiesWithHotres.length;
+    };
+
+    // Start syncing after 5 seconds (to avoid immediate load on app start)
+    const initialTimeout = setTimeout(() => {
+      syncNextProperty();
+    }, 5000);
+
+    // Set up recurring sync every 10 seconds
+    globalSyncTimerRef.current = window.setInterval(() => {
+      syncNextProperty();
+    }, 10000);
+
+    console.log(`⏰ Global auto-sync enabled: ${propertiesWithHotres.length} properties, one every 10 seconds`);
+
+    return () => {
+      clearTimeout(initialTimeout);
+      if (globalSyncTimerRef.current) {
+        clearInterval(globalSyncTimerRef.current);
+      }
+    };
+  }, [properties, syncAvailability]);
 
   return (
     <PropertyContext.Provider value={{ 
