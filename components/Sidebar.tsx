@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2, AlertTriangle, Bell, Kanban, BadgePercent } from 'lucide-react';
+import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2, AlertTriangle, Bell, Kanban, BadgePercent, FileText, CheckCircle, XCircle, Trash2 } from 'lucide-react';
 import { useProperties } from '../contexts/PropertyContext';
 
 export const Sidebar: React.FC = () => {
-  const { properties, loading, error, addProperty, importFromHotres, unreadCount } = useProperties();
+  const { properties, loading, error, addProperty, importFromHotres, unreadCount, syncLogs, clearSyncLogs } = useProperties();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -12,6 +12,7 @@ export const Sidebar: React.FC = () => {
   const [modalMode, setModalMode] = useState<'manual' | 'import'>('manual');
   const [formData, setFormData] = useState({ name: '', oid: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showLogsModal, setShowLogsModal] = useState(false);
   
   const pathParts = location.pathname.split('/');
   const activePropertyId = pathParts[1] === 'property' ? pathParts[2] : null;
@@ -113,6 +114,17 @@ export const Sidebar: React.FC = () => {
           ))
         )}
       </div>
+
+      {/* Sync Logs Link */}
+      <div className="px-6 py-3 border-t border-border">
+        <button
+          onClick={() => setShowLogsModal(true)}
+          className="w-full text-xs text-slate-500 hover:text-slate-300 flex items-center gap-1.5 transition-colors"
+        >
+          <FileText size={12} />
+          Historia synchronizacji
+        </button>
+      </div>
     </div>
 
     {isModalOpen && (
@@ -144,6 +156,81 @@ export const Sidebar: React.FC = () => {
                 {modalMode === 'import' ? 'Importuj i Utwórz' : 'Utwórz Obiekt'}
               </button>
             </form>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {showLogsModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <div className="bg-surface border border-border w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 max-h-[80vh] flex flex-col">
+          <div className="p-4 border-b border-border flex justify-between items-center bg-slate-900/50">
+            <div className="flex items-center gap-2">
+              <FileText size={18} />
+              <h3 className="font-bold text-white">Historia synchronizacji</h3>
+            </div>
+            <div className="flex items-center gap-2">
+              {syncLogs.length > 0 && (
+                <button
+                  onClick={() => {
+                    if (confirm('Czy na pewno chcesz wyczyścić historię?')) {
+                      clearSyncLogs();
+                    }
+                  }}
+                  className="text-xs text-red-400 hover:text-red-300 px-2 py-1 rounded hover:bg-red-500/10 transition-colors flex items-center gap-1"
+                >
+                  <Trash2 size={12} />
+                  Wyczyść
+                </button>
+              )}
+              <button onClick={() => setShowLogsModal(false)} className="text-slate-400 hover:text-white">
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+            {syncLogs.length === 0 ? (
+              <div className="text-center text-slate-500 py-8">
+                <FileText size={32} className="mx-auto mb-2 opacity-50" />
+                <p className="text-sm">Brak historii synchronizacji</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {syncLogs.map((log, idx) => {
+                  const date = new Date(log.timestamp);
+                  const timeStr = date.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                  const dateStr = date.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+                  return (
+                    <div
+                      key={idx}
+                      className="bg-slate-900/50 border border-slate-700 rounded-lg p-3 flex items-center justify-between hover:bg-slate-800/50 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="text-xs text-slate-400 font-mono">
+                          <div className="font-bold">{timeStr}</div>
+                          <div className="text-[10px]">{dateStr}</div>
+                        </div>
+                        <div className="flex items-center gap-3 text-sm">
+                          {log.successCount > 0 && (
+                            <div className="flex items-center gap-1 text-green-400">
+                              <CheckCircle size={14} />
+                              <span className="font-bold">{log.successCount}</span>
+                            </div>
+                          )}
+                          {log.errorCount > 0 && (
+                            <div className="flex items-center gap-1 text-red-400">
+                              <XCircle size={14} />
+                              <span className="font-bold">{log.errorCount}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </div>

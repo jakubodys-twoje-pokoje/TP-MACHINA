@@ -1,7 +1,13 @@
 
-import React, { createContext, useState, useEffect, useContext, ReactNode, useCallback } from 'react';
+import React, { createContext, useState, useEffect, useContext, ReactNode, useCallback, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { Property, Unit, Availability, Notification, RatePlan } from '../types';
+
+export interface SyncLogEntry {
+  timestamp: string;
+  successCount: number;
+  errorCount: number;
+}
 
 interface PropertyContextType {
   properties: Property[];
@@ -10,7 +16,9 @@ interface PropertyContextType {
   loading: boolean;
   error: string | null;
   autoSyncEnabled: boolean;
+  syncLogs: SyncLogEntry[];
   toggleAutoSync: () => void;
+  clearSyncLogs: () => void;
   fetchProperties: () => Promise<void>;
   addProperty: (name: string, description: string | null, email: string | null, phone: string | null, hotresId: string | null) => Promise<Property | null>;
   deleteProperty: (id: string) => Promise<void>;
@@ -37,7 +45,14 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     const saved = localStorage.getItem('autoSyncEnabled');
     return saved !== null ? saved === 'true' : true; // domyślnie włączone
   });
-  const globalSyncTimerRef = useRef<number | null>(null);
+  const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>(() => {
+    const saved = localStorage.getItem('syncLogs');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const globalSyncTimerRef = React.useRef<number | null>(null);
+  const currentCycleSuccessRef = React.useRef(0);
+  const currentCycleErrorRef = React.useRef(0);
+  const lastLoggedCycleRef = React.useRef(0);
 
   const toggleAutoSync = useCallback(() => {
     setAutoSyncEnabled(prev => {
@@ -45,6 +60,25 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       localStorage.setItem('autoSyncEnabled', String(newValue));
       console.log(`🔄 Auto-sync ${newValue ? 'enabled' : 'disabled'}`);
       return newValue;
+    });
+  }, []);
+
+  const clearSyncLogs = useCallback(() => {
+    setSyncLogs([]);
+    localStorage.removeItem('syncLogs');
+  }, []);
+
+  const addSyncLog = useCallback((successCount: number, errorCount: number) => {
+    const newLog: SyncLogEntry = {
+      timestamp: new Date().toISOString(),
+      successCount,
+      errorCount
+    };
+
+    setSyncLogs(prev => {
+      const updated = [newLog, ...prev].slice(0, 100); // Keep last 100 logs
+      localStorage.setItem('syncLogs', JSON.stringify(updated));
+      return updated;
     });
   }, []);
 
@@ -711,12 +745,30 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         console.log(`🔄 [${currentIndex + 1}/${propertiesWithHotres.length}] Syncing ${property.name} at ${new Date().toLocaleTimeString()}`);
         await syncAvailability(property.hotres_id!, property.id);
         console.log(`✓ Synced ${property.name}`);
+        currentCycleSuccessRef.current++;
       } catch (error: any) {
         console.error(`✗ Failed to sync ${property.name}:`, error.message);
+        currentCycleErrorRef.current++;
       }
 
       // Move to next property (loop back to start when done)
       currentIndex = (currentIndex + 1) % propertiesWithHotres.length;
+
+      // If we completed a full cycle (back to start), log the results
+      if (currentIndex === 0 && lastLoggedCycleRef.current !== currentIndex) {
+        const successCount = currentCycleSuccessRef.current;
+        const errorCount = currentCycleErrorRef.current;
+
+        if (successCount > 0 || errorCount > 0) {
+          addSyncLog(successCount, errorCount);
+          console.log(`📊 Cycle complete: ✓${successCount} ✗${errorCount}`);
+        }
+
+        // Reset counters for next cycle
+        currentCycleSuccessRef.current = 0;
+        currentCycleErrorRef.current = 0;
+      }
+      lastLoggedCycleRef.current = currentIndex;
     };
 
     // Start syncing after 5 seconds (to avoid immediate load on app start)
@@ -737,7 +789,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         clearInterval(globalSyncTimerRef.current);
       }
     };
-  }, [properties, syncAvailability, autoSyncEnabled]);
+  }, [properties, syncAvailability, autoSyncEnabled, addSyncLog]);
 
   return (
     <PropertyContext.Provider value={{
@@ -747,7 +799,9 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       loading,
       error,
       autoSyncEnabled,
+      syncLogs,
       toggleAutoSync,
+      clearSyncLogs,
       fetchProperties,
       addProperty,
       deleteProperty,
