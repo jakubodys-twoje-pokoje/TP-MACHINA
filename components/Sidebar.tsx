@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2, AlertTriangle, Bell, Kanban, BadgePercent, FileText, CheckCircle, XCircle, Trash2 } from 'lucide-react';
+import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2, AlertTriangle, Bell, Kanban, BadgePercent, FileText, CheckCircle, XCircle, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { useProperties } from '../contexts/PropertyContext';
 
 export const Sidebar: React.FC = () => {
@@ -13,6 +13,7 @@ export const Sidebar: React.FC = () => {
   const [formData, setFormData] = useState({ name: '', oid: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showLogsModal, setShowLogsModal] = useState(false);
+  const [expandedLogs, setExpandedLogs] = useState<Set<number>>(new Set());
   
   const pathParts = location.pathname.split('/');
   const activePropertyId = pathParts[1] === 'property' ? pathParts[2] : null;
@@ -200,32 +201,86 @@ export const Sidebar: React.FC = () => {
                   const date = new Date(log.timestamp);
                   const timeStr = date.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
                   const dateStr = date.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+                  const isExpanded = expandedLogs.has(idx);
+                  const hasDetails = (log.successes && log.successes.length > 0) || (log.errors && log.errors.length > 0);
 
                   return (
                     <div
                       key={idx}
-                      className="bg-slate-900/50 border border-slate-700 rounded-lg p-3 flex items-center justify-between hover:bg-slate-800/50 transition-colors"
+                      className="bg-slate-900/50 border border-slate-700 rounded-lg overflow-hidden"
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="text-xs text-slate-400 font-mono">
-                          <div className="font-bold">{timeStr}</div>
-                          <div className="text-[10px]">{dateStr}</div>
+                      <div
+                        className={`p-3 flex items-center justify-between transition-colors ${hasDetails ? 'cursor-pointer hover:bg-slate-800/50' : ''}`}
+                        onClick={() => {
+                          if (hasDetails) {
+                            setExpandedLogs(prev => {
+                              const newSet = new Set(prev);
+                              if (newSet.has(idx)) {
+                                newSet.delete(idx);
+                              } else {
+                                newSet.add(idx);
+                              }
+                              return newSet;
+                            });
+                          }
+                        }}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="text-xs text-slate-400 font-mono">
+                            <div className="font-bold">{timeStr}</div>
+                            <div className="text-[10px]">{dateStr}</div>
+                          </div>
+                          <div className="flex items-center gap-3 text-sm">
+                            {log.successCount > 0 && (
+                              <div className="flex items-center gap-1 text-green-400">
+                                <CheckCircle size={14} />
+                                <span className="font-bold">{log.successCount}</span>
+                              </div>
+                            )}
+                            {log.errorCount > 0 && (
+                              <div className="flex items-center gap-1 text-red-400">
+                                <XCircle size={14} />
+                                <span className="font-bold">{log.errorCount}</span>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-3 text-sm">
-                          {log.successCount > 0 && (
-                            <div className="flex items-center gap-1 text-green-400">
-                              <CheckCircle size={14} />
-                              <span className="font-bold">{log.successCount}</span>
-                            </div>
-                          )}
-                          {log.errorCount > 0 && (
-                            <div className="flex items-center gap-1 text-red-400">
-                              <XCircle size={14} />
-                              <span className="font-bold">{log.errorCount}</span>
-                            </div>
-                          )}
-                        </div>
+                        {hasDetails && (
+                          <div>
+                            {isExpanded ? <ChevronDown size={16} className="text-slate-500" /> : <ChevronRight size={16} className="text-slate-500" />}
+                          </div>
+                        )}
                       </div>
+
+                      {isExpanded && hasDetails && (
+                        <div className="border-t border-slate-700 p-3 bg-slate-950/50 space-y-2">
+                          {log.successes && log.successes.length > 0 && (
+                            <div className="space-y-1">
+                              <div className="text-xs font-bold text-green-400 mb-1">Zsynchronizowane:</div>
+                              {log.successes.map((success, sIdx) => (
+                                <div key={sIdx} className="text-xs text-slate-400 pl-2 flex items-center gap-2">
+                                  <CheckCircle size={10} className="text-green-500" />
+                                  {success.propertyName}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {log.errors && log.errors.length > 0 && (
+                            <div className="space-y-1">
+                              <div className="text-xs font-bold text-red-400 mb-1">Błędy:</div>
+                              {log.errors.map((error, eIdx) => (
+                                <div key={eIdx} className="text-xs pl-2">
+                                  <div className="flex items-center gap-2 text-red-400">
+                                    <XCircle size={10} />
+                                    <span className="font-medium">{error.propertyName}</span>
+                                  </div>
+                                  <div className="text-slate-500 pl-4 mt-0.5 text-[10px]">{error.error}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

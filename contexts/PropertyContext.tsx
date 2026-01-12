@@ -7,6 +7,8 @@ export interface SyncLogEntry {
   timestamp: string;
   successCount: number;
   errorCount: number;
+  successes: Array<{ propertyName: string; propertyId: string }>;
+  errors: Array<{ propertyName: string; propertyId: string; error: string }>;
 }
 
 interface PropertyContextType {
@@ -50,9 +52,8 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     return saved ? JSON.parse(saved) : [];
   });
   const globalSyncTimerRef = React.useRef<number | null>(null);
-  const currentCycleSuccessRef = React.useRef(0);
-  const currentCycleErrorRef = React.useRef(0);
-  const lastLoggedCycleRef = React.useRef(0);
+  const currentCycleSuccessRef = React.useRef<Array<{ propertyName: string; propertyId: string }>>([]);
+  const currentCycleErrorRef = React.useRef<Array<{ propertyName: string; propertyId: string; error: string }>>([]);
 
   const toggleAutoSync = useCallback(() => {
     setAutoSyncEnabled(prev => {
@@ -68,11 +69,16 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     localStorage.removeItem('syncLogs');
   }, []);
 
-  const addSyncLog = useCallback((successCount: number, errorCount: number) => {
+  const addSyncLog = useCallback((
+    successes: Array<{ propertyName: string; propertyId: string }>,
+    errors: Array<{ propertyName: string; propertyId: string; error: string }>
+  ) => {
     const newLog: SyncLogEntry = {
       timestamp: new Date().toISOString(),
-      successCount,
-      errorCount
+      successCount: successes.length,
+      errorCount: errors.length,
+      successes,
+      errors
     };
 
     setSyncLogs(prev => {
@@ -745,30 +751,36 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         console.log(`🔄 [${currentIndex + 1}/${propertiesWithHotres.length}] Syncing ${property.name} at ${new Date().toLocaleTimeString()}`);
         await syncAvailability(property.hotres_id!, property.id);
         console.log(`✓ Synced ${property.name}`);
-        currentCycleSuccessRef.current++;
+        currentCycleSuccessRef.current.push({
+          propertyName: property.name,
+          propertyId: property.id
+        });
       } catch (error: any) {
         console.error(`✗ Failed to sync ${property.name}:`, error.message);
-        currentCycleErrorRef.current++;
+        currentCycleErrorRef.current.push({
+          propertyName: property.name,
+          propertyId: property.id,
+          error: error.message
+        });
       }
 
       // Move to next property (loop back to start when done)
       currentIndex = (currentIndex + 1) % propertiesWithHotres.length;
 
       // If we completed a full cycle (back to start), log the results
-      if (currentIndex === 0 && lastLoggedCycleRef.current !== currentIndex) {
-        const successCount = currentCycleSuccessRef.current;
-        const errorCount = currentCycleErrorRef.current;
+      if (currentIndex === 0) {
+        const successes = currentCycleSuccessRef.current;
+        const errors = currentCycleErrorRef.current;
 
-        if (successCount > 0 || errorCount > 0) {
-          addSyncLog(successCount, errorCount);
-          console.log(`📊 Cycle complete: ✓${successCount} ✗${errorCount}`);
+        if (successes.length > 0 || errors.length > 0) {
+          addSyncLog(successes, errors);
+          console.log(`📊 Cycle complete: ✓${successes.length} ✗${errors.length}`);
         }
 
-        // Reset counters for next cycle
-        currentCycleSuccessRef.current = 0;
-        currentCycleErrorRef.current = 0;
+        // Reset arrays for next cycle
+        currentCycleSuccessRef.current = [];
+        currentCycleErrorRef.current = [];
       }
-      lastLoggedCycleRef.current = currentIndex;
     };
 
     // Start syncing after 5 seconds (to avoid immediate load on app start)
