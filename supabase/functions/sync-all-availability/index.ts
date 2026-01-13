@@ -422,22 +422,40 @@ Deno.serve(async (req) => {
 
     // Take snapshot of current availability state BEFORE syncing
     const beforeSnapshot = new Map<string, AvailabilitySnapshot>()
-    const { data: beforeData } = await supabaseClient
-      .from('availability')
-      .select('unit_id, date, status')
-      .gte('date', '2026-01-01')
-      .lte('date', '2026-12-31')
 
-    if (beforeData) {
-      beforeData.forEach((record: any) => {
-        const key = `${record.unit_id}_${record.date}`
-        beforeSnapshot.set(key, {
-          unit_id: record.unit_id,
-          date: record.date,
-          status: record.status
+    // Fetch ALL availability records (not just 1000) using pagination
+    let beforePage = 0
+    const pageSize = 10000
+    let hasMoreBefore = true
+
+    while (hasMoreBefore) {
+      const { data: beforeData } = await supabaseClient
+        .from('availability')
+        .select('unit_id, date, status')
+        .gte('date', '2026-01-01')
+        .lte('date', '2026-12-31')
+        .range(beforePage * pageSize, (beforePage + 1) * pageSize - 1)
+
+      if (beforeData && beforeData.length > 0) {
+        beforeData.forEach((record: any) => {
+          const key = `${record.unit_id}_${record.date}`
+          beforeSnapshot.set(key, {
+            unit_id: record.unit_id,
+            date: record.date,
+            status: record.status
+          })
         })
-      })
+
+        if (beforeData.length < pageSize) {
+          hasMoreBefore = false
+        } else {
+          beforePage++
+        }
+      } else {
+        hasMoreBefore = false
+      }
     }
+
     console.log(`📸 Before snapshot: ${beforeSnapshot.size} records`)
 
     // Sync all properties in parallel
@@ -467,22 +485,39 @@ Deno.serve(async (req) => {
 
     // Take snapshot AFTER syncing to detect changes
     const afterSnapshot = new Map<string, AvailabilitySnapshot>()
-    const { data: afterData } = await supabaseClient
-      .from('availability')
-      .select('unit_id, date, status')
-      .gte('date', '2026-01-01')
-      .lte('date', '2026-12-31')
 
-    if (afterData) {
-      afterData.forEach((record: any) => {
-        const key = `${record.unit_id}_${record.date}`
-        afterSnapshot.set(key, {
-          unit_id: record.unit_id,
-          date: record.date,
-          status: record.status
+    // Fetch ALL availability records (not just 1000) using pagination
+    let afterPage = 0
+    let hasMoreAfter = true
+
+    while (hasMoreAfter) {
+      const { data: afterData } = await supabaseClient
+        .from('availability')
+        .select('unit_id, date, status')
+        .gte('date', '2026-01-01')
+        .lte('date', '2026-12-31')
+        .range(afterPage * pageSize, (afterPage + 1) * pageSize - 1)
+
+      if (afterData && afterData.length > 0) {
+        afterData.forEach((record: any) => {
+          const key = `${record.unit_id}_${record.date}`
+          afterSnapshot.set(key, {
+            unit_id: record.unit_id,
+            date: record.date,
+            status: record.status
+          })
         })
-      })
+
+        if (afterData.length < pageSize) {
+          hasMoreAfter = false
+        } else {
+          afterPage++
+        }
+      } else {
+        hasMoreAfter = false
+      }
     }
+
     console.log(`📸 After snapshot: ${afterSnapshot.size} records`)
 
     // Detect changes and create notifications
@@ -513,6 +548,19 @@ Deno.serve(async (req) => {
       console.error('Failed to cleanup old logs:', cleanupError)
     } else {
       console.log(`🧹 Cleaned up logs older than ${twelveHoursAgo}`)
+    }
+
+    // Clean up old notifications (older than 14 days)
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()
+    const { error: notifCleanupError } = await supabaseClient
+      .from('notifications')
+      .delete()
+      .lt('created_at', fourteenDaysAgo)
+
+    if (notifCleanupError) {
+      console.error('Failed to cleanup old notifications:', notifCleanupError)
+    } else {
+      console.log(`🧹 Cleaned up notifications older than ${fourteenDaysAgo}`)
     }
 
     console.log(`📊 Sync complete: ✓${successes.length} ✗${errors.length}`)
