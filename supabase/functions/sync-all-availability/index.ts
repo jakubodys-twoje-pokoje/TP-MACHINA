@@ -443,10 +443,13 @@ Deno.serve(async (req) => {
 
       const { data: beforeData, error: beforeError } = await supabaseClient
         .from('availability')
-        .select('unit_id, date, status')
+        .select('unit_id, date, status', { count: 'exact' })
         .gte('date', '2026-01-01')
         .lte('date', '2026-12-31')
+        .order('unit_id')
+        .order('date')
         .range(rangeStart, rangeEnd)
+        .limit(pageSize)
 
       if (beforeError) {
         console.error(`❌ [DEBUG] Error fetching page ${beforePage}:`, beforeError)
@@ -523,10 +526,13 @@ Deno.serve(async (req) => {
 
       const { data: afterData, error: afterError } = await supabaseClient
         .from('availability')
-        .select('unit_id, date, status')
+        .select('unit_id, date, status', { count: 'exact' })
         .gte('date', '2026-01-01')
         .lte('date', '2026-12-31')
+        .order('unit_id')
+        .order('date')
         .range(rangeStart, rangeEnd)
+        .limit(pageSize)
 
       if (afterError) {
         console.error(`❌ [DEBUG] AFTER - Error fetching page ${afterPage}:`, afterError)
