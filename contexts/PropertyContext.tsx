@@ -17,9 +17,7 @@ interface PropertyContextType {
   unreadCount: number;
   loading: boolean;
   error: string | null;
-  autoSyncEnabled: boolean;
   syncLogs: SyncLogEntry[];
-  toggleAutoSync: () => void;
   clearSyncLogs: () => void;
   fetchProperties: () => Promise<void>;
   addProperty: (name: string, description: string | null, email: string | null, phone: string | null, hotresId: string | null) => Promise<Property | null>;
@@ -43,20 +41,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => {
-    const saved = localStorage.getItem('autoSyncEnabled');
-    return saved !== null ? saved === 'true' : true; // domyślnie włączone
-  });
   const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
-
-  const toggleAutoSync = useCallback(() => {
-    setAutoSyncEnabled(prev => {
-      const newValue = !prev;
-      localStorage.setItem('autoSyncEnabled', String(newValue));
-      console.log(`🔄 Auto-sync ${newValue ? 'enabled' : 'disabled'}`);
-      return newValue;
-    });
-  }, []);
 
   const fetchSyncLogs = useCallback(async () => {
     try {
@@ -717,9 +702,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     await supabase.from('notifications').delete().eq('id', id);
   }, []);
 
-  // Note: Global auto-sync is now handled by Supabase backend (pg_cron + Edge Function)
-  // The backend syncs all properties every 2 minutes (04:00-01:00 Polish time)
-  // Frontend just displays the sync logs from the database
+  // Note: Synchronization is fully automated via Supabase backend (pg_cron + Edge Function)
+  // - Runs automatically every 2 minutes (04:00-01:00 Polish time)
+  // - No manual control needed - always running 24/7
+  // - Frontend only displays sync logs from the database
 
   return (
     <PropertyContext.Provider value={{
@@ -728,9 +714,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       unreadCount,
       loading,
       error,
-      autoSyncEnabled,
       syncLogs,
-      toggleAutoSync,
       clearSyncLogs,
       fetchProperties,
       addProperty,
