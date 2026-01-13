@@ -277,14 +277,15 @@ export const CalendarView: React.FC = () => {
       const isToday = new Date().toDateString() === new Date(year, month, day).toDateString();
       
       grid.push(
-        <div 
-          key={day} 
+        <div
+          key={day}
           className={`h-20 flex flex-col items-center justify-center rounded-lg transition-colors
-            ${isUnavailable ? 'bg-red-900/40' : 'bg-slate-800/50'}
+            ${isUnavailable ? 'bg-red-600/50 hover:bg-red-600/60' : 'bg-green-600/50 hover:bg-green-600/60'}
             ${isToday ? 'border-2 border-indigo-500' : 'border border-transparent'}
+            cursor-pointer
           `}
         >
-          <span className={`font-bold text-lg ${isUnavailable ? 'text-red-400/50' : 'text-slate-200'}`}>{day}</span>
+          <span className={`font-bold text-lg ${isUnavailable ? 'text-red-200' : 'text-green-200'}`}>{day}</span>
         </div>
       );
     }
