@@ -434,13 +434,27 @@ Deno.serve(async (req) => {
     const pageSize = 10000
     let hasMoreBefore = true
 
+    console.log(`🔍 [DEBUG] Starting pagination with pageSize=${pageSize}`)
+
     while (hasMoreBefore) {
-      const { data: beforeData } = await supabaseClient
+      const rangeStart = beforePage * pageSize
+      const rangeEnd = (beforePage + 1) * pageSize - 1
+      console.log(`🔍 [DEBUG] Fetching page ${beforePage}, range: ${rangeStart}-${rangeEnd}`)
+
+      const { data: beforeData, error: beforeError } = await supabaseClient
         .from('availability')
         .select('unit_id, date, status')
         .gte('date', '2026-01-01')
         .lte('date', '2026-12-31')
-        .range(beforePage * pageSize, (beforePage + 1) * pageSize - 1)
+        .range(rangeStart, rangeEnd)
+
+      if (beforeError) {
+        console.error(`❌ [DEBUG] Error fetching page ${beforePage}:`, beforeError)
+        hasMoreBefore = false
+        continue
+      }
+
+      console.log(`📦 [DEBUG] Page ${beforePage}: received ${beforeData?.length || 0} records, total so far: ${beforeSnapshot.size}`)
 
       if (beforeData && beforeData.length > 0) {
         beforeData.forEach((record: any) => {
@@ -453,14 +467,18 @@ Deno.serve(async (req) => {
         })
 
         if (beforeData.length < pageSize) {
+          console.log(`✅ [DEBUG] Last page reached (${beforeData.length} < ${pageSize})`)
           hasMoreBefore = false
         } else {
           beforePage++
         }
       } else {
+        console.log(`⚠️ [DEBUG] Empty page, stopping pagination`)
         hasMoreBefore = false
       }
     }
+
+    console.log(`✅ [DEBUG] Pagination complete: ${beforePage + 1} pages, ${beforeSnapshot.size} total records`)
 
     console.log(`📸 Before snapshot: ${beforeSnapshot.size} records`)
 
@@ -496,13 +514,27 @@ Deno.serve(async (req) => {
     let afterPage = 0
     let hasMoreAfter = true
 
+    console.log(`🔍 [DEBUG] Starting AFTER pagination with pageSize=${pageSize}`)
+
     while (hasMoreAfter) {
-      const { data: afterData } = await supabaseClient
+      const rangeStart = afterPage * pageSize
+      const rangeEnd = (afterPage + 1) * pageSize - 1
+      console.log(`🔍 [DEBUG] AFTER - Fetching page ${afterPage}, range: ${rangeStart}-${rangeEnd}`)
+
+      const { data: afterData, error: afterError } = await supabaseClient
         .from('availability')
         .select('unit_id, date, status')
         .gte('date', '2026-01-01')
         .lte('date', '2026-12-31')
-        .range(afterPage * pageSize, (afterPage + 1) * pageSize - 1)
+        .range(rangeStart, rangeEnd)
+
+      if (afterError) {
+        console.error(`❌ [DEBUG] AFTER - Error fetching page ${afterPage}:`, afterError)
+        hasMoreAfter = false
+        continue
+      }
+
+      console.log(`📦 [DEBUG] AFTER - Page ${afterPage}: received ${afterData?.length || 0} records, total so far: ${afterSnapshot.size}`)
 
       if (afterData && afterData.length > 0) {
         afterData.forEach((record: any) => {
@@ -515,14 +547,18 @@ Deno.serve(async (req) => {
         })
 
         if (afterData.length < pageSize) {
+          console.log(`✅ [DEBUG] AFTER - Last page reached (${afterData.length} < ${pageSize})`)
           hasMoreAfter = false
         } else {
           afterPage++
         }
       } else {
+        console.log(`⚠️ [DEBUG] AFTER - Empty page, stopping pagination`)
         hasMoreAfter = false
       }
     }
+
+    console.log(`✅ [DEBUG] AFTER - Pagination complete: ${afterPage + 1} pages, ${afterSnapshot.size} total records`)
 
     console.log(`📸 After snapshot: ${afterSnapshot.size} records`)
 
