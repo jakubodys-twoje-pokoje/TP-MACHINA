@@ -37,3 +37,6 @@ CREATE POLICY "Allow authenticated users to delete sync logs"
 
 -- Comment
 COMMENT ON TABLE sync_logs IS 'Stores logs from automatic availability synchronization with Hotres API';
+
+-- Enable realtime for this table
+ALTER PUBLICATION supabase_realtime ADD TABLE sync_logs;
