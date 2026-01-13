@@ -55,39 +55,31 @@ function uuidv4(): string {
   })
 }
 
-async function fetchWithProxy(targetUrl: string, accessToken: string): Promise<string> {
-  const functionUrl = 'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/hotres-proxy'
-
-  const res = await fetch(functionUrl, {
-    method: 'POST',
+async function fetchFromHotres(targetUrl: string): Promise<string> {
+  // Edge Functions run server-side, so we can directly call Hotres API (no CORS issues)
+  const res = await fetch(targetUrl, {
+    method: 'GET',
     headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
+      'Accept': 'application/json',
     },
-    body: JSON.stringify({ url: targetUrl })
   })
 
   if (!res.ok) {
-    throw new Error(`Proxy error: ${res.status} ${res.statusText}`)
+    throw new Error(`Hotres API error: ${res.status} ${res.statusText}`)
   }
 
-  const json = await res.json()
+  const text = await res.text()
 
-  if (json.error) {
-    throw new Error(json.error)
+  if (!text || text.length === 0) {
+    throw new Error('Empty response from Hotres API')
   }
 
-  if (!json.data || json.data.length === 0) {
-    throw new Error('Empty response from server')
-  }
-
-  return json.data
+  return text
 }
 
 async function syncPropertyAvailability(
   property: Property,
-  supabaseClient: any,
-  accessToken: string
+  supabaseClient: any
 ): Promise<void> {
   const apiUser = "admin@twojepokoje.com.pl"
   const apiPass = "Admin123@@"
@@ -122,7 +114,7 @@ async function syncPropertyAvailability(
     const tillDate = `${year}-12-31`
 
     const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`
-    const rawResponse = await fetchWithProxy(targetUrl, accessToken)
+    const rawResponse = await fetchFromHotres(targetUrl)
 
     // Parse response
     const jsonText = rawResponse.trim().replace(/^\uFEFF/, '')
@@ -249,9 +241,6 @@ Deno.serve(async (req) => {
 
     const supabaseClient = createClient(supabaseUrl, supabaseServiceKey)
 
-    // Get access token for proxy calls (use service key)
-    const accessToken = supabaseServiceKey
-
     // Fetch all properties with hotres_id
     const { data: properties, error: propertiesError } = await supabaseClient
       .from('properties')
@@ -273,7 +262,7 @@ Deno.serve(async (req) => {
 
     // Sync all properties in parallel
     const results = await Promise.allSettled(
-      properties.map(property => syncPropertyAvailability(property, supabaseClient, accessToken))
+      properties.map(property => syncPropertyAvailability(property, supabaseClient))
     )
 
     // Collect successes and errors
