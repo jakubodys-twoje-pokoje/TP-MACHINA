@@ -19,6 +19,23 @@ interface AvailabilityItem {
   }>
 }
 
+interface AvailabilitySnapshot {
+  unit_id: string
+  date: string
+  status: string
+}
+
+interface DateRangeChange {
+  unitId: string
+  unitName: string
+  propertyId: string
+  propertyName: string
+  userId: string
+  changeType: 'available' | 'blocked'
+  startDate: string
+  endDate: string
+}
+
 // Check if current time is within allowed hours (04:00 - 01:00 Polish time)
 function isWithinAllowedHours(): boolean {
   const now = new Date()
@@ -75,6 +92,149 @@ async function fetchFromHotres(targetUrl: string): Promise<string> {
   }
 
   return text
+}
+
+// Group consecutive dates with same change type into ranges
+function groupConsecutiveDates(changes: Map<string, { from: string; to: string; date: string }>): Array<{ startDate: string; endDate: string; changeType: 'available' | 'blocked' }> {
+  const sortedDates = Array.from(changes.entries())
+    .map(([date, change]) => ({ date, from: change.from, to: change.to }))
+    .sort((a, b) => a.date.localeCompare(b.date))
+
+  const ranges: Array<{ startDate: string; endDate: string; changeType: 'available' | 'blocked' }> = []
+
+  if (sortedDates.length === 0) return ranges
+
+  let currentRange = {
+    startDate: sortedDates[0].date,
+    endDate: sortedDates[0].date,
+    changeType: (sortedDates[0].to === 'booked' ? 'blocked' : 'available') as 'available' | 'blocked'
+  }
+
+  for (let i = 1; i < sortedDates.length; i++) {
+    const current = sortedDates[i]
+    const prev = sortedDates[i - 1]
+    const currentChangeType = (current.to === 'booked' ? 'blocked' : 'available') as 'available' | 'blocked'
+
+    // Check if dates are consecutive (1 day apart)
+    const prevDate = new Date(prev.date)
+    const currDate = new Date(current.date)
+    const dayDiff = (currDate.getTime() - prevDate.getTime()) / (1000 * 60 * 60 * 24)
+
+    if (dayDiff === 1 && currentChangeType === currentRange.changeType) {
+      // Extend current range
+      currentRange.endDate = current.date
+    } else {
+      // Save current range and start new one
+      ranges.push({ ...currentRange })
+      currentRange = {
+        startDate: current.date,
+        endDate: current.date,
+        changeType: currentChangeType
+      }
+    }
+  }
+
+  // Don't forget the last range
+  ranges.push(currentRange)
+
+  return ranges
+}
+
+// Detect availability changes and create notifications
+async function detectChangesAndNotify(
+  supabaseClient: any,
+  beforeSnapshot: Map<string, AvailabilitySnapshot>,
+  afterSnapshot: Map<string, AvailabilitySnapshot>
+): Promise<void> {
+  console.log(`🔍 Detecting changes... Before: ${beforeSnapshot.size}, After: ${afterSnapshot.size}`)
+
+  // Group changes by unit
+  const changesByUnit = new Map<string, {
+    unitId: string
+    unitName: string
+    propertyId: string
+    propertyName: string
+    userId: string
+    changes: Map<string, { from: string; to: string; date: string }>
+  }>()
+
+  // Compare snapshots to find changes
+  for (const [key, afterRecord] of afterSnapshot.entries()) {
+    const beforeRecord = beforeSnapshot.get(key)
+
+    if (beforeRecord && beforeRecord.status !== afterRecord.status) {
+      // Status changed!
+      const unitKey = afterRecord.unit_id
+
+      if (!changesByUnit.has(unitKey)) {
+        // Fetch unit and property details
+        const { data: unitData } = await supabaseClient
+          .from('units')
+          .select('id, name, property_id, properties(id, name, user_id)')
+          .eq('id', afterRecord.unit_id)
+          .single()
+
+        if (unitData && unitData.properties) {
+          changesByUnit.set(unitKey, {
+            unitId: unitData.id,
+            unitName: unitData.name,
+            propertyId: unitData.properties.id,
+            propertyName: unitData.properties.name,
+            userId: unitData.properties.user_id,
+            changes: new Map()
+          })
+        }
+      }
+
+      const unitChanges = changesByUnit.get(unitKey)
+      if (unitChanges) {
+        unitChanges.changes.set(afterRecord.date, {
+          from: beforeRecord.status,
+          to: afterRecord.status,
+          date: afterRecord.date
+        })
+      }
+    }
+  }
+
+  console.log(`📊 Found changes in ${changesByUnit.size} units`)
+
+  // Create notifications for each unit's date ranges
+  const notifications: any[] = []
+
+  for (const [unitId, unitData] of changesByUnit.entries()) {
+    const ranges = groupConsecutiveDates(unitData.changes)
+
+    for (const range of ranges) {
+      notifications.push({
+        user_id: unitData.userId,
+        property_id: unitData.propertyId,
+        unit_id: unitData.unitId,
+        property_name: unitData.propertyName,
+        unit_name: unitData.unitName,
+        change_type: range.changeType,
+        start_date: range.startDate,
+        end_date: range.endDate,
+        is_read: false
+      })
+    }
+  }
+
+  // Insert notifications in batches
+  if (notifications.length > 0) {
+    const BATCH_SIZE = 100
+    for (let i = 0; i < notifications.length; i += BATCH_SIZE) {
+      const batch = notifications.slice(i, i + BATCH_SIZE)
+      const { error } = await supabaseClient
+        .from('notifications')
+        .insert(batch)
+
+      if (error) {
+        console.error('Failed to insert notifications:', error)
+      }
+    }
+    console.log(`✅ Created ${notifications.length} notifications`)
+  }
 }
 
 async function syncPropertyAvailability(
@@ -260,6 +420,26 @@ Deno.serve(async (req) => {
 
     console.log(`🔄 Starting sync for ${properties.length} properties...`)
 
+    // Take snapshot of current availability state BEFORE syncing
+    const beforeSnapshot = new Map<string, AvailabilitySnapshot>()
+    const { data: beforeData } = await supabaseClient
+      .from('availability')
+      .select('unit_id, date, status')
+      .gte('date', '2026-01-01')
+      .lte('date', '2026-12-31')
+
+    if (beforeData) {
+      beforeData.forEach((record: any) => {
+        const key = `${record.unit_id}_${record.date}`
+        beforeSnapshot.set(key, {
+          unit_id: record.unit_id,
+          date: record.date,
+          status: record.status
+        })
+      })
+    }
+    console.log(`📸 Before snapshot: ${beforeSnapshot.size} records`)
+
     // Sync all properties in parallel
     const results = await Promise.allSettled(
       properties.map(property => syncPropertyAvailability(property, supabaseClient))
@@ -284,6 +464,29 @@ Deno.serve(async (req) => {
         })
       }
     })
+
+    // Take snapshot AFTER syncing to detect changes
+    const afterSnapshot = new Map<string, AvailabilitySnapshot>()
+    const { data: afterData } = await supabaseClient
+      .from('availability')
+      .select('unit_id, date, status')
+      .gte('date', '2026-01-01')
+      .lte('date', '2026-12-31')
+
+    if (afterData) {
+      afterData.forEach((record: any) => {
+        const key = `${record.unit_id}_${record.date}`
+        afterSnapshot.set(key, {
+          unit_id: record.unit_id,
+          date: record.date,
+          status: record.status
+        })
+      })
+    }
+    console.log(`📸 After snapshot: ${afterSnapshot.size} records`)
+
+    // Detect changes and create notifications
+    await detectChangesAndNotify(supabaseClient, beforeSnapshot, afterSnapshot)
 
     // Save log to database
     const { error: logError } = await supabaseClient
