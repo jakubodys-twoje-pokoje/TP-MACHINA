@@ -145,7 +145,7 @@ async function detectChangesAndNotify(
   supabaseClient: any,
   beforeSnapshot: Map<string, AvailabilitySnapshot>,
   afterSnapshot: Map<string, AvailabilitySnapshot>
-): Promise<void> {
+): Promise<{ unitsWithChanges: number; notificationsCreated: number }> {
   console.log(`🔍 Detecting changes... Before: ${beforeSnapshot.size}, After: ${afterSnapshot.size}`)
 
   // Group changes by unit
@@ -197,7 +197,8 @@ async function detectChangesAndNotify(
     }
   }
 
-  console.log(`📊 Found changes in ${changesByUnit.size} units`)
+  const unitsWithChanges = changesByUnit.size
+  console.log(`📊 Found changes in ${unitsWithChanges} units`)
 
   // Create notifications for each unit's date ranges
   const notifications: any[] = []
@@ -221,6 +222,7 @@ async function detectChangesAndNotify(
   }
 
   // Insert notifications in batches
+  let notificationsCreated = 0
   if (notifications.length > 0) {
     const BATCH_SIZE = 100
     for (let i = 0; i < notifications.length; i += BATCH_SIZE) {
@@ -231,10 +233,14 @@ async function detectChangesAndNotify(
 
       if (error) {
         console.error('Failed to insert notifications:', error)
+      } else {
+        notificationsCreated += batch.length
       }
     }
-    console.log(`✅ Created ${notifications.length} notifications`)
+    console.log(`✅ Created ${notificationsCreated} notifications`)
   }
+
+  return { unitsWithChanges, notificationsCreated }
 }
 
 async function syncPropertyAvailability(
@@ -521,16 +527,19 @@ Deno.serve(async (req) => {
     console.log(`📸 After snapshot: ${afterSnapshot.size} records`)
 
     // Detect changes and create notifications
-    await detectChangesAndNotify(supabaseClient, beforeSnapshot, afterSnapshot)
+    const detectionStats = await detectChangesAndNotify(supabaseClient, beforeSnapshot, afterSnapshot)
 
-    // Save log to database
+    // Save log to database with detection statistics
     const { error: logError } = await supabaseClient
       .from('sync_logs')
       .insert({
         success_count: successes.length,
         error_count: errors.length,
         successes: successes,
-        errors: errors
+        errors: errors,
+        records_compared: afterSnapshot.size,
+        units_with_changes: detectionStats.unitsWithChanges,
+        notifications_created: detectionStats.notificationsCreated
       })
 
     if (logError) {

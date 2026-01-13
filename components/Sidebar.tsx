@@ -225,7 +225,7 @@ export const Sidebar: React.FC = () => {
                           }
                         }}
                       >
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-4 flex-1">
                           <div className="text-xs text-slate-400 font-mono">
                             <div className="font-bold">{timeStr}</div>
                             <div className="text-[10px]">{dateStr}</div>
@@ -241,6 +241,26 @@ export const Sidebar: React.FC = () => {
                               <div className="flex items-center gap-1 text-red-400">
                                 <XCircle size={14} />
                                 <span className="font-bold">{log.errorCount}</span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 text-[10px] text-slate-500 ml-auto">
+                            {log.recordsCompared !== undefined && log.recordsCompared > 0 && (
+                              <div className="flex items-center gap-1">
+                                <span>Porównano:</span>
+                                <span className="font-bold text-slate-400">{log.recordsCompared.toLocaleString()}</span>
+                              </div>
+                            )}
+                            {log.unitsWithChanges !== undefined && log.unitsWithChanges > 0 && (
+                              <div className="flex items-center gap-1">
+                                <span>Zmian:</span>
+                                <span className="font-bold text-yellow-400">{log.unitsWithChanges}</span>
+                              </div>
+                            )}
+                            {log.notificationsCreated !== undefined && log.notificationsCreated > 0 && (
+                              <div className="flex items-center gap-1">
+                                <span>Powiadomień:</span>
+                                <span className="font-bold text-blue-400">{log.notificationsCreated}</span>
                               </div>
                             )}
                           </div>

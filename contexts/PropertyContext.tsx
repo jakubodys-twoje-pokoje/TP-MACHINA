@@ -9,6 +9,9 @@ export interface SyncLogEntry {
   errorCount: number;
   successes: Array<{ propertyName: string; propertyId: string }>;
   errors: Array<{ propertyName: string; propertyId: string; error: string }>;
+  recordsCompared?: number;
+  unitsWithChanges?: number;
+  notificationsCreated?: number;
 }
 
 interface PropertyContextType {
@@ -59,7 +62,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         successCount: log.success_count,
         errorCount: log.error_count,
         successes: log.successes || [],
-        errors: log.errors || []
+        errors: log.errors || [],
+        recordsCompared: log.records_compared || 0,
+        unitsWithChanges: log.units_with_changes || 0,
+        notificationsCreated: log.notifications_created || 0
       }));
 
       setSyncLogs(logs);
@@ -140,7 +146,10 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             successCount: newLog.success_count,
             errorCount: newLog.error_count,
             successes: newLog.successes || [],
-            errors: newLog.errors || []
+            errors: newLog.errors || [],
+            recordsCompared: newLog.records_compared || 0,
+            unitsWithChanges: newLog.units_with_changes || 0,
+            notificationsCreated: newLog.notifications_created || 0
           };
           setSyncLogs(prev => [syncLogEntry, ...prev].slice(0, 100));
         }
