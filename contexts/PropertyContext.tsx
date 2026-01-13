@@ -47,13 +47,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     const saved = localStorage.getItem('autoSyncEnabled');
     return saved !== null ? saved === 'true' : true; // domyślnie włączone
   });
-  const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>(() => {
-    const saved = localStorage.getItem('syncLogs');
-    return saved ? JSON.parse(saved) : [];
-  });
-  const globalSyncTimerRef = React.useRef<number | null>(null);
-  const currentCycleSuccessRef = React.useRef<Array<{ propertyName: string; propertyId: string }>>([]);
-  const currentCycleErrorRef = React.useRef<Array<{ propertyName: string; propertyId: string; error: string }>>([]);
+  const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
 
   const toggleAutoSync = useCallback(() => {
     setAutoSyncEnabled(prev => {
@@ -64,28 +58,39 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     });
   }, []);
 
-  const clearSyncLogs = useCallback(() => {
-    setSyncLogs([]);
-    localStorage.removeItem('syncLogs');
+  const fetchSyncLogs = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('sync_logs')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (error) throw error;
+
+      // Transform database format to frontend format
+      const logs: SyncLogEntry[] = (data || []).map(log => ({
+        timestamp: log.created_at,
+        successCount: log.success_count,
+        errorCount: log.error_count,
+        successes: log.successes || [],
+        errors: log.errors || []
+      }));
+
+      setSyncLogs(logs);
+    } catch (err: any) {
+      console.error('Failed to fetch sync logs:', err.message);
+    }
   }, []);
 
-  const addSyncLog = useCallback((
-    successes: Array<{ propertyName: string; propertyId: string }>,
-    errors: Array<{ propertyName: string; propertyId: string; error: string }>
-  ) => {
-    const newLog: SyncLogEntry = {
-      timestamp: new Date().toISOString(),
-      successCount: successes.length,
-      errorCount: errors.length,
-      successes,
-      errors
-    };
-
-    setSyncLogs(prev => {
-      const updated = [newLog, ...prev].slice(0, 100); // Keep last 100 logs
-      localStorage.setItem('syncLogs', JSON.stringify(updated));
-      return updated;
-    });
+  const clearSyncLogs = useCallback(async () => {
+    try {
+      const { error } = await supabase.from('sync_logs').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      if (error) throw error;
+      setSyncLogs([]);
+    } catch (err: any) {
+      console.error('Failed to clear sync logs:', err.message);
+    }
   }, []);
 
   const fetchProperties = useCallback(async () => {
@@ -127,6 +132,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   useEffect(() => {
     fetchProperties();
     fetchNotifications();
+    fetchSyncLogs();
 
     const channel = supabase
       .channel('schema-db-changes')
@@ -139,12 +145,27 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
           setUnreadCount(prev => prev + 1);
         }
       )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'sync_logs' },
+        (payload) => {
+          const newLog = payload.new as any;
+          const syncLogEntry: SyncLogEntry = {
+            timestamp: newLog.created_at,
+            successCount: newLog.success_count,
+            errorCount: newLog.error_count,
+            successes: newLog.successes || [],
+            errors: newLog.errors || []
+          };
+          setSyncLogs(prev => [syncLogEntry, ...prev].slice(0, 100));
+        }
+      )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchProperties, fetchNotifications]);
+  }, [fetchProperties, fetchNotifications, fetchSyncLogs]);
 
   const addProperty = useCallback(async (name: string, description: string | null, email: string | null, phone: string | null, hotresId: string | null) => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -696,112 +717,9 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     await supabase.from('notifications').delete().eq('id', id);
   }, []);
 
-  // Global auto-sync: sync properties in batches (one at a time every 10 seconds)
-  useEffect(() => {
-    // Clear any existing timer
-    if (globalSyncTimerRef.current) {
-      clearInterval(globalSyncTimerRef.current);
-    }
-
-    // Check if auto-sync is enabled
-    if (!autoSyncEnabled) {
-      console.log('⊘ Auto-sync is disabled');
-      return;
-    }
-
-    // Get all properties with hotres_id
-    const propertiesWithHotres = properties.filter(p => p.hotres_id);
-
-    if (propertiesWithHotres.length === 0) {
-      console.log('⊘ No properties with Hotres ID to sync');
-      return;
-    }
-
-    let currentIndex = 0;
-
-    // Check if current time is within allowed hours (04:00 - 01:00 Polish time)
-    const isWithinAllowedHours = () => {
-      const now = new Date();
-      const polandTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Warsaw' }));
-      const hour = polandTime.getHours();
-
-      // Allowed: 04:00 - 01:00 (czyli blocked: 01:00 - 04:00)
-      // Jeśli godzina >= 4 ALBO godzina < 1, to OK
-      const isAllowed = hour >= 4 || hour < 1;
-
-      if (!isAllowed) {
-        console.log(`⏸️  Sync paused (downtime 01:00-04:00 Polish time), current: ${hour}:${polandTime.getMinutes()}`);
-      }
-
-      return isAllowed;
-    };
-
-    // Function to sync next property in the queue
-    const syncNextProperty = async () => {
-      if (propertiesWithHotres.length === 0) return;
-
-      // Check if we're within allowed hours
-      if (!isWithinAllowedHours()) {
-        return; // Skip this sync cycle
-      }
-
-      const property = propertiesWithHotres[currentIndex];
-
-      try {
-        console.log(`🔄 [${currentIndex + 1}/${propertiesWithHotres.length}] Syncing ${property.name} at ${new Date().toLocaleTimeString()}`);
-        await syncAvailability(property.hotres_id!, property.id);
-        console.log(`✓ Synced ${property.name}`);
-        currentCycleSuccessRef.current.push({
-          propertyName: property.name,
-          propertyId: property.id
-        });
-      } catch (error: any) {
-        console.error(`✗ Failed to sync ${property.name}:`, error.message);
-        currentCycleErrorRef.current.push({
-          propertyName: property.name,
-          propertyId: property.id,
-          error: error.message
-        });
-      }
-
-      // Move to next property (loop back to start when done)
-      currentIndex = (currentIndex + 1) % propertiesWithHotres.length;
-
-      // If we completed a full cycle (back to start), log the results
-      if (currentIndex === 0) {
-        const successes = currentCycleSuccessRef.current;
-        const errors = currentCycleErrorRef.current;
-
-        if (successes.length > 0 || errors.length > 0) {
-          addSyncLog(successes, errors);
-          console.log(`📊 Cycle complete: ✓${successes.length} ✗${errors.length}`);
-        }
-
-        // Reset arrays for next cycle
-        currentCycleSuccessRef.current = [];
-        currentCycleErrorRef.current = [];
-      }
-    };
-
-    // Start syncing after 5 seconds (to avoid immediate load on app start)
-    const initialTimeout = setTimeout(() => {
-      syncNextProperty();
-    }, 5000);
-
-    // Set up recurring sync every 10 seconds
-    globalSyncTimerRef.current = window.setInterval(() => {
-      syncNextProperty();
-    }, 10000);
-
-    console.log(`⏰ Global auto-sync enabled: ${propertiesWithHotres.length} properties, one every 10 seconds (04:00-01:00 Polish time)`);
-
-    return () => {
-      clearTimeout(initialTimeout);
-      if (globalSyncTimerRef.current) {
-        clearInterval(globalSyncTimerRef.current);
-      }
-    };
-  }, [properties, syncAvailability, autoSyncEnabled, addSyncLog]);
+  // Note: Global auto-sync is now handled by Supabase backend (pg_cron + Edge Function)
+  // The backend syncs all properties every 2 minutes (04:00-01:00 Polish time)
+  // Frontend just displays the sync logs from the database
 
   return (
     <PropertyContext.Provider value={{
