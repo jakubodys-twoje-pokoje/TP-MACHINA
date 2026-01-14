@@ -31,6 +31,7 @@ interface PropertyContextType {
   syncRates: (oid: string, propertyId: string) => Promise<string>;
   fetchNotifications: () => Promise<void>;
   markNotificationAsRead: (id: string) => Promise<void>;
+  markNotificationAsUnread: (id: string) => Promise<void>;
   markAllNotificationsAsRead: () => Promise<void>;
   deleteAllReadNotifications: () => Promise<void>;
   deleteNotification: (id: string) => Promise<void>;
@@ -718,6 +719,12 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     await supabase.from('notifications').update({ is_read: true }).eq('id', id);
   }, []);
 
+  const markNotificationAsUnread = useCallback(async (id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: false } : n));
+    setUnreadCount(prev => prev + 1);
+    await supabase.from('notifications').update({ is_read: false }).eq('id', id);
+  }, []);
+
   const markAllNotificationsAsRead = useCallback(async () => {
     setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
     setUnreadCount(0);
@@ -759,6 +766,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       syncRates,
       fetchNotifications,
       markNotificationAsRead,
+      markNotificationAsUnread,
       markAllNotificationsAsRead,
       deleteAllReadNotifications,
       deleteNotification

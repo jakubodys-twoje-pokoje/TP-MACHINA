@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useProperties } from '../contexts/PropertyContext';
 import { Notification } from '../types';
-import { Loader2, Bell, Check, Trash2, CheckCheck, Inbox, ArrowUp, ArrowDown, LayoutGrid, List } from 'lucide-react';
+import { Loader2, Bell, Check, Trash2, CheckCheck, Inbox, ArrowUp, ArrowDown, LayoutGrid, List, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const formatDateRange = (start: string, end: string) => {
@@ -13,7 +13,12 @@ const formatDateRange = (start: string, end: string) => {
   return `${startDate.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' })} - ${endDate.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' })}`;
 };
 
-const NotificationItem: React.FC<{ notification: Notification; onMarkRead: (id: string) => void; onDelete: (id: string) => void; }> = ({ notification, onMarkRead, onDelete }) => {
+const NotificationItem: React.FC<{
+  notification: Notification;
+  onMarkRead: (id: string) => void;
+  onMarkUnread: (id: string) => void;
+  onDelete: (id: string) => void;
+}> = ({ notification, onMarkRead, onMarkUnread, onDelete }) => {
   const isAvailable = notification.change_type === 'available';
   const createdDate = new Date(notification.created_at);
   const formattedTime = createdDate.toLocaleString('pl-PL', {
@@ -49,6 +54,11 @@ const NotificationItem: React.FC<{ notification: Notification; onMarkRead: (id: 
             <Check size={16} />
           </button>
         )}
+        {notification.is_read && (
+          <button onClick={() => onMarkUnread(notification.id)} title="Przywróć do nieodczytanych" className="p-2 text-slate-400 hover:text-indigo-400 hover:bg-indigo-500/10 rounded-md transition-colors">
+            <RotateCcw size={16} />
+          </button>
+        )}
          <button onClick={() => onDelete(notification.id)} title="Usuń" className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-md transition-colors">
             <Trash2 size={16} />
           </button>
@@ -59,8 +69,9 @@ const NotificationItem: React.FC<{ notification: Notification; onMarkRead: (id: 
 
 
 export const Dashboard: React.FC = () => {
-  const { notifications, loading, markNotificationAsRead, markAllNotificationsAsRead, deleteAllReadNotifications, deleteNotification } = useProperties();
+  const { notifications, loading, markNotificationAsRead, markNotificationAsUnread, markAllNotificationsAsRead, deleteAllReadNotifications, deleteNotification } = useProperties();
   const [groupByProperty, setGroupByProperty] = useState(false);
+  const [collapsedReadGroups, setCollapsedReadGroups] = useState<Set<string>>(new Set());
 
   const unreadNotifications = notifications.filter(n => !n.is_read);
   const readNotifications = notifications.filter(n => n.is_read).slice(0, 20); // Show last 20 read
@@ -97,7 +108,17 @@ export const Dashboard: React.FC = () => {
       groups.get(n.property_id)!.notifications.push(n);
     });
 
-    return Array.from(groups.values());
+    const groupsArray = Array.from(groups.values());
+
+    // Set all groups as collapsed by default on first render
+    setCollapsedReadGroups(prev => {
+      if (prev.size === 0 && groupsArray.length > 0) {
+        return new Set(groupsArray.map(g => g.propertyId));
+      }
+      return prev;
+    });
+
+    return groupsArray;
   }, [readNotifications]);
 
   return (
@@ -153,7 +174,7 @@ export const Dashboard: React.FC = () => {
                       </div>
                       <div className="space-y-2 pl-4">
                         {group.notifications.map(n => (
-                          <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onDelete={deleteNotification} />
+                          <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onMarkUnread={markNotificationAsUnread} onDelete={deleteNotification} />
                         ))}
                       </div>
                     </div>
@@ -162,7 +183,7 @@ export const Dashboard: React.FC = () => {
               ) : (
                 // Flat view
                 <div className="space-y-3">
-                  {unreadNotifications.map(n => <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onDelete={deleteNotification} />)}
+                  {unreadNotifications.map(n => <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onMarkUnread={markNotificationAsUnread} onDelete={deleteNotification} />)}
                 </div>
               )
             ) : (
@@ -188,31 +209,51 @@ export const Dashboard: React.FC = () => {
               </div>
               <div className="opacity-60">
                 {groupByProperty ? (
-                  // Grouped view by property
+                  // Grouped view by property (collapsible)
                   <div className="space-y-6">
-                    {groupedRead.map(group => (
-                      <div key={group.propertyId} className="space-y-2">
-                        <div className="flex items-center gap-2 px-3 py-2 bg-slate-900/50 rounded-lg border border-slate-700">
-                          <Link
-                            to={`/property/${group.propertyId}/units`}
-                            className="font-bold text-indigo-400 hover:text-indigo-300 transition-colors"
+                    {groupedRead.map(group => {
+                      const isCollapsed = collapsedReadGroups.has(group.propertyId);
+                      return (
+                        <div key={group.propertyId} className="space-y-2">
+                          <div
+                            className="flex items-center gap-2 px-3 py-2 bg-slate-900/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800/50 transition-colors"
+                            onClick={() => {
+                              setCollapsedReadGroups(prev => {
+                                const newSet = new Set(prev);
+                                if (newSet.has(group.propertyId)) {
+                                  newSet.delete(group.propertyId);
+                                } else {
+                                  newSet.add(group.propertyId);
+                                }
+                                return newSet;
+                              });
+                            }}
                           >
-                            {group.propertyName}
-                          </Link>
-                          <span className="text-xs text-slate-500">({group.notifications.length})</span>
+                            {isCollapsed ? <ChevronRight size={16} className="text-slate-500" /> : <ChevronDown size={16} className="text-slate-500" />}
+                            <Link
+                              to={`/property/${group.propertyId}/units`}
+                              className="font-bold text-indigo-400 hover:text-indigo-300 transition-colors"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {group.propertyName}
+                            </Link>
+                            <span className="text-xs text-slate-500">({group.notifications.length})</span>
+                          </div>
+                          {!isCollapsed && (
+                            <div className="space-y-2 pl-4">
+                              {group.notifications.map(n => (
+                                <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onMarkUnread={markNotificationAsUnread} onDelete={deleteNotification} />
+                              ))}
+                            </div>
+                          )}
                         </div>
-                        <div className="space-y-2 pl-4">
-                          {group.notifications.map(n => (
-                            <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onDelete={deleteNotification} />
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   // Flat view
                   <div className="space-y-3">
-                    {readNotifications.map(n => <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onDelete={deleteNotification} />)}
+                    {readNotifications.map(n => <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onMarkUnread={markNotificationAsUnread} onDelete={deleteNotification} />)}
                   </div>
                 )}
               </div>
