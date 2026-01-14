@@ -76,7 +76,7 @@ const NotificationItem: React.FC<{
 
 export const Dashboard: React.FC = () => {
   const { notifications, loading, markNotificationAsRead, markNotificationAsUnread, markAllNotificationsAsRead, deleteAllReadNotifications, deleteNotification } = useProperties();
-  const [groupByProperty, setGroupByProperty] = useState(false);
+  const [groupByProperty, setGroupByProperty] = useState(true);
   const [collapsedReadGroups, setCollapsedReadGroups] = useState<Set<string>>(new Set());
   const prevPropertyIdsRef = useRef<string>('');
 
