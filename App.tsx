@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { supabase, VAPID_PUBLIC_KEY } from './services/supabaseClient';
+import { supabase } from './services/supabaseClient';
 import { Auth } from './components/Auth';
 import { Layout } from './components/Layout';
 import { PropertyView } from './components/PropertyView';
@@ -17,56 +17,6 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const urlBase64ToUint8Array = (base64String: string) => {
-    const padding = '='.repeat((4 - base64String.length % 4) % 4);
-    const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
-    const rawData = window.atob(base64);
-    const outputArray = new Uint8Array(rawData.length);
-    for (let i = 0; i < rawData.length; ++i) {
-      outputArray[i] = rawData.charCodeAt(i);
-    }
-    return outputArray;
-  };
-
-  const subscribeToPush = async (userId: string) => {
-    if (!('serviceWorker' in navigator) || !window.PushManager) {
-      console.log("Push notifications not supported");
-      return;
-    }
-    try {
-      // Check if service worker is registered
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      if (registrations.length === 0) {
-        console.log("No service worker registered, skipping push subscription");
-        return;
-      }
-
-      const registration = await navigator.serviceWorker.ready;
-
-      // Check if already subscribed
-      const existingSubscription = await registration.pushManager.getSubscription();
-      if (existingSubscription) {
-        console.log("Already subscribed to push notifications");
-        return;
-      }
-
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
-      });
-      const { error } = await supabase.from('push_subscriptions').insert({
-        user_id: userId,
-        subscription: subscription
-      });
-      if (error) console.error("Subscription save error:", error);
-    } catch (error: any) {
-      // Only log if it's not a registration error (which is expected without SW)
-      if (error.name !== 'AbortError' && error.name !== 'InvalidStateError') {
-        console.error("Push subscription failed:", error);
-      }
-    }
-  };
-
   useEffect(() => {
     let mounted = true;
     const initSession = async () => {
@@ -75,9 +25,6 @@ const App: React.FC = () => {
         if (error) console.error("Supabase session error:", error);
         if (mounted) {
           setSession(data.session);
-          if (data.session?.user && Notification.permission === 'granted') {
-             subscribeToPush(data.session.user.id);
-          }
         }
       } catch (err: any) {
         console.error("Auth error:", err);
@@ -92,9 +39,6 @@ const App: React.FC = () => {
       if (mounted) {
         setSession(session);
         setLoading(false);
-        if (session?.user && Notification.permission === 'granted') {
-            subscribeToPush(session.user.id);
-        }
       }
     });
 

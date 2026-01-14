@@ -79,9 +79,13 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
-              const { error } = await supabase.from('push_subscriptions').insert({
+              // Use upsert to prevent duplicates (unique constraint on user_id + endpoint)
+              const { error } = await supabase.from('push_subscriptions').upsert({
                 user_id: user.id,
                 subscription: subscription
+              }, {
+                onConflict: 'user_id,endpoint',
+                ignoreDuplicates: false
               });
               if (error) throw error;
               alert("Powiadomienia zostały włączone!");

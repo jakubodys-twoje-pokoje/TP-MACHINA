@@ -232,6 +232,32 @@ async function detectChangesAndNotify(
         console.error('Failed to insert notifications:', error)
       } else {
         notificationsCreated += batch.length
+
+        // Send push notifications for each notification in batch
+        for (const notification of batch) {
+          try {
+            await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/send-push-notification`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+              },
+              body: JSON.stringify({
+                property_id: notification.property_id,
+                unit_id: notification.unit_id,
+                property_name: notification.property_name,
+                unit_name: notification.unit_name,
+                change_type: notification.change_type,
+                start_date: notification.start_date,
+                end_date: notification.end_date
+              })
+            })
+            console.log(`📲 Push notification sent for ${notification.property_name} - ${notification.unit_name}`)
+          } catch (pushError) {
+            console.error('Failed to send push notification:', pushError)
+            // Continue even if push fails
+          }
+        }
       }
     }
     console.log(`✅ Created ${notificationsCreated} notifications`)
