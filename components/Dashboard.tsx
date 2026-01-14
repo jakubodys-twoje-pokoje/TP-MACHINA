@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useProperties } from '../contexts/PropertyContext';
 import { Notification } from '../types';
 import { Loader2, Bell, Check, Trash2, Inbox, ArrowUp, ArrowDown, LayoutGrid, List, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
@@ -77,6 +77,7 @@ export const Dashboard: React.FC = () => {
   const { notifications, loading, markNotificationAsRead, markNotificationAsUnread, markAllNotificationsAsRead, deleteAllReadNotifications, deleteNotification } = useProperties();
   const [groupByProperty, setGroupByProperty] = useState(false);
   const [collapsedReadGroups, setCollapsedReadGroups] = useState<Set<string>>(new Set());
+  const prevPropertyIdsRef = useRef<string>('');
 
   const unreadNotifications = notifications.filter(n => !n.is_read);
   const readNotifications = notifications.filter(n => n.is_read).slice(0, 20); // Show last 20 read
@@ -118,17 +119,19 @@ export const Dashboard: React.FC = () => {
 
   // Set all read groups as collapsed by default when new properties appear
   useEffect(() => {
-    const newPropertyIds = groupedRead.map(g => g.propertyId);
+    const currentPropertyIds = groupedRead.map(g => g.propertyId).sort().join(',');
 
-    setCollapsedReadGroups(prev => {
-      const hasNewProperties = newPropertyIds.some(id => !prev.has(id));
-      if (hasNewProperties) {
+    // Only update if property IDs have changed
+    if (currentPropertyIds !== prevPropertyIdsRef.current) {
+      prevPropertyIdsRef.current = currentPropertyIds;
+
+      const propertyIds = groupedRead.map(g => g.propertyId);
+      setCollapsedReadGroups(prev => {
         const newSet = new Set(prev);
-        newPropertyIds.forEach(id => newSet.add(id));
+        propertyIds.forEach(id => newSet.add(id));
         return newSet;
-      }
-      return prev;
-    });
+      });
+    }
   }, [groupedRead]);
 
   return (
