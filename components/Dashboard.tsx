@@ -3,6 +3,7 @@ import { useProperties } from '../contexts/PropertyContext';
 import { Notification } from '../types';
 import { Loader2, Bell, Check, Trash2, Inbox, ArrowUp, ArrowDown, LayoutGrid, List, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { SyncHistory } from './SyncHistory';
 
 const formatDateRange = (start: string, end: string) => {
   const startDate = new Date(start);
@@ -262,6 +263,11 @@ export const Dashboard: React.FC = () => {
               </div>
             </section>
           )}
+
+          {/* Sync History */}
+          <section className="mt-8">
+            <SyncHistory />
+          </section>
         </>
       )}
     </div>

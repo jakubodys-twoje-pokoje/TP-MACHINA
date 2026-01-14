@@ -103,3 +103,15 @@ export interface Notification {
   read_by_email?: string | null;
   created_at: string;
 }
+
+export interface SyncHistory {
+  id: string;
+  property_id: string;
+  property_name: string;
+  synced_at: string;
+  records_compared: number;
+  changes_detected: number;
+  notifications_sent: number;
+  status: 'success' | 'error';
+  error_message?: string | null;
+}

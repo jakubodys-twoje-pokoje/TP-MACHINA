@@ -269,10 +269,15 @@ async function detectChangesAndNotify(
 async function syncPropertyAvailability(
   property: Property,
   supabaseClient: any
-): Promise<void> {
+): Promise<{ recordsCompared: number; changesDetected: number; notificationsSent: number }> {
   const apiUser = "admin@twojepokoje.com.pl"
   const apiPass = "Admin123@@"
   const oid = property.hotres_id
+
+  // Initialize metrics tracking
+  let recordsCompared = 0
+  let changesDetected = 0
+  let notificationsSent = 0
 
   await supabaseClient
     .from('properties')
@@ -339,7 +344,7 @@ async function syncPropertyAvailability(
       itemsToProcess = foundArr ? (foundArr as any[]) : vals.filter((v: any) => v && (v.type_id || v.dates))
     }
 
-    // Fetch existing availability records
+    // Fetch existing availability records (BEFORE snapshot for this property)
     const unitIds = units.map((u: any) => u.id)
     const { data: existingRows } = await supabaseClient
       .from('availability')
@@ -349,8 +354,11 @@ async function syncPropertyAvailability(
       .lte('date', tillDate)
 
     const dbMap = new Map<string, any>()
+    const beforePropertySnapshot = new Map<string, { status: string }>()
     existingRows?.forEach((row: any) => {
-      dbMap.set(`${row.unit_id}_${normalizeDate(row.date)}`, row)
+      const key = `${row.unit_id}_${normalizeDate(row.date)}`
+      dbMap.set(key, row)
+      beforePropertySnapshot.set(key, { status: row.status })
     })
 
     // Track API type_ids for diagnostics
@@ -370,6 +378,7 @@ async function syncPropertyAvailability(
       if (unitId && item.dates && Array.isArray(item.dates)) {
         matchedTypeIds.add(extId)
         for (const d of item.dates) {
+          recordsCompared++ // Count each date record from API
           const dateStr = normalizeDate(d.date)
           const key = `${unitId}_${dateStr}`
           if (processedKeys.has(key)) continue
@@ -437,6 +446,149 @@ async function syncPropertyAvailability(
       }
     }
 
+    // Take AFTER snapshot for this property to detect changes
+    const { data: afterRows } = await supabaseClient
+      .from('availability')
+      .select('unit_id, date, status')
+      .in('unit_id', unitIds)
+      .gte('date', fromDate)
+      .lte('date', tillDate)
+
+    const afterPropertySnapshot = new Map<string, { status: string }>()
+    afterRows?.forEach((row: any) => {
+      const key = `${row.unit_id}_${normalizeDate(row.date)}`
+      afterPropertySnapshot.set(key, { status: row.status })
+    })
+
+    // Detect changes by comparing before and after snapshots
+    const propertyChanges: Array<{
+      unitId: string
+      date: string
+      fromStatus: string
+      toStatus: string
+    }> = []
+
+    for (const [key, afterRecord] of afterPropertySnapshot.entries()) {
+      const beforeRecord = beforePropertySnapshot.get(key)
+      if (beforeRecord && beforeRecord.status !== afterRecord.status) {
+        changesDetected++
+        const [unitId, date] = key.split('_')
+        propertyChanges.push({
+          unitId,
+          date,
+          fromStatus: beforeRecord.status,
+          toStatus: afterRecord.status
+        })
+      }
+    }
+
+    // Group changes by unit and send notifications
+    const changesByUnit = new Map<string, Array<{ date: string; fromStatus: string; toStatus: string }>>()
+    for (const change of propertyChanges) {
+      if (!changesByUnit.has(change.unitId)) {
+        changesByUnit.set(change.unitId, [])
+      }
+      changesByUnit.get(change.unitId)!.push({
+        date: change.date,
+        fromStatus: change.fromStatus,
+        toStatus: change.toStatus
+      })
+    }
+
+    // Create and send notifications for this property
+    for (const [unitId, changes] of changesByUnit.entries()) {
+      // Fetch unit details
+      const { data: unitData } = await supabaseClient
+        .from('units')
+        .select('id, name, property_id, properties(id, name)')
+        .eq('id', unitId)
+        .single()
+
+      if (!unitData || !unitData.properties) continue
+
+      // Group consecutive dates into ranges
+      const sortedChanges = changes.sort((a, b) => a.date.localeCompare(b.date))
+      const ranges: Array<{ startDate: string; endDate: string; changeType: 'available' | 'blocked' }> = []
+
+      let currentRange: { startDate: string; endDate: string; changeType: 'available' | 'blocked' } | null = null
+
+      for (const change of sortedChanges) {
+        const changeType = change.toStatus === 'booked' ? 'blocked' : 'available'
+
+        if (!currentRange) {
+          currentRange = { startDate: change.date, endDate: change.date, changeType }
+        } else {
+          const prevDate = new Date(currentRange.endDate)
+          const currDate = new Date(change.date)
+          const dayDiff = (currDate.getTime() - prevDate.getTime()) / (1000 * 60 * 60 * 24)
+
+          if (dayDiff === 1 && changeType === currentRange.changeType) {
+            currentRange.endDate = change.date
+          } else {
+            ranges.push({ ...currentRange })
+            currentRange = { startDate: change.date, endDate: change.date, changeType }
+          }
+        }
+      }
+
+      if (currentRange) {
+        ranges.push(currentRange)
+      }
+
+      // Create notifications and send push notifications
+      for (const range of ranges) {
+        const notificationData = {
+          property_id: unitData.properties.id,
+          unit_id: unitData.id,
+          property_name: unitData.properties.name,
+          unit_name: unitData.name,
+          change_type: range.changeType,
+          start_date: range.startDate,
+          end_date: range.endDate,
+          is_read: false
+        }
+
+        // Insert notification
+        const { error: notifError } = await supabaseClient
+          .from('notifications')
+          .insert(notificationData)
+
+        if (notifError) {
+          console.error('Failed to create notification:', notifError)
+          continue
+        }
+
+        // Send push notification
+        try {
+          const pushResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/send-push-notification`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+            },
+            body: JSON.stringify({
+              property_id: notificationData.property_id,
+              unit_id: notificationData.unit_id,
+              property_name: notificationData.property_name,
+              unit_name: notificationData.unit_name,
+              change_type: notificationData.change_type,
+              start_date: notificationData.start_date,
+              end_date: notificationData.end_date
+            })
+          })
+
+          if (pushResponse.ok) {
+            notificationsSent++
+            console.log(`📲 Push sent for ${notificationData.property_name} - ${notificationData.unit_name}`)
+          }
+        } catch (pushError) {
+          console.error('Failed to send push notification:', pushError)
+        }
+      }
+    }
+
+    console.log(`📊 ${property.name} Metrics: ${recordsCompared} compared, ${changesDetected} changes, ${notificationsSent} push sent`)
+
     // Update property sync status
     await supabaseClient
       .from('properties')
@@ -448,7 +600,34 @@ async function syncPropertyAvailability(
 
     console.log(`✓ Synced ${property.name}: ${rowsToUpsert.length} records`)
 
+    // Save sync history for this property
+    await supabaseClient
+      .from('sync_history')
+      .insert({
+        property_id: property.id,
+        property_name: property.name,
+        records_compared: recordsCompared,
+        changes_detected: changesDetected,
+        notifications_sent: notificationsSent,
+        status: 'success'
+      })
+
+    return { recordsCompared, changesDetected, notificationsSent }
+
   } catch (error: any) {
+    // Save error to sync history
+    await supabaseClient
+      .from('sync_history')
+      .insert({
+        property_id: property.id,
+        property_name: property.name,
+        records_compared: recordsCompared,
+        changes_detected: changesDetected,
+        notifications_sent: notificationsSent,
+        status: 'error',
+        error_message: error.message || 'Unknown error'
+      })
+
     await supabaseClient
       .from('properties')
       .update({ availability_sync_in_progress: false })
@@ -501,73 +680,17 @@ Deno.serve(async (req) => {
 
     console.log(`🔄 Starting sync for ${properties.length} properties...`)
 
-    // Take snapshot of current availability state BEFORE syncing
-    const beforeSnapshot = new Map<string, AvailabilitySnapshot>()
-
-    // Fetch ALL availability records using pagination
-    // NOTE: Supabase has a hard limit of 1000 records per request, so we need many requests
-    let beforePage = 0
-    const pageSize = 1000  // Maximum allowed by Supabase
-    let hasMoreBefore = true
-
-    console.log(`🔍 [DEBUG] Starting pagination with pageSize=${pageSize}`)
-
-    while (hasMoreBefore) {
-      const rangeStart = beforePage * pageSize
-      const rangeEnd = rangeStart + pageSize - 1
-      console.log(`🔍 [DEBUG] Fetching page ${beforePage}, range: ${rangeStart}-${rangeEnd}`)
-
-      const { data: beforeData, error: beforeError } = await supabaseClient
-        .from('availability')
-        .select('unit_id, date, status')
-        .gte('date', '2026-01-01')
-        .lte('date', '2026-12-31')
-        .order('unit_id')
-        .order('date')
-        .range(rangeStart, rangeEnd)
-
-      if (beforeError) {
-        console.error(`❌ [DEBUG] Error fetching page ${beforePage}:`, beforeError)
-        hasMoreBefore = false
-        continue
-      }
-
-      console.log(`📦 [DEBUG] Page ${beforePage}: received ${beforeData?.length || 0} records, total so far: ${beforeSnapshot.size}`)
-
-      if (beforeData && beforeData.length > 0) {
-        beforeData.forEach((record: any) => {
-          const key = `${record.unit_id}_${record.date}`
-          beforeSnapshot.set(key, {
-            unit_id: record.unit_id,
-            date: record.date,
-            status: record.status
-          })
-        })
-
-        if (beforeData.length < pageSize) {
-          console.log(`✅ [DEBUG] Last page reached (${beforeData.length} < ${pageSize})`)
-          hasMoreBefore = false
-        } else {
-          beforePage++
-        }
-      } else {
-        console.log(`⚠️ [DEBUG] Empty page, stopping pagination`)
-        hasMoreBefore = false
-      }
-    }
-
-    console.log(`✅ [DEBUG] Pagination complete: ${beforePage + 1} pages, ${beforeSnapshot.size} total records`)
-
-    console.log(`📸 Before snapshot: ${beforeSnapshot.size} records`)
-
-    // Sync all properties in parallel
+    // Sync all properties in parallel (each property handles its own change detection and notifications)
     const results = await Promise.allSettled(
       properties.map(property => syncPropertyAvailability(property, supabaseClient))
     )
 
-    // Collect successes and errors
+    // Collect successes, errors, and aggregate metrics
     const successes: Array<{ propertyName: string; propertyId: string }> = []
     const errors: Array<{ propertyName: string; propertyId: string; error: string }> = []
+    let totalRecordsCompared = 0
+    let totalChangesDetected = 0
+    let totalNotificationsSent = 0
 
     results.forEach((result, index) => {
       const property = properties[index]
@@ -576,6 +699,9 @@ Deno.serve(async (req) => {
           propertyName: property.name,
           propertyId: property.id
         })
+        totalRecordsCompared += result.value.recordsCompared
+        totalChangesDetected += result.value.changesDetected
+        totalNotificationsSent += result.value.notificationsSent
       } else {
         errors.push({
           propertyName: property.name,
@@ -585,68 +711,7 @@ Deno.serve(async (req) => {
       }
     })
 
-    // Take snapshot AFTER syncing to detect changes
-    const afterSnapshot = new Map<string, AvailabilitySnapshot>()
-
-    // Fetch ALL availability records (not just 1000) using pagination
-    let afterPage = 0
-    let hasMoreAfter = true
-
-    console.log(`🔍 [DEBUG] Starting AFTER pagination with pageSize=${pageSize}`)
-
-    while (hasMoreAfter) {
-      const rangeStart = afterPage * pageSize
-      const rangeEnd = (afterPage + 1) * pageSize - 1
-      console.log(`🔍 [DEBUG] AFTER - Fetching page ${afterPage}, range: ${rangeStart}-${rangeEnd}`)
-
-      const { data: afterData, error: afterError } = await supabaseClient
-        .from('availability')
-        .select('unit_id, date, status', { count: 'exact' })
-        .gte('date', '2026-01-01')
-        .lte('date', '2026-12-31')
-        .order('unit_id')
-        .order('date')
-        .range(rangeStart, rangeEnd)
-        .limit(pageSize)
-
-      if (afterError) {
-        console.error(`❌ [DEBUG] AFTER - Error fetching page ${afterPage}:`, afterError)
-        hasMoreAfter = false
-        continue
-      }
-
-      console.log(`📦 [DEBUG] AFTER - Page ${afterPage}: received ${afterData?.length || 0} records, total so far: ${afterSnapshot.size}`)
-
-      if (afterData && afterData.length > 0) {
-        afterData.forEach((record: any) => {
-          const key = `${record.unit_id}_${record.date}`
-          afterSnapshot.set(key, {
-            unit_id: record.unit_id,
-            date: record.date,
-            status: record.status
-          })
-        })
-
-        if (afterData.length < pageSize) {
-          console.log(`✅ [DEBUG] AFTER - Last page reached (${afterData.length} < ${pageSize})`)
-          hasMoreAfter = false
-        } else {
-          afterPage++
-        }
-      } else {
-        console.log(`⚠️ [DEBUG] AFTER - Empty page, stopping pagination`)
-        hasMoreAfter = false
-      }
-    }
-
-    console.log(`✅ [DEBUG] AFTER - Pagination complete: ${afterPage + 1} pages, ${afterSnapshot.size} total records`)
-
-    console.log(`📸 After snapshot: ${afterSnapshot.size} records`)
-
-    // Detect changes and create notifications
-    const detectionStats = await detectChangesAndNotify(supabaseClient, beforeSnapshot, afterSnapshot)
-
-    // Save log to database with detection statistics
+    // Save global log to database with aggregated statistics
     const { error: logError } = await supabaseClient
       .from('sync_logs')
       .insert({
@@ -654,9 +719,9 @@ Deno.serve(async (req) => {
         error_count: errors.length,
         successes: successes,
         errors: errors,
-        records_compared: afterSnapshot.size,
-        units_with_changes: detectionStats.unitsWithChanges,
-        notifications_created: detectionStats.notificationsCreated
+        records_compared: totalRecordsCompared,
+        units_with_changes: totalChangesDetected,
+        notifications_created: totalNotificationsSent
       })
 
     if (logError) {
