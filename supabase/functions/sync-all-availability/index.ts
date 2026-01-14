@@ -292,10 +292,20 @@ async function syncPropertyAvailability(
 
     // Build unit mapping
     const unitMap = new Map<string, string>()
+    const unitNamesMap = new Map<string, string>()
     units.forEach((u: any) => {
-      if (u.external_id) unitMap.set(String(u.external_id).trim(), u.id)
-      if (u.external_type_id) unitMap.set(String(u.external_type_id).trim(), u.id)
+      if (u.external_id) {
+        unitMap.set(String(u.external_id).trim(), u.id)
+        unitNamesMap.set(String(u.external_id).trim(), u.name)
+      }
+      if (u.external_type_id) {
+        unitMap.set(String(u.external_type_id).trim(), u.id)
+        unitNamesMap.set(String(u.external_type_id).trim(), u.name)
+      }
     })
+
+    console.log(`📋 ${property.name}: ${units.length} units in database`)
+    console.log(`📋 Unit mapping keys:`, Array.from(unitMap.keys()).join(', '))
 
     // Fetch availability from Hotres API
     const year = 2026
@@ -343,15 +353,22 @@ async function syncPropertyAvailability(
       dbMap.set(`${row.unit_id}_${normalizeDate(row.date)}`, row)
     })
 
+    // Track API type_ids for diagnostics
+    const apiTypeIds = new Set<string>()
+    const matchedTypeIds = new Set<string>()
+    const unmatchedTypeIds = new Set<string>()
+
     // Build rows to upsert
     const rowsToUpsert: any[] = []
     const processedKeys = new Set<string>()
 
     for (const item of itemsToProcess) {
       const extId = String(item.type_id).trim()
+      apiTypeIds.add(extId)
       const unitId = unitMap.get(extId)
 
       if (unitId && item.dates && Array.isArray(item.dates)) {
+        matchedTypeIds.add(extId)
         for (const d of item.dates) {
           const dateStr = normalizeDate(d.date)
           const key = `${unitId}_${dateStr}`
@@ -370,6 +387,41 @@ async function syncPropertyAvailability(
             reservation_id: existingRow?.reservation_id || null
           })
         }
+      } else if (!unitId) {
+        // Track unmatched type_ids for diagnostics
+        unmatchedTypeIds.add(extId)
+      }
+    }
+
+    // Report diagnostics
+    console.log(`📊 ${property.name} API Statistics:`)
+    console.log(`   - API returned ${apiTypeIds.size} distinct type_ids`)
+    console.log(`   - Matched ${matchedTypeIds.size} type_ids to database units`)
+    console.log(`   - Unmatched ${unmatchedTypeIds.size} type_ids`)
+
+    if (unmatchedTypeIds.size > 0) {
+      console.log(`⚠️  UNMATCHED type_ids from API:`, Array.from(unmatchedTypeIds).join(', '))
+      console.log(`⚠️  Expected type_ids from DB:`, Array.from(unitMap.keys()).join(', '))
+
+      // Try to find similar IDs (case-insensitive, spaces removed)
+      const normalizedDbKeys = new Map<string, string>()
+      unitMap.forEach((value, key) => {
+        const normalized = key.toLowerCase().replace(/\s+/g, '')
+        normalizedDbKeys.set(normalized, key)
+      })
+
+      const suggestions: string[] = []
+      unmatchedTypeIds.forEach(unmatchedId => {
+        const normalized = unmatchedId.toLowerCase().replace(/\s+/g, '')
+        const dbKey = normalizedDbKeys.get(normalized)
+        if (dbKey) {
+          suggestions.push(`  "${unmatchedId}" might match "${dbKey}" (case/space mismatch)`)
+        }
+      })
+
+      if (suggestions.length > 0) {
+        console.log(`💡 Possible matches (with normalization):`)
+        suggestions.forEach(s => console.log(s))
       }
     }
 
