@@ -405,7 +405,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             .select('id')
             .eq('property_id', propertyId)
             .eq('external_id', String(externalId))
-            .single();
+            .maybeSingle();
 
           if (!existingUnit) {
             const insertData = {
