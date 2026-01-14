@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useProperties } from '../contexts/PropertyContext';
 import { Notification } from '../types';
-import { Loader2, Bell, Check, Trash2, Inbox, ArrowUp, ArrowDown, LayoutGrid, List, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
+import { Loader2, Bell, Check, Trash2, Inbox, ArrowUp, ArrowDown, LayoutGrid, List, ChevronDown, ChevronRight, RotateCcw, BarChart3 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { SyncHistory } from './SyncHistory';
 
@@ -78,6 +78,7 @@ export const Dashboard: React.FC = () => {
   const { notifications, loading, markNotificationAsRead, markNotificationAsUnread, markAllNotificationsAsRead, deleteAllReadNotifications, deleteNotification } = useProperties();
   const [groupByProperty, setGroupByProperty] = useState(true);
   const [collapsedReadGroups, setCollapsedReadGroups] = useState<Set<string>>(new Set());
+  const [showSyncHistory, setShowSyncHistory] = useState(false);
   const prevPropertyIdsRef = useRef<string>('');
 
   const unreadNotifications = notifications.filter(n => !n.is_read);
@@ -137,9 +138,18 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className="space-y-8">
-       <div className="border-b border-border pb-4">
-        <h2 className="text-2xl font-bold text-white">Zmiany w dostępności</h2>
-        <p className="text-slate-400 text-sm mt-1">Automatycznie wygenerowane powiadomienia o zmianach statusu kwater.</p>
+       <div className="border-b border-border pb-4 flex items-start justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-white">Zmiany w dostępności</h2>
+          <p className="text-slate-400 text-sm mt-1">Automatycznie wygenerowane powiadomienia o zmianach statusu kwater.</p>
+        </div>
+        <button
+          onClick={() => setShowSyncHistory(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
+        >
+          <BarChart3 size={18} />
+          Historia synchronizacji
+        </button>
       </div>
       
       {loading ? (
@@ -263,12 +273,32 @@ export const Dashboard: React.FC = () => {
               </div>
             </section>
           )}
-
-          {/* Sync History */}
-          <section className="mt-8">
-            <SyncHistory />
-          </section>
         </>
+      )}
+
+      {/* Sync History Modal */}
+      {showSyncHistory && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowSyncHistory(false)}>
+          <div className="bg-slate-900 rounded-xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-6 border-b border-slate-700">
+              <h2 className="text-2xl font-bold text-slate-200 flex items-center gap-2">
+                <BarChart3 size={24} />
+                Historia Synchronizacji
+              </h2>
+              <button
+                onClick={() => setShowSyncHistory(false)}
+                className="text-slate-400 hover:text-white transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="overflow-y-auto p-6">
+              <SyncHistory />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

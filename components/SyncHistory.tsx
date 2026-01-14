@@ -100,11 +100,7 @@ export const SyncHistory: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold text-slate-200 flex items-center gap-2">
-          <BarChart3 size={24} />
-          Historia Synchronizacji
-        </h2>
+      <div className="flex items-center justify-end mb-4">
         <button
           onClick={fetchSyncHistory}
           className="flex items-center gap-2 px-3 py-2 text-sm bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
