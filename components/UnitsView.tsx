@@ -268,7 +268,9 @@ export const UnitsView: React.FC = () => {
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-4 mb-8">
         <div>
           <h2 className="text-2xl font-bold text-white">Kwatery / Pokoje</h2>
-          <p className="text-slate-400 text-sm mt-1">Zarządzaj pokojami w tym obiekcie</p>
+          <p className="text-slate-400 text-sm mt-1">
+            Zarządzaj pokojami w tym obiekcie · <span className="font-semibold text-slate-300">{units.length} {units.length === 1 ? 'kwatera' : units.length > 1 && units.length < 5 ? 'kwatery' : 'kwater'} łącznie</span>
+          </p>
         </div>
         {isImported && (
           <div className="flex-shrink-0">
