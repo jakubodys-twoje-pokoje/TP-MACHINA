@@ -107,13 +107,13 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
+    // Fetch ALL notifications (shared between all users)
     const { data } = await supabase
       .from('notifications')
       .select('*')
-      .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(100);
-    
+
     if (data) {
       setNotifications(data);
       setUnreadCount(data.filter(n => !n.is_read).length);
@@ -133,7 +133,36 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         (payload) => {
           const newNotification = payload.new as Notification;
           setNotifications(prev => [newNotification, ...prev]);
-          setUnreadCount(prev => prev + 1);
+          if (!newNotification.is_read) {
+            setUnreadCount(prev => prev + 1);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'notifications' },
+        (payload) => {
+          const updatedNotification = payload.new as Notification;
+          setNotifications(prev => prev.map(n =>
+            n.id === updatedNotification.id ? updatedNotification : n
+          ));
+          // Recalculate unread count
+          setNotifications(current => {
+            setUnreadCount(current.filter(n => !n.is_read).length);
+            return current;
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'notifications' },
+        (payload) => {
+          const deletedId = payload.old.id;
+          setNotifications(prev => {
+            const filtered = prev.filter(n => n.id !== deletedId);
+            setUnreadCount(filtered.filter(n => !n.is_read).length);
+            return filtered;
+          });
         }
       )
       .on(
@@ -692,18 +721,14 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   const markAllNotificationsAsRead = useCallback(async () => {
     setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
     setUnreadCount(0);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id);
-    }
+    // Update ALL notifications (shared for all users)
+    await supabase.from('notifications').update({ is_read: true }).eq('is_read', false);
   }, []);
   
   const deleteAllReadNotifications = useCallback(async () => {
     setNotifications(prev => prev.filter(n => !n.is_read));
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-        await supabase.from('notifications').delete().eq('user_id', user.id).eq('is_read', true);
-    }
+    // Delete ALL read notifications (shared for all users)
+    await supabase.from('notifications').delete().eq('is_read', true);
   }, []);
 
   const deleteNotification = useCallback(async (id: string) => {

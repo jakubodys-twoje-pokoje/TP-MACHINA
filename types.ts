@@ -92,7 +92,6 @@ export interface WorkflowEntry {
 
 export interface Notification {
   id: string;
-  user_id: string;
   property_id: string;
   unit_id: string;
   property_name: string;

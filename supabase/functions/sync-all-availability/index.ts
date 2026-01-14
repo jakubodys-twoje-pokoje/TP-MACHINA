@@ -154,7 +154,6 @@ async function detectChangesAndNotify(
     unitName: string
     propertyId: string
     propertyName: string
-    userId: string
     changes: Map<string, { from: string; to: string; date: string }>
   }>()
 
@@ -170,7 +169,7 @@ async function detectChangesAndNotify(
         // Fetch unit and property details
         const { data: unitData } = await supabaseClient
           .from('units')
-          .select('id, name, property_id, properties(id, name, user_id)')
+          .select('id, name, property_id, properties(id, name)')
           .eq('id', afterRecord.unit_id)
           .single()
 
@@ -180,7 +179,6 @@ async function detectChangesAndNotify(
             unitName: unitData.name,
             propertyId: unitData.properties.id,
             propertyName: unitData.properties.name,
-            userId: unitData.properties.user_id,
             changes: new Map()
           })
         }
@@ -208,7 +206,6 @@ async function detectChangesAndNotify(
 
     for (const range of ranges) {
       notifications.push({
-        user_id: unitData.userId,
         property_id: unitData.propertyId,
         unit_id: unitData.unitId,
         property_name: unitData.propertyName,
