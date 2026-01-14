@@ -429,27 +429,27 @@ Deno.serve(async (req) => {
     // Take snapshot of current availability state BEFORE syncing
     const beforeSnapshot = new Map<string, AvailabilitySnapshot>()
 
-    // Fetch ALL availability records (not just 1000) using pagination
+    // Fetch ALL availability records using pagination
+    // NOTE: Supabase has a hard limit of 1000 records per request, so we need many requests
     let beforePage = 0
-    const pageSize = 10000
+    const pageSize = 1000  // Maximum allowed by Supabase
     let hasMoreBefore = true
 
     console.log(`🔍 [DEBUG] Starting pagination with pageSize=${pageSize}`)
 
     while (hasMoreBefore) {
       const rangeStart = beforePage * pageSize
-      const rangeEnd = (beforePage + 1) * pageSize - 1
+      const rangeEnd = rangeStart + pageSize - 1
       console.log(`🔍 [DEBUG] Fetching page ${beforePage}, range: ${rangeStart}-${rangeEnd}`)
 
       const { data: beforeData, error: beforeError } = await supabaseClient
         .from('availability')
-        .select('unit_id, date, status', { count: 'exact' })
+        .select('unit_id, date, status')
         .gte('date', '2026-01-01')
         .lte('date', '2026-12-31')
         .order('unit_id')
         .order('date')
         .range(rangeStart, rangeEnd)
-        .limit(pageSize)
 
       if (beforeError) {
         console.error(`❌ [DEBUG] Error fetching page ${beforePage}:`, beforeError)
