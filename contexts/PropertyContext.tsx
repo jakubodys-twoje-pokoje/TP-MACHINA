@@ -352,20 +352,34 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       const roomTypeUrl = `https://panel.hotres.pl/api_roomtype?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl&type_id=${typeId}`;
 
       let roomTypeData;
+      let usedFallback = false;
       try {
         const roomTypeResponse = await fetchWithProxy(roomTypeUrl);
         roomTypeData = JSON.parse(roomTypeResponse);
       } catch (error: any) {
-        // Skip units that return 404 (no longer exist in Hotres)
+        // Use fallback data from api_object when api_roomtype returns 404
         if (error.message?.includes('404')) {
-          console.warn(`⊘ Skipping type_id ${typeId} - not found in Hotres (404)`);
-          continue;
+          console.warn(`⚠️  api_roomtype returned 404 for type_id ${typeId}, using fallback data from api_object`);
+          // Use basic data from roomType (from api_object)
+          roomTypeData = [{
+            type_id: typeId,
+            title: roomType.code || roomType.title || `Room ${typeId}`,
+            name: roomType.code || roomType.title || `Room ${typeId}`,
+            code: roomType.code,
+            single: roomType.single || '0',
+            double: roomType.double || '0',
+            sofa: roomType.sofa || '0',
+            sofa_single: roomType.sofa_single || '0',
+            // Other fields will be null/default
+          }];
+          usedFallback = true;
+        } else {
+          // Re-throw other errors
+          throw error;
         }
-        // Re-throw other errors
-        throw error;
       }
 
-      console.log(`Room type ${typeId} data:`, roomTypeData);
+      console.log(`Room type ${typeId} data:`, roomTypeData, usedFallback ? '(fallback)' : '');
 
       // roomTypeData może zawierać tablicę pokoi lub pojedynczy pokój
       const rooms = Array.isArray(roomTypeData) ? roomTypeData : [roomTypeData];
