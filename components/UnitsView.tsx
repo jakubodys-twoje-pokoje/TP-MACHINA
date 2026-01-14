@@ -38,6 +38,9 @@ export const UnitsView: React.FC = () => {
   const [editFormData, setEditFormData] = useState<Partial<Unit>>({});
   const [newFacility, setNewFacility] = useState('');
   const [newTag, setNewTag] = useState('');
+  const [showDeleteAllWarning, setShowDeleteAllWarning] = useState(false);
+  const [showDeleteAllPassword, setShowDeleteAllPassword] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
 
   const { importFromHotres } = useProperties();
 
@@ -173,6 +176,36 @@ export const UnitsView: React.FC = () => {
     }
   };
 
+  const handleDeleteAllWarning = () => {
+    setShowDeleteAllWarning(true);
+  };
+
+  const handleDeleteAllProceed = () => {
+    setShowDeleteAllWarning(false);
+    setShowDeleteAllPassword(true);
+  };
+
+  const handleDeleteAllConfirm = async () => {
+    if (deletePassword !== 'WiadroWodyGazowanej@121') {
+      alert('Nieprawidłowe hasło!');
+      return;
+    }
+
+    const { error } = await supabase
+      .from('units')
+      .delete()
+      .eq('property_id', propertyId);
+
+    if (!error) {
+      setUnits([]);
+      setShowDeleteAllPassword(false);
+      setDeletePassword('');
+      alert('Wszystkie kwatery zostały usunięte.');
+    } else {
+      alert('Błąd podczas usuwania kwater: ' + error.message);
+    }
+  };
+
   const handleToggleRow = (unitId: string) => {
     if (editingUnitId === unitId) return; // Don't collapse while editing
     setExpandedUnitId(currentId => (currentId === unitId ? null : unitId));
@@ -272,9 +305,18 @@ export const UnitsView: React.FC = () => {
             Zarządzaj pokojami w tym obiekcie · <span className="font-semibold text-slate-300">{units.length} {units.length === 1 ? 'kwatera' : units.length > 1 && units.length < 5 ? 'kwatery' : 'kwater'} łącznie</span>
           </p>
         </div>
-        {isImported && (
-          <div className="flex-shrink-0">
-            <button 
+        <div className="flex items-center gap-3">
+          {units.length > 0 && (
+            <button
+              onClick={handleDeleteAllWarning}
+              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors text-sm"
+            >
+              <Trash2 size={16} />
+              Usuń wszystkie kwatery
+            </button>
+          )}
+          {isImported && (
+            <button
               onClick={handleSync}
               disabled={isSyncing}
               className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-wait text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors text-sm"
@@ -282,8 +324,8 @@ export const UnitsView: React.FC = () => {
               {isSyncing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
               {isSyncing ? 'Synchronizuję...' : 'Synchronizuj z Hotres'}
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <div className="bg-surface rounded-xl border border-border overflow-x-auto">
@@ -443,6 +485,93 @@ export const UnitsView: React.FC = () => {
           </tbody>
         </table>
       </div>
+
+      {/* Delete All Warning Modal */}
+      {showDeleteAllWarning && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowDeleteAllWarning(false)}>
+          <div className="bg-slate-900 rounded-xl max-w-md w-full p-6 border-2 border-red-600" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-red-600/20 flex items-center justify-center">
+                <Trash2 size={24} className="text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-white">Usuń wszystkie kwatery</h3>
+                <p className="text-red-400 text-sm font-semibold">Ta akcja jest nieodwracalna!</p>
+              </div>
+            </div>
+            <div className="bg-red-950/30 border border-red-800/50 rounded-lg p-4 mb-6">
+              <p className="text-slate-300 mb-2">
+                Zamierzasz usunąć <span className="font-bold text-red-400">{units.length} {units.length === 1 ? 'kwaterę' : units.length > 1 && units.length < 5 ? 'kwatery' : 'kwater'}</span> z tego obiektu.
+              </p>
+              <p className="text-slate-400 text-sm">
+                ⚠️ Nie będzie możliwości cofnięcia tej operacji. Wszystkie dane kwater zostaną trwale usunięte z bazy danych.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowDeleteAllWarning(false)}
+                className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium transition-colors"
+              >
+                Anuluj
+              </button>
+              <button
+                onClick={handleDeleteAllProceed}
+                className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+              >
+                Kontynuuj
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete All Password Modal */}
+      {showDeleteAllPassword && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => { setShowDeleteAllPassword(false); setDeletePassword(''); }}>
+          <div className="bg-slate-900 rounded-xl max-w-md w-full p-6 border-2 border-red-600" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-red-600/20 flex items-center justify-center">
+                <Key size={24} className="text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-white">Potwierdzenie hasłem</h3>
+                <p className="text-slate-400 text-sm">Wpisz hasło aby kontynuować</p>
+              </div>
+            </div>
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Hasło zabezpieczające
+              </label>
+              <input
+                type="password"
+                value={deletePassword}
+                onChange={(e) => setDeletePassword(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleDeleteAllConfirm()}
+                placeholder="Wpisz hasło..."
+                className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                autoFocus
+              />
+              <p className="text-xs text-slate-500 mt-2">
+                💡 To dodatkowe zabezpieczenie przed przypadkowym usunięciem danych
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => { setShowDeleteAllPassword(false); setDeletePassword(''); }}
+                className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg font-medium transition-colors"
+              >
+                Anuluj
+              </button>
+              <button
+                onClick={handleDeleteAllConfirm}
+                className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+              >
+                Usuń wszystkie
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
