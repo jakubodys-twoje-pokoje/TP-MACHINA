@@ -36,10 +36,10 @@ const NotificationItem: React.FC<{ notification: Notification; onMarkRead: (id: 
           </span>
            {formatDateRange(notification.start_date, notification.end_date)}
         </p>
-        <p className="text-xs text-slate-400 mt-1">
-          <Link to={`/property/${notification.property_id}/units`} className="font-semibold text-indigo-400 hover:underline">{notification.property_name}</Link>
+        <p className="text-sm font-medium text-slate-300 mt-1">
+          <Link to={`/property/${notification.property_id}/units`} className="font-bold text-indigo-400 hover:text-indigo-300 hover:underline">{notification.property_name}</Link>
           <span className="text-slate-600 mx-1">/</span>
-          {notification.unit_name}
+          <span className="text-slate-300">{notification.unit_name}</span>
         </p>
       </div>
       <div className="flex-shrink-0 flex items-center gap-2">
