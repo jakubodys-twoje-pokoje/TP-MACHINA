@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import { useProperties } from '../contexts/PropertyContext';
 import { Notification } from '../types';
-import { Loader2, Bell, Check, Trash2, CheckCheck, Inbox, ArrowUp, ArrowDown } from 'lucide-react';
+import { Loader2, Bell, Check, Trash2, CheckCheck, Inbox, ArrowUp, ArrowDown, LayoutGrid, List } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const formatDateRange = (start: string, end: string) => {
@@ -50,9 +50,45 @@ const NotificationItem: React.FC<{ notification: Notification; onMarkRead: (id: 
 
 export const Dashboard: React.FC = () => {
   const { notifications, loading, markNotificationAsRead, markAllNotificationsAsRead, deleteAllReadNotifications, deleteNotification } = useProperties();
+  const [groupByProperty, setGroupByProperty] = useState(false);
 
   const unreadNotifications = notifications.filter(n => !n.is_read);
   const readNotifications = notifications.filter(n => n.is_read).slice(0, 20); // Show last 20 read
+
+  // Group notifications by property
+  const groupedUnread = useMemo(() => {
+    const groups = new Map<string, { propertyName: string; propertyId: string; notifications: Notification[] }>();
+
+    unreadNotifications.forEach(n => {
+      if (!groups.has(n.property_id)) {
+        groups.set(n.property_id, {
+          propertyName: n.property_name,
+          propertyId: n.property_id,
+          notifications: []
+        });
+      }
+      groups.get(n.property_id)!.notifications.push(n);
+    });
+
+    return Array.from(groups.values());
+  }, [unreadNotifications]);
+
+  const groupedRead = useMemo(() => {
+    const groups = new Map<string, { propertyName: string; propertyId: string; notifications: Notification[] }>();
+
+    readNotifications.forEach(n => {
+      if (!groups.has(n.property_id)) {
+        groups.set(n.property_id, {
+          propertyName: n.property_name,
+          propertyId: n.property_id,
+          notifications: []
+        });
+      }
+      groups.get(n.property_id)!.notifications.push(n);
+    });
+
+    return Array.from(groups.values());
+  }, [readNotifications]);
 
   return (
     <div className="space-y-8">
@@ -68,9 +104,21 @@ export const Dashboard: React.FC = () => {
           {/* Unread Notifications */}
           <section>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-white">Nieodczytane ({unreadNotifications.length})</h3>
+              <div className="flex items-center gap-3">
+                <h3 className="text-lg font-bold text-white">Nieodczytane ({unreadNotifications.length})</h3>
+                {unreadNotifications.length > 0 && (
+                  <button
+                    onClick={() => setGroupByProperty(!groupByProperty)}
+                    className="text-xs flex items-center gap-1.5 px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded-md text-slate-400 transition-colors"
+                    title={groupByProperty ? 'Widok płaski' : 'Grupuj po obiektach'}
+                  >
+                    {groupByProperty ? <List size={14} /> : <LayoutGrid size={14} />}
+                    {groupByProperty ? 'Płaska lista' : 'Grupuj po obiektach'}
+                  </button>
+                )}
+              </div>
               {unreadNotifications.length > 0 && (
-                <button 
+                <button
                   onClick={markAllNotificationsAsRead}
                   className="text-sm flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-md text-slate-300 transition-colors"
                 >
@@ -79,9 +127,34 @@ export const Dashboard: React.FC = () => {
               )}
             </div>
             {unreadNotifications.length > 0 ? (
-              <div className="space-y-3">
-                {unreadNotifications.map(n => <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onDelete={deleteNotification} />)}
-              </div>
+              groupByProperty ? (
+                // Grouped view by property
+                <div className="space-y-6">
+                  {groupedUnread.map(group => (
+                    <div key={group.propertyId} className="space-y-2">
+                      <div className="flex items-center gap-2 px-3 py-2 bg-slate-900/50 rounded-lg border border-slate-700">
+                        <Link
+                          to={`/property/${group.propertyId}/units`}
+                          className="font-bold text-indigo-400 hover:text-indigo-300 transition-colors"
+                        >
+                          {group.propertyName}
+                        </Link>
+                        <span className="text-xs text-slate-500">({group.notifications.length})</span>
+                      </div>
+                      <div className="space-y-2 pl-4">
+                        {group.notifications.map(n => (
+                          <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onDelete={deleteNotification} />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                // Flat view
+                <div className="space-y-3">
+                  {unreadNotifications.map(n => <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onDelete={deleteNotification} />)}
+                </div>
+              )
             ) : (
               <div className="text-center py-12 bg-surface rounded-xl border border-border">
                 <Inbox size={40} className="mx-auto text-slate-600 mb-4" />
@@ -96,15 +169,42 @@ export const Dashboard: React.FC = () => {
             <section>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-bold text-white">Ostatnio odczytane</h3>
-                <button 
+                <button
                   onClick={deleteAllReadNotifications}
                   className="text-sm flex items-center gap-2 px-3 py-1.5 text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
                 >
                   <Trash2 size={16} /> Usuń wszystkie przeczytane
                 </button>
               </div>
-               <div className="space-y-3 opacity-60">
-                {readNotifications.map(n => <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onDelete={deleteNotification} />)}
+              <div className="opacity-60">
+                {groupByProperty ? (
+                  // Grouped view by property
+                  <div className="space-y-6">
+                    {groupedRead.map(group => (
+                      <div key={group.propertyId} className="space-y-2">
+                        <div className="flex items-center gap-2 px-3 py-2 bg-slate-900/50 rounded-lg border border-slate-700">
+                          <Link
+                            to={`/property/${group.propertyId}/units`}
+                            className="font-bold text-indigo-400 hover:text-indigo-300 transition-colors"
+                          >
+                            {group.propertyName}
+                          </Link>
+                          <span className="text-xs text-slate-500">({group.notifications.length})</span>
+                        </div>
+                        <div className="space-y-2 pl-4">
+                          {group.notifications.map(n => (
+                            <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onDelete={deleteNotification} />
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  // Flat view
+                  <div className="space-y-3">
+                    {readNotifications.map(n => <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onDelete={deleteNotification} />)}
+                  </div>
+                )}
               </div>
             </section>
           )}
