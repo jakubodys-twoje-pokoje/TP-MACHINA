@@ -350,8 +350,20 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       console.log(`Fetching details for room type ${typeId}:`, roomType);
 
       const roomTypeUrl = `https://panel.hotres.pl/api_roomtype?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl&type_id=${typeId}`;
-      const roomTypeResponse = await fetchWithProxy(roomTypeUrl);
-      const roomTypeData = JSON.parse(roomTypeResponse);
+
+      let roomTypeData;
+      try {
+        const roomTypeResponse = await fetchWithProxy(roomTypeUrl);
+        roomTypeData = JSON.parse(roomTypeResponse);
+      } catch (error: any) {
+        // Skip units that return 404 (no longer exist in Hotres)
+        if (error.message?.includes('404')) {
+          console.warn(`⊘ Skipping type_id ${typeId} - not found in Hotres (404)`);
+          continue;
+        }
+        // Re-throw other errors
+        throw error;
+      }
 
       console.log(`Room type ${typeId} data:`, roomTypeData);
 
