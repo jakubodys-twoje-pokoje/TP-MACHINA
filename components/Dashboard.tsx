@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useProperties } from '../contexts/PropertyContext';
 import { Notification } from '../types';
 import { Loader2, Bell, Check, Trash2, Inbox, ArrowUp, ArrowDown, LayoutGrid, List, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
@@ -113,18 +113,23 @@ export const Dashboard: React.FC = () => {
       groups.get(n.property_id)!.notifications.push(n);
     });
 
-    const groupsArray = Array.from(groups.values());
+    return Array.from(groups.values());
+  }, [readNotifications]);
 
-    // Set all groups as collapsed by default on first render
+  // Set all read groups as collapsed by default when new properties appear
+  useEffect(() => {
+    const newPropertyIds = groupedRead.map(g => g.propertyId);
+
     setCollapsedReadGroups(prev => {
-      if (prev.size === 0 && groupsArray.length > 0) {
-        return new Set(groupsArray.map(g => g.propertyId));
+      const hasNewProperties = newPropertyIds.some(id => !prev.has(id));
+      if (hasNewProperties) {
+        const newSet = new Set(prev);
+        newPropertyIds.forEach(id => newSet.add(id));
+        return newSet;
       }
       return prev;
     });
-
-    return groupsArray;
-  }, [readNotifications]);
+  }, [groupedRead]);
 
   return (
     <div className="space-y-8">
