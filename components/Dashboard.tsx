@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useProperties } from '../contexts/PropertyContext';
 import { Notification } from '../types';
-import { Loader2, Bell, Check, Trash2, CheckCheck, Inbox, ArrowUp, ArrowDown, LayoutGrid, List, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
+import { Loader2, Bell, Check, Trash2, Inbox, ArrowUp, ArrowDown, LayoutGrid, List, ChevronDown, ChevronRight, RotateCcw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 const formatDateRange = (start: string, end: string) => {
@@ -48,7 +48,12 @@ const NotificationItem: React.FC<{
         </p>
       </div>
       <div className="flex-shrink-0 flex items-center gap-2">
-        <span className="text-[10px] italic text-slate-500 whitespace-nowrap">{formattedTime}</span>
+        <div className="flex flex-col items-end">
+          <span className="text-[10px] italic text-slate-500 whitespace-nowrap">{formattedTime}</span>
+          {notification.is_read && notification.read_by_email && (
+            <span className="text-[9px] text-slate-600 whitespace-nowrap">{notification.read_by_email}</span>
+          )}
+        </div>
         {!notification.is_read && (
           <button onClick={() => onMarkRead(notification.id)} title="Oznacz jako przeczytane" className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors">
             <Check size={16} />
@@ -134,26 +139,16 @@ export const Dashboard: React.FC = () => {
         <>
           {/* Unread Notifications */}
           <section>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <h3 className="text-lg font-bold text-white">Nieodczytane ({unreadNotifications.length})</h3>
-                {unreadNotifications.length > 0 && (
-                  <button
-                    onClick={() => setGroupByProperty(!groupByProperty)}
-                    className="text-xs flex items-center gap-1.5 px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded-md text-slate-400 transition-colors"
-                    title={groupByProperty ? 'Widok płaski' : 'Grupuj po obiektach'}
-                  >
-                    {groupByProperty ? <List size={14} /> : <LayoutGrid size={14} />}
-                    {groupByProperty ? 'Płaska lista' : 'Grupuj po obiektach'}
-                  </button>
-                )}
-              </div>
+            <div className="flex items-center gap-3 mb-4">
+              <h3 className="text-lg font-bold text-white">Nieodczytane ({unreadNotifications.length})</h3>
               {unreadNotifications.length > 0 && (
                 <button
-                  onClick={markAllNotificationsAsRead}
-                  className="text-sm flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 rounded-md text-slate-300 transition-colors"
+                  onClick={() => setGroupByProperty(!groupByProperty)}
+                  className="text-xs flex items-center gap-1.5 px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded-md text-slate-400 transition-colors"
+                  title={groupByProperty ? 'Widok płaski' : 'Grupuj po obiektach'}
                 >
-                  <CheckCheck size={16} /> Oznacz wszystkie jako przeczytane
+                  {groupByProperty ? <List size={14} /> : <LayoutGrid size={14} />}
+                  {groupByProperty ? 'Płaska lista' : 'Grupuj po obiektach'}
                 </button>
               )}
             </div>
