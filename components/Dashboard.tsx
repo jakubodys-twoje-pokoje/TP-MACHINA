@@ -15,6 +15,15 @@ const formatDateRange = (start: string, end: string) => {
 
 const NotificationItem: React.FC<{ notification: Notification; onMarkRead: (id: string) => void; onDelete: (id: string) => void; }> = ({ notification, onMarkRead, onDelete }) => {
   const isAvailable = notification.change_type === 'available';
+  const createdDate = new Date(notification.created_at);
+  const formattedTime = createdDate.toLocaleString('pl-PL', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+
   return (
     <div className="flex items-start gap-4 p-4 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition-colors">
       <div className={`mt-1 flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isAvailable ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
@@ -33,7 +42,8 @@ const NotificationItem: React.FC<{ notification: Notification; onMarkRead: (id: 
           {notification.unit_name}
         </p>
       </div>
-      <div className="flex-shrink-0 flex items-center gap-1">
+      <div className="flex-shrink-0 flex items-center gap-2">
+        <span className="text-[10px] italic text-slate-500 whitespace-nowrap">{formattedTime}</span>
         {!notification.is_read && (
           <button onClick={() => onMarkRead(notification.id)} title="Oznacz jako przeczytane" className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors">
             <Check size={16} />
