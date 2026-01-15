@@ -101,6 +101,7 @@ export interface Notification {
   end_date: string;
   is_read: boolean;
   read_by_email?: string | null;
+  read_at?: string | null;
   created_at: string;
 }
 

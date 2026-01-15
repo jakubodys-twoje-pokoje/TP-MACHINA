@@ -30,6 +30,15 @@ const NotificationItem: React.FC<{
     minute: '2-digit'
   });
 
+  const readAtDate = notification.read_at ? new Date(notification.read_at) : null;
+  const formattedReadAt = readAtDate ? readAtDate.toLocaleString('pl-PL', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }) : null;
+
   return (
     <div className="flex items-start gap-4 p-4 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition-colors">
       <div className={`mt-1 flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isAvailable ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
@@ -51,6 +60,9 @@ const NotificationItem: React.FC<{
       <div className="flex-shrink-0 flex items-center gap-2">
         <div className="flex flex-col items-end">
           <span className="text-[10px] italic text-slate-500 whitespace-nowrap">{formattedTime}</span>
+          {notification.is_read && formattedReadAt && (
+            <span className="text-[9px] text-green-600 whitespace-nowrap">Przeczytano: {formattedReadAt}</span>
+          )}
           {notification.is_read && notification.read_by_email && (
             <span className="text-[9px] text-slate-600 whitespace-nowrap">{notification.read_by_email}</span>
           )}
@@ -77,6 +89,7 @@ const NotificationItem: React.FC<{
 export const Dashboard: React.FC = () => {
   const { notifications, loading, markNotificationAsRead, markNotificationAsUnread, markAllNotificationsAsRead, deleteAllReadNotifications, deleteNotification } = useProperties();
   const [groupByProperty, setGroupByProperty] = useState(true);
+  const [collapsedUnreadGroups, setCollapsedUnreadGroups] = useState<Set<string>>(new Set());
   const [collapsedReadGroups, setCollapsedReadGroups] = useState<Set<string>>(new Set());
   const [showSyncHistory, setShowSyncHistory] = useState(false);
   const prevPropertyIdsRef = useRef<string>('');
@@ -173,26 +186,46 @@ export const Dashboard: React.FC = () => {
             </div>
             {unreadNotifications.length > 0 ? (
               groupByProperty ? (
-                // Grouped view by property
+                // Grouped view by property (collapsible)
                 <div className="space-y-6">
-                  {groupedUnread.map(group => (
-                    <div key={group.propertyId} className="space-y-2">
-                      <div className="flex items-center gap-2 px-3 py-2 bg-slate-900/50 rounded-lg border border-slate-700">
-                        <Link
-                          to={`/property/${group.propertyId}/units`}
-                          className="font-bold text-indigo-400 hover:text-indigo-300 transition-colors"
+                  {groupedUnread.map(group => {
+                    const isCollapsed = collapsedUnreadGroups.has(group.propertyId);
+                    return (
+                      <div key={group.propertyId} className="space-y-2">
+                        <div
+                          className="flex items-center gap-2 px-3 py-2 bg-slate-900/50 rounded-lg border border-slate-700 cursor-pointer hover:bg-slate-800/50 transition-colors"
+                          onClick={() => {
+                            setCollapsedUnreadGroups(prev => {
+                              const newSet = new Set(prev);
+                              if (newSet.has(group.propertyId)) {
+                                newSet.delete(group.propertyId);
+                              } else {
+                                newSet.add(group.propertyId);
+                              }
+                              return newSet;
+                            });
+                          }}
                         >
-                          {group.propertyName}
-                        </Link>
-                        <span className="text-xs text-slate-500">({group.notifications.length})</span>
+                          {isCollapsed ? <ChevronRight size={16} className="text-slate-500" /> : <ChevronDown size={16} className="text-slate-500" />}
+                          <Link
+                            to={`/property/${group.propertyId}/units`}
+                            className="font-bold text-indigo-400 hover:text-indigo-300 transition-colors"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {group.propertyName}
+                          </Link>
+                          <span className="text-xs text-slate-500">({group.notifications.length})</span>
+                        </div>
+                        {!isCollapsed && (
+                          <div className="space-y-2 pl-4">
+                            {group.notifications.map(n => (
+                              <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onMarkUnread={markNotificationAsUnread} onDelete={deleteNotification} />
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      <div className="space-y-2 pl-4">
-                        {group.notifications.map(n => (
-                          <NotificationItem key={n.id} notification={n} onMarkRead={markNotificationAsRead} onMarkUnread={markNotificationAsUnread} onDelete={deleteNotification} />
-                        ))}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 // Flat view

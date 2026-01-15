@@ -728,16 +728,17 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   const markNotificationAsRead = useCallback(async (id: string) => {
     const { data: { user } } = await supabase.auth.getUser();
     const userEmail = user?.email || null;
+    const readAt = new Date().toISOString();
 
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true, read_by_email: userEmail } : n));
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true, read_by_email: userEmail, read_at: readAt } : n));
     setUnreadCount(prev => Math.max(0, prev - 1));
-    await supabase.from('notifications').update({ is_read: true, read_by_email: userEmail }).eq('id', id);
+    await supabase.from('notifications').update({ is_read: true, read_by_email: userEmail, read_at: readAt }).eq('id', id);
   }, []);
 
   const markNotificationAsUnread = useCallback(async (id: string) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: false, read_by_email: null } : n));
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: false, read_by_email: null, read_at: null } : n));
     setUnreadCount(prev => prev + 1);
-    await supabase.from('notifications').update({ is_read: false, read_by_email: null }).eq('id', id);
+    await supabase.from('notifications').update({ is_read: false, read_by_email: null, read_at: null }).eq('id', id);
   }, []);
 
   const markAllNotificationsAsRead = useCallback(async () => {
