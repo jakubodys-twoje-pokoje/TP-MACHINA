@@ -52,7 +52,7 @@ const NotificationItem: React.FC<{
            {formatDateRange(notification.start_date, notification.end_date)}
         </p>
         <p className="text-sm font-medium text-slate-300 mt-1">
-          <Link to={`/property/${notification.property_id}/units`} className="font-bold text-indigo-400 hover:text-indigo-300 hover:underline">{notification.property_name}</Link>
+          <Link to={`/property/${notification.property_id}/calendar`} className="font-bold text-indigo-400 hover:text-indigo-300 hover:underline">{notification.property_name}</Link>
           <span className="text-slate-600 mx-1">/</span>
           <span className="text-slate-300">{notification.unit_name}</span>
         </p>
@@ -208,7 +208,7 @@ export const Dashboard: React.FC = () => {
                         >
                           {isCollapsed ? <ChevronRight size={16} className="text-slate-500" /> : <ChevronDown size={16} className="text-slate-500" />}
                           <Link
-                            to={`/property/${group.propertyId}/units`}
+                            to={`/property/${group.propertyId}/calendar`}
                             className="font-bold text-indigo-400 hover:text-indigo-300 transition-colors"
                             onClick={(e) => e.stopPropagation()}
                           >
@@ -272,7 +272,7 @@ export const Dashboard: React.FC = () => {
                           >
                             {isCollapsed ? <ChevronRight size={16} className="text-slate-500" /> : <ChevronDown size={16} className="text-slate-500" />}
                             <Link
-                              to={`/property/${group.propertyId}/units`}
+                              to={`/property/${group.propertyId}/calendar`}
                               className="font-bold text-indigo-400 hover:text-indigo-300 transition-colors"
                               onClick={(e) => e.stopPropagation()}
                             >
