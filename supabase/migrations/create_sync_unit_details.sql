@@ -24,6 +24,11 @@ CREATE POLICY "Users can view sync unit details"
   TO authenticated
   USING (true);
 
+CREATE POLICY "Service role can insert sync unit details"
+  ON sync_unit_details FOR INSERT
+  TO service_role
+  WITH CHECK (true);
+
 COMMENT ON TABLE sync_unit_details IS 'Tracks detailed per-unit synchronization metrics';
 COMMENT ON COLUMN sync_unit_details.days_fetched IS 'Number of days fetched from API for this unit';
 COMMENT ON COLUMN sync_unit_details.records_compared IS 'Number of availability records compared for this unit';

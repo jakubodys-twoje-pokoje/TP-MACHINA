@@ -640,6 +640,7 @@ async function syncPropertyAvailability(
       console.error('Failed to save sync history:', syncHistoryError)
     } else if (syncHistory && unitMetrics.size > 0) {
       // Save per-unit details
+      console.log(`📊 Preparing to save details for ${unitMetrics.size} units`)
       const unitDetails = Array.from(unitMetrics.entries()).map(([unitId, metrics]) => ({
         sync_history_id: syncHistory.id,
         property_id: property.id,
@@ -650,15 +651,23 @@ async function syncPropertyAvailability(
         changes_detected: unitChangeCounts.get(unitId) || 0
       }))
 
-      const { error: detailsError } = await supabaseClient
+      console.log(`📊 Unit details to insert:`, JSON.stringify(unitDetails, null, 2))
+
+      const { data: insertedDetails, error: detailsError } = await supabaseClient
         .from('sync_unit_details')
         .insert(unitDetails)
+        .select()
 
       if (detailsError) {
-        console.error('Failed to save unit details:', detailsError)
+        console.error('❌ Failed to save unit details:', detailsError)
+        console.error('   Error code:', detailsError.code)
+        console.error('   Error message:', detailsError.message)
+        console.error('   Error details:', detailsError.details)
       } else {
-        console.log(`✓ Saved details for ${unitDetails.length} units`)
+        console.log(`✓ Successfully saved details for ${insertedDetails?.length || unitDetails.length} units`)
       }
+    } else {
+      console.log(`⚠️  No unit details to save (syncHistory: ${!!syncHistory}, unitMetrics.size: ${unitMetrics.size})`)
     }
 
     return { recordsCompared, changesDetected, notificationsSent }
