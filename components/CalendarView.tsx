@@ -186,7 +186,7 @@ export const CalendarView: React.FC = () => {
   const endDateStr = dates[dates.length - 1].toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-white">{property?.name}</h2>
@@ -194,7 +194,7 @@ export const CalendarView: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-surface rounded-xl border border-border p-6 shadow-lg relative">
+      <div className="bg-surface rounded-xl border border-border p-3 shadow-lg relative">
         {loadingAvailability && (
           <div className="absolute inset-0 bg-surface/50 backdrop-blur-sm flex items-center justify-center z-10 rounded-xl">
             <Loader2 className="animate-spin text-indigo-400" size={32} />
@@ -202,7 +202,7 @@ export const CalendarView: React.FC = () => {
         )}
 
         {/* Navigation and Date Picker */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-3">
           <button
             onClick={handlePrevMonth}
             className="p-2 rounded-md hover:bg-slate-700 transition-colors"
@@ -237,7 +237,7 @@ export const CalendarView: React.FC = () => {
           <table className="w-full border-collapse">
             <thead>
               <tr>
-                <th className="sticky left-0 z-20 bg-surface p-3 text-left text-xs font-bold text-slate-400 border-r border-border min-w-[150px]">
+                <th className="sticky left-0 z-20 bg-surface p-2 text-left text-[10px] font-bold text-slate-400 border-r border-border min-w-[120px]">
                   Pokój
                 </th>
                 {dates.map((date, idx) => {
@@ -266,7 +266,7 @@ export const CalendarView: React.FC = () => {
                 const unitAvailability = allUnitsAvailability.get(unit.id);
                 return (
                   <tr key={unit.id} className="border-t border-border hover:bg-slate-800/30">
-                    <td className="sticky left-0 z-10 bg-surface p-3 font-medium text-white border-r border-border">
+                    <td className="sticky left-0 z-10 bg-surface p-2 text-[11px] font-medium text-white border-r border-border">
                       {unit.name}
                     </td>
                     {dates.map((date, idx) => {
@@ -306,26 +306,26 @@ export const CalendarView: React.FC = () => {
                               title={`${unit.name} - ${dateStr}: ${status || 'available'}${boundary ? ` (${boundary === 'start' ? 'początek' : 'koniec'} rezerwacji)` : ''}`}
                             />
 
-                            {/* Checkboxes in one line */}
-                            <div className="flex items-center justify-center gap-1.5 text-[9px]">
-                              <label className="flex items-center gap-0.5 cursor-pointer">
-                                <input type="checkbox" className="w-2.5 h-2.5 cursor-pointer" />
-                                <span className="text-slate-400">cta</span>
+                            {/* Checkboxes in one line - vertical labels */}
+                            <div className="flex items-center justify-center gap-2">
+                              <label className="flex flex-col items-center gap-0.5 cursor-pointer">
+                                <input type="checkbox" className="w-3.5 h-3.5 cursor-pointer" />
+                                <span className="text-slate-400 text-[8px]">cta</span>
                               </label>
-                              <label className="flex items-center gap-0.5 cursor-pointer">
-                                <input type="checkbox" className="w-2.5 h-2.5 cursor-pointer" />
-                                <span className="text-slate-400">ctd</span>
+                              <label className="flex flex-col items-center gap-0.5 cursor-pointer">
+                                <input type="checkbox" className="w-3.5 h-3.5 cursor-pointer" />
+                                <span className="text-slate-400 text-[8px]">ctd</span>
                               </label>
                             </div>
 
-                            {/* MIN input */}
-                            <div className="flex flex-col gap-0.5">
-                              <label className="text-[8px] text-slate-500 uppercase">MIN</label>
+                            {/* MIN input - centered with label below */}
+                            <div className="flex flex-col gap-0.5 items-center">
                               <input
                                 type="text"
-                                className="w-full px-1 py-0.5 text-[10px] bg-slate-800 border border-slate-700 rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                placeholder="0"
+                                className="w-full px-1.5 py-1 text-center text-[11px] bg-slate-800 border border-slate-700 rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                placeholder="000"
                               />
+                              <label className="text-[8px] text-slate-500 uppercase">MIN</label>
                             </div>
                           </div>
                         </td>
@@ -339,7 +339,7 @@ export const CalendarView: React.FC = () => {
         </div>
 
         {/* Legend */}
-        <div className="flex items-center justify-center gap-6 mt-4 text-sm flex-wrap">
+        <div className="flex items-center justify-center gap-4 mt-2 text-xs flex-wrap">
           <div className="flex items-center gap-2">
             <div className="w-4 h-4 rounded bg-green-600/50"></div>
             <span className="text-slate-400">Dostępny</span>
