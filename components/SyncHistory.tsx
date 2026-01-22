@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { SyncHistory as SyncHistoryType } from '../types';
-import { ChevronDown, ChevronRight, Clock, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Bell, TrendingUp, List, Play } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Bell, TrendingUp, List, Play, Trash2 } from 'lucide-react';
 
 interface GroupedHistory {
   propertyId: string;
@@ -162,6 +162,35 @@ export const SyncHistory: React.FC = () => {
     }
   };
 
+  const clearHistory = async () => {
+    if (!confirm('Czy na pewno chcesz wyczyścić całą historię synchronizacji? Ta akcja jest nieodwracalna.')) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('sync_history')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000'); // Delete all records
+
+      if (error) {
+        console.error('Error clearing sync history:', error);
+        alert('Błąd podczas czyszczenia historii: ' + error.message);
+      } else {
+        alert('Historia synchronizacji została wyczyszczona');
+        setHistory([]);
+        setExpandedSyncs(new Set());
+        setUnitDetails(new Map());
+      }
+    } catch (err: any) {
+      console.error('Failed to clear sync history:', err);
+      alert('Błąd podczas czyszczenia historii: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const formatDateTime = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleString('pl-PL', {
@@ -218,6 +247,14 @@ export const SyncHistory: React.FC = () => {
         >
           <RefreshCw size={16} />
           Odśwież historię
+        </button>
+        <button
+          onClick={clearHistory}
+          disabled={loading}
+          className="flex items-center gap-2 px-3 py-2 text-sm bg-red-600 hover:bg-red-700 disabled:bg-red-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+        >
+          <Trash2 size={16} />
+          Wyczyść historię
         </button>
       </div>
 

@@ -23,6 +23,11 @@ CREATE POLICY "Users can view sync history"
   TO authenticated
   USING (true);
 
+CREATE POLICY "Users can delete sync history"
+  ON sync_history FOR DELETE
+  TO authenticated
+  USING (true);
+
 COMMENT ON TABLE sync_history IS 'Tracks synchronization history and metrics for each property';
 COMMENT ON COLUMN sync_history.records_compared IS 'Number of availability records compared from API';
 COMMENT ON COLUMN sync_history.changes_detected IS 'Number of changes detected (available/blocked)';
