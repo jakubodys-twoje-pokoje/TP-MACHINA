@@ -233,18 +233,34 @@ export const CalendarView: React.FC = () => {
   };
 
   const handleMarkNotificationAsRead = async (notificationId: string) => {
+    const isCurrentlyRead = readNotificationIds.has(notificationId);
     const { data: { user } } = await supabase.auth.getUser();
     const userEmail = user?.email || null;
-    const readAt = new Date().toISOString();
 
-    // Update in database
-    await supabase
-      .from('notifications')
-      .update({ is_read: true, read_by_email: userEmail, read_at: readAt })
-      .eq('id', notificationId);
+    if (isCurrentlyRead) {
+      // Unmark as read - restore to unread state
+      await supabase
+        .from('notifications')
+        .update({ is_read: false, read_by_email: null, read_at: null })
+        .eq('id', notificationId);
 
-    // Mark as read locally (gray out, but don't remove)
-    setReadNotificationIds(prev => new Set(prev).add(notificationId));
+      // Remove from read set
+      setReadNotificationIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(notificationId);
+        return newSet;
+      });
+    } else {
+      // Mark as read
+      const readAt = new Date().toISOString();
+      await supabase
+        .from('notifications')
+        .update({ is_read: true, read_by_email: userEmail, read_at: readAt })
+        .eq('id', notificationId);
+
+      // Add to read set
+      setReadNotificationIds(prev => new Set(prev).add(notificationId));
+    }
   };
 
   const handleSyncToHotres = async () => {
@@ -447,16 +463,15 @@ export const CalendarView: React.FC = () => {
                 return (
                   <button
                     key={idx}
-                    onClick={() => !isRead && handleMarkNotificationAsRead(item.notificationId)}
-                    disabled={isRead}
-                    className={`inline-flex items-center gap-2 px-3 py-1 ${bgColor} border ${borderColor} rounded-full text-xs transition-opacity ${
-                      isRead ? 'opacity-50 cursor-default' : 'hover:opacity-80 cursor-pointer'
+                    onClick={() => handleMarkNotificationAsRead(item.notificationId)}
+                    className={`inline-flex items-center gap-2 px-3 py-1 ${bgColor} border ${borderColor} rounded-full text-xs transition-opacity hover:opacity-80 cursor-pointer ${
+                      isRead ? 'opacity-60' : ''
                     }`}
                   >
                     <span className={`font-semibold ${nameColor}`}>{item.unitName}</span>
                     <span className={dateColor}>{item.dateRange}</span>
                     {!isRead && <span className="text-slate-500 text-[10px]">(kliknij aby odczytać)</span>}
-                    {isRead && <span className="text-slate-600 text-[10px]">✓ odczytane</span>}
+                    {isRead && <span className="text-slate-600 text-[10px]">✓ odczytane (kliknij aby cofnąć)</span>}
                   </button>
                 );
               })}
@@ -467,15 +482,15 @@ export const CalendarView: React.FC = () => {
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleSyncToHotres}
-                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2"
+                  className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-2.5 px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
                 >
-                  <span className="text-lg">Wyślij na Hotres</span>
-                  <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">
-                    {readNotificationIds.size} zmian
+                  <span className="text-sm">Wyślij na Hotres</span>
+                  <span className="text-[10px] bg-yellow-800 px-2 py-0.5 rounded-full">
+                    {readNotificationIds.size}
                   </span>
                 </button>
                 <div className="text-xs text-slate-400 whitespace-nowrap">
-                  Pozostało: <span className="font-bold text-white">{15 - hotresSyncCount.count}</span>/15
+                  Pozostało: <span className="font-bold text-yellow-400">{15 - hotresSyncCount.count}</span>/15
                 </div>
               </div>
             )}
@@ -625,6 +640,23 @@ export const CalendarView: React.FC = () => {
               <div className="flex items-center gap-2">
                 <div className="w-4 h-4 rounded" style={{ background: 'linear-gradient(135deg, rgb(220 38 38 / 0.5) 50%, rgb(22 163 74 / 0.5) 50%)' }}></div>
                 <span className="text-slate-400">Koniec rezerwacji</span>
+              </div>
+              <div className="w-px h-4 bg-slate-700"></div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 rounded border-2 border-yellow-500"></div>
+                <span className="text-slate-400">Nieodczytane</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 rounded bg-green-900/30 border border-green-700/50"></div>
+                <span className="text-slate-400">Zwolnienie</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 rounded bg-red-900/30 border border-red-700/50"></div>
+                <span className="text-slate-400">Blokada</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 rounded bg-slate-800/50 border border-slate-700/50"></div>
+                <span className="text-slate-400">Odczytane</span>
               </div>
             </div>
           </>
