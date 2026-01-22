@@ -1,5 +1,5 @@
 
-import React, { createContext, useState, useEffect, useContext, ReactNode, useCallback, useRef } from 'react';
+import React, { createContext, useState, useEffect, useContext, ReactNode, useCallback, useRef, useMemo } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { Property, Unit, Availability, Notification, RatePlan } from '../types';
 
@@ -18,6 +18,7 @@ interface PropertyContextType {
   properties: Property[];
   notifications: Notification[];
   unreadCount: number;
+  unreadCountByProperty: Map<string, number>;
   loading: boolean;
   error: string | null;
   syncLogs: SyncLogEntry[];
@@ -46,6 +47,18 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncLogs, setSyncLogs] = useState<SyncLogEntry[]>([]);
+
+  // Calculate unread count per property
+  const unreadCountByProperty = useMemo(() => {
+    const countMap = new Map<string, number>();
+    notifications.forEach(notif => {
+      if (!notif.is_read) {
+        const current = countMap.get(notif.property_id) || 0;
+        countMap.set(notif.property_id, current + 1);
+      }
+    });
+    return countMap;
+  }, [notifications]);
 
   const fetchSyncLogs = useCallback(async () => {
     try {
@@ -772,6 +785,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       properties,
       notifications,
       unreadCount,
+      unreadCountByProperty,
       loading,
       error,
       syncLogs,

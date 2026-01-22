@@ -624,39 +624,51 @@ export const CalendarView: React.FC = () => {
         </div>
 
             {/* Legend */}
-            <div className="flex items-center justify-center gap-4 mt-2 text-xs flex-wrap">
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 rounded bg-green-600/50"></div>
-                <span className="text-slate-400">Dostępny</span>
+            <div className="space-y-2 mt-2">
+              <div className="flex items-center justify-center gap-4 text-xs flex-wrap">
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-green-600/50"></div>
+                  <span className="text-slate-400">Dostępny</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-red-600/50"></div>
+                  <span className="text-slate-400">Zajęty</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded" style={{ background: 'linear-gradient(135deg, rgb(22 163 74 / 0.5) 50%, rgb(220 38 38 / 0.5) 50%)' }}></div>
+                  <span className="text-slate-400">Początek rezerwacji</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded" style={{ background: 'linear-gradient(135deg, rgb(220 38 38 / 0.5) 50%, rgb(22 163 74 / 0.5) 50%)' }}></div>
+                  <span className="text-slate-400">Koniec rezerwacji</span>
+                </div>
+                <div className="w-px h-4 bg-slate-700"></div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded border-2 border-yellow-500"></div>
+                  <span className="text-slate-400">Nieodczytane</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-green-900/30 border border-green-700/50"></div>
+                  <span className="text-slate-400">Zwolnienie</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-red-900/30 border border-red-700/50"></div>
+                  <span className="text-slate-400">Blokada</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 rounded bg-slate-800/50 border border-slate-700/50"></div>
+                  <span className="text-slate-400">Odczytane</span>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 rounded bg-red-600/50"></div>
-                <span className="text-slate-400">Zajęty</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 rounded" style={{ background: 'linear-gradient(135deg, rgb(22 163 74 / 0.5) 50%, rgb(220 38 38 / 0.5) 50%)' }}></div>
-                <span className="text-slate-400">Początek rezerwacji</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 rounded" style={{ background: 'linear-gradient(135deg, rgb(220 38 38 / 0.5) 50%, rgb(22 163 74 / 0.5) 50%)' }}></div>
-                <span className="text-slate-400">Koniec rezerwacji</span>
-              </div>
-              <div className="w-px h-4 bg-slate-700"></div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 rounded border-2 border-yellow-500"></div>
-                <span className="text-slate-400">Nieodczytane</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 rounded bg-green-900/30 border border-green-700/50"></div>
-                <span className="text-slate-400">Zwolnienie</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 rounded bg-red-900/30 border border-red-700/50"></div>
-                <span className="text-slate-400">Blokada</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 rounded bg-slate-800/50 border border-slate-700/50"></div>
-                <span className="text-slate-400">Odczytane</span>
+              <div className="flex items-center justify-center gap-6 text-[11px] text-slate-500">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-semibold text-slate-400">CTA:</span>
+                  <span>Przyjazd niemożliwy</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-semibold text-slate-400">CTD:</span>
+                  <span>Wyjazd niemożliwy</span>
+                </div>
               </div>
             </div>
           </>

@@ -4,7 +4,7 @@ import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Lo
 import { useProperties } from '../contexts/PropertyContext';
 
 export const Sidebar: React.FC = () => {
-  const { properties, loading, error, addProperty, importFromHotres, unreadCount, syncLogs, clearSyncLogs } = useProperties();
+  const { properties, loading, error, addProperty, importFromHotres, unreadCount, unreadCountByProperty, syncLogs, clearSyncLogs } = useProperties();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -14,7 +14,8 @@ export const Sidebar: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showLogsModal, setShowLogsModal] = useState(false);
   const [expandedLogs, setExpandedLogs] = useState<Set<number>>(new Set());
-  
+  const [expandedProperties, setExpandedProperties] = useState<Set<string>>(new Set());
+
   const pathParts = location.pathname.split('/');
   const activePropertyId = pathParts[1] === 'property' ? pathParts[2] : null;
 
@@ -95,24 +96,59 @@ export const Sidebar: React.FC = () => {
         ) : properties.length === 0 ? (
           <div className="text-slate-500 text-sm text-center py-4 italic">Brak obiektów</div>
         ) : (
-          properties.map(property => (
-            <div key={property.id} className="space-y-1">
-               <NavLink
-                to={`/property/${property.id}/calendar`}
-                className={() => `block px-3 py-2.5 rounded-lg text-sm transition-colors ${activePropertyId === property.id ? 'bg-slate-800 text-white font-medium' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`}
-              >
-                <div className="flex items-center gap-3"><Home size={16} /> <span className="truncate">{property.name}</span></div>
-              </NavLink>
-              {activePropertyId === property.id && (
-                <div className="ml-4 pl-3 border-l border-slate-700 space-y-1 my-1 animate-in slide-in-from-left-2 duration-200">
-                    <NavLink to={`/property/${property.id}/calendar`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><Calendar size={14} /> Dostępność</NavLink>
-                    <NavLink to={`/property/${property.id}/units`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><BedDouble size={14} /> Kwatery</NavLink>
-                    <NavLink to={`/property/${property.id}/pricing`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><BadgePercent size={14} /> Cenniki</NavLink>
-                    <NavLink to={`/property/${property.id}/details`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><Settings size={14} /> Ustawienia</NavLink>
+          properties.map(property => {
+            const propertyUnreadCount = unreadCountByProperty.get(property.id) || 0;
+            const isExpanded = expandedProperties.has(property.id);
+
+            const toggleExpanded = (e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setExpandedProperties(prev => {
+                const newSet = new Set(prev);
+                if (newSet.has(property.id)) {
+                  newSet.delete(property.id);
+                } else {
+                  newSet.add(property.id);
+                }
+                return newSet;
+              });
+            };
+
+            return (
+              <div key={property.id} className="space-y-1">
+                <div
+                  className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-colors ${activePropertyId === property.id ? 'bg-slate-800 text-white font-medium' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`}
+                >
+                  <button
+                    onClick={toggleExpanded}
+                    className="hover:bg-slate-700 p-0.5 rounded transition-colors"
+                  >
+                    {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </button>
+                  <NavLink
+                    to={`/property/${property.id}/calendar`}
+                    className="flex items-center gap-2 flex-1 min-w-0"
+                  >
+                    <Home size={16} className="flex-shrink-0" />
+                    <span className="truncate">{property.name}</span>
+                  </NavLink>
+                  {propertyUnreadCount > 0 && (
+                    <span className="bg-red-600 text-white text-[10px] font-bold rounded-full h-5 min-w-[20px] px-1.5 flex items-center justify-center flex-shrink-0">
+                      {propertyUnreadCount}
+                    </span>
+                  )}
                 </div>
-              )}
-            </div>
-          ))
+                {isExpanded && (
+                  <div className="ml-4 pl-3 border-l border-slate-700 space-y-1 my-1 animate-in slide-in-from-left-2 duration-200">
+                      <NavLink to={`/property/${property.id}/calendar`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><Calendar size={14} /> Dostępność</NavLink>
+                      <NavLink to={`/property/${property.id}/units`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><BedDouble size={14} /> Kwatery</NavLink>
+                      <NavLink to={`/property/${property.id}/pricing`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><BadgePercent size={14} /> Cenniki</NavLink>
+                      <NavLink to={`/property/${property.id}/details`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><Settings size={14} /> Ustawienia</NavLink>
+                  </div>
+                )}
+              </div>
+            );
+          })
         )}
       </div>
 
