@@ -303,18 +303,18 @@ export const CalendarView: React.FC = () => {
                       const boundary = getReservationBoundary(unit.id, idx);
 
                       let cellStyle: React.CSSProperties = {};
-                      let cellClass = `h-10 rounded-sm transition-colors cursor-pointer ${getStatusColor(status)}`;
+                      let cellClass = `h-5 rounded-sm transition-colors cursor-pointer ${getStatusColor(status)}`;
 
                       if (boundary === 'start') {
                         cellStyle = {
                           background: 'linear-gradient(135deg, rgb(22 163 74 / 0.5) 50%, rgb(220 38 38 / 0.5) 50%)'
                         };
-                        cellClass = 'h-10 rounded-sm transition-opacity cursor-pointer hover:opacity-80';
+                        cellClass = 'h-5 rounded-sm transition-opacity cursor-pointer hover:opacity-80';
                       } else if (boundary === 'end') {
                         cellStyle = {
                           background: 'linear-gradient(135deg, rgb(220 38 38 / 0.5) 50%, rgb(22 163 74 / 0.5) 50%)'
                         };
-                        cellClass = 'h-10 rounded-sm transition-opacity cursor-pointer hover:opacity-80';
+                        cellClass = 'h-5 rounded-sm transition-opacity cursor-pointer hover:opacity-80';
                       }
 
                       return (
