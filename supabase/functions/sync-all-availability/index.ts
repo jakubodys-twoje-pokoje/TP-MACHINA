@@ -418,6 +418,75 @@ async function syncPropertyAvailability(
       }
     }
 
+    // Add checkout days (+1 day after each booked sequence)
+    console.log(`🔧 Adding checkout days for continuous booking sequences...`)
+    const unitBookings = new Map<string, string[]>() // unit_id -> sorted booked dates
+
+    // Group booked dates by unit
+    rowsToUpsert.forEach(row => {
+      if (row.status === 'booked') {
+        if (!unitBookings.has(row.unit_id)) {
+          unitBookings.set(row.unit_id, [])
+        }
+        unitBookings.get(row.unit_id)!.push(row.date)
+      }
+    })
+
+    // For each unit, find sequences and add checkout days
+    unitBookings.forEach((dates, unitId) => {
+      const sortedDates = dates.sort()
+      const sequences: string[][] = []
+      let currentSeq: string[] = []
+
+      // Find continuous sequences
+      for (let i = 0; i < sortedDates.length; i++) {
+        const currentDate = new Date(sortedDates[i])
+
+        if (currentSeq.length === 0) {
+          currentSeq.push(sortedDates[i])
+        } else {
+          const lastDate = new Date(currentSeq[currentSeq.length - 1])
+          const dayDiff = Math.round((currentDate.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24))
+
+          if (dayDiff === 1) {
+            // Continuous sequence
+            currentSeq.push(sortedDates[i])
+          } else {
+            // Gap found, save sequence and start new one
+            sequences.push([...currentSeq])
+            currentSeq = [sortedDates[i]]
+          }
+        }
+      }
+
+      // Save last sequence
+      if (currentSeq.length > 0) {
+        sequences.push(currentSeq)
+      }
+
+      // Add checkout day (+1) for each sequence
+      sequences.forEach(seq => {
+        const lastDate = new Date(seq[seq.length - 1])
+        lastDate.setDate(lastDate.getDate() + 1)
+        const checkoutDateStr = lastDate.toISOString().split('T')[0]
+        const key = `${unitId}_${checkoutDateStr}`
+
+        // Only add if not already processed as booked
+        if (!processedKeys.has(key)) {
+          const existingRow = dbMap.get(key)
+          rowsToUpsert.push({
+            id: existingRow ? existingRow.id : uuidv4(),
+            unit_id: unitId,
+            date: checkoutDateStr,
+            status: 'booked',
+            reservation_id: existingRow?.reservation_id || null
+          })
+          processedKeys.add(key)
+          console.log(`   ✓ Added checkout day ${checkoutDateStr} for unit ${unitId}`)
+        }
+      })
+    })
+
     // Report diagnostics
     console.log(`📊 ${property.name} API Statistics:`)
     console.log(`   - API returned ${apiTypeIds.size} distinct type_ids`)
