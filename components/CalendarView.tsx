@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { Property, Availability, Unit } from '../types';
+import { Property, Availability, Unit, Notification } from '../types';
 import { Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export const CalendarView: React.FC = () => {
@@ -10,6 +10,7 @@ export const CalendarView: React.FC = () => {
   const [units, setUnits] = useState<Unit[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [allUnitsAvailability, setAllUnitsAvailability] = useState<Map<string, Map<string, Availability['status']>>>(new Map());
+  const [unreadNotifications, setUnreadNotifications] = useState<Notification[]>([]);
 
   const [loadingUnits, setLoadingUnits] = useState(true);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
@@ -20,6 +21,7 @@ export const CalendarView: React.FC = () => {
   useEffect(() => {
     if (propertyId) {
       fetchPropertyAndUnits();
+      fetchUnreadNotifications();
     }
   }, [propertyId]);
 
@@ -110,6 +112,21 @@ export const CalendarView: React.FC = () => {
     setLoadingAvailability(false);
   };
 
+  const fetchUnreadNotifications = async () => {
+    if (!propertyId) return;
+
+    const { data } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('property_id', propertyId)
+      .eq('is_read', false)
+      .order('created_at', { ascending: false });
+
+    if (data) {
+      setUnreadNotifications(data);
+    }
+  };
+
   const handlePrevMonth = () => {
     const newDate = new Date(selectedDate);
     newDate.setMonth(newDate.getMonth() - 1);
@@ -146,6 +163,19 @@ export const CalendarView: React.FC = () => {
   const getStatusColor = (status?: Availability['status']) => {
     if (!status || status === 'available') return 'bg-green-600/50 hover:bg-green-600/70';
     return 'bg-red-600/50 hover:bg-red-600/70';
+  };
+
+  // Helper to check if a date has an unread notification
+  const hasUnreadNotification = (unitId: string, dateStr: string): boolean => {
+    return unreadNotifications.some(notification => {
+      if (notification.unit_id !== unitId) return false;
+
+      const notifStart = new Date(notification.start_date);
+      const notifEnd = new Date(notification.end_date);
+      const checkDate = new Date(dateStr);
+
+      return checkDate >= notifStart && checkDate <= notifEnd;
+    });
   };
 
   // Helper to check if a day is the start or end of a reservation
@@ -301,6 +331,7 @@ export const CalendarView: React.FC = () => {
                       const isToday = date.toDateString() === new Date().toDateString();
                       const isSelected = dateStr === selectedDateStr;
                       const boundary = getReservationBoundary(unit.id, idx);
+                      const hasUnread = hasUnreadNotification(unit.id, dateStr);
 
                       let cellStyle: React.CSSProperties = {};
                       let cellClass = `h-5 rounded-sm transition-colors cursor-pointer ${getStatusColor(status)}`;
@@ -322,7 +353,7 @@ export const CalendarView: React.FC = () => {
                           key={idx}
                           className={`p-1 border-r border-border ${
                             isSelected ? 'bg-indigo-900/30' : isToday ? 'bg-indigo-900/20' : ''
-                          }`}
+                          } ${hasUnread ? 'ring-2 ring-yellow-500 ring-inset' : ''}`}
                         >
                           <div className="flex flex-col gap-1">
                             {/* Colored cell */}
