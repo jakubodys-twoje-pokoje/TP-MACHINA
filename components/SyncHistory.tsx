@@ -101,11 +101,16 @@ export const SyncHistory: React.FC = () => {
 
         if (error) {
           console.error('Error fetching unit details:', error);
-        } else if (data) {
-          setUnitDetails(prev => new Map(prev).set(syncId, data));
+          // Set empty array to stop loading spinner
+          setUnitDetails(prev => new Map(prev).set(syncId, []));
+        } else {
+          // Set data (even if empty array)
+          setUnitDetails(prev => new Map(prev).set(syncId, data || []));
         }
       } catch (err) {
         console.error('Failed to fetch unit details:', err);
+        // Set empty array to stop loading spinner
+        setUnitDetails(prev => new Map(prev).set(syncId, []));
       }
     }
   };
@@ -320,26 +325,33 @@ export const SyncHistory: React.FC = () => {
                       {expandedSyncs.has(sync.id) && (
                         <div className="mt-2 bg-slate-900/50 border border-slate-700 rounded-lg overflow-hidden">
                           {unitDetails.has(sync.id) ? (
-                            <table className="w-full text-xs">
-                              <thead className="bg-slate-800/50">
-                                <tr>
-                                  <th className="px-3 py-2 text-left text-slate-400 font-medium">Kwatera</th>
-                                  <th className="px-3 py-2 text-right text-slate-400 font-medium">Dni pobrane</th>
-                                  <th className="px-3 py-2 text-right text-slate-400 font-medium">Porównane</th>
-                                  <th className="px-3 py-2 text-right text-slate-400 font-medium">Zmiany</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-slate-700">
-                                {unitDetails.get(sync.id)!.map(unit => (
-                                  <tr key={unit.id} className="hover:bg-slate-800/30">
-                                    <td className="px-3 py-2 text-slate-300">{unit.unit_name}</td>
-                                    <td className="px-3 py-2 text-right text-indigo-400 font-medium">{unit.days_fetched}</td>
-                                    <td className="px-3 py-2 text-right text-slate-400">{unit.records_compared}</td>
-                                    <td className="px-3 py-2 text-right text-green-400 font-medium">{unit.changes_detected}</td>
+                            unitDetails.get(sync.id)!.length > 0 ? (
+                              <table className="w-full text-xs">
+                                <thead className="bg-slate-800/50">
+                                  <tr>
+                                    <th className="px-3 py-2 text-left text-slate-400 font-medium">Kwatera</th>
+                                    <th className="px-3 py-2 text-right text-slate-400 font-medium">Dni pobrane</th>
+                                    <th className="px-3 py-2 text-right text-slate-400 font-medium">Porównane</th>
+                                    <th className="px-3 py-2 text-right text-slate-400 font-medium">Zmiany</th>
                                   </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                                </thead>
+                                <tbody className="divide-y divide-slate-700">
+                                  {unitDetails.get(sync.id)!.map(unit => (
+                                    <tr key={unit.id} className="hover:bg-slate-800/30">
+                                      <td className="px-3 py-2 text-slate-300">{unit.unit_name}</td>
+                                      <td className="px-3 py-2 text-right text-indigo-400 font-medium">{unit.days_fetched}</td>
+                                      <td className="px-3 py-2 text-right text-slate-400">{unit.records_compared}</td>
+                                      <td className="px-3 py-2 text-right text-green-400 font-medium">{unit.changes_detected}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            ) : (
+                              <div className="p-4 text-center text-slate-500">
+                                <AlertCircle className="inline-block mr-2" size={14} />
+                                Brak szczegółowych danych. Synchronizacja została wykonana przed dodaniem funkcji trackingu per-kwatera. Uruchom nową synchronizację aby zobaczyć szczegóły.
+                              </div>
+                            )
                           ) : (
                             <div className="p-4 text-center text-slate-500">
                               <RefreshCw className="animate-spin inline-block mr-2" size={14} />

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { Property, Availability, Unit, Notification } from '../types';
-import { Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader2, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 
 export const CalendarView: React.FC = () => {
   const { id: propertyId } = useParams<{ id: string }>();
@@ -16,6 +16,7 @@ export const CalendarView: React.FC = () => {
 
   const [loadingUnits, setLoadingUnits] = useState(true);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   // Hotres sync counter
   const getHotresSyncCount = (): { count: number; hourStart: number } => {
@@ -294,6 +295,55 @@ export const CalendarView: React.FC = () => {
     alert(`Wysłano na Hotres. Pozostało ${15 - newCount} synchronizacji w tej godzinie.`);
   };
 
+  const triggerAvailabilitySync = async () => {
+    if (syncing) return;
+
+    if (!confirm('Czy na pewno chcesz wymusić synchronizację dostępności? To zsynchronizuje wszystkie obiekty.')) {
+      return;
+    }
+
+    setSyncing(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert('Musisz być zalogowany aby wykonać synchronizację');
+        return;
+      }
+
+      const response = await fetch(
+        'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/sync-all-availability',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({})
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Sync failed: ${response.status} ${errorText}`);
+      }
+
+      const result = await response.json();
+      console.log('Manual sync result:', result);
+
+      alert(`Synchronizacja zakończona!\n✓ Sukces: ${result.success_count}\n✗ Błędy: ${result.error_count}`);
+
+      // Refresh availability data after sync
+      if (units.length > 0) {
+        await fetchAvailability();
+      }
+    } catch (error: any) {
+      console.error('Manual sync error:', error);
+      alert(`Błąd synchronizacji: ${error.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const getStatusColor = (status?: Availability['status']) => {
     if (!status || status === 'available') return 'bg-green-600/50 hover:bg-green-600/70';
     return 'bg-red-600/50 hover:bg-red-600/70';
@@ -417,6 +467,26 @@ export const CalendarView: React.FC = () => {
                 Powiadomienia
               </button>
             </div>
+
+            {/* Manual Sync Button */}
+            <button
+              onClick={triggerAvailabilitySync}
+              disabled={syncing}
+              className="flex items-center gap-2 px-3 py-2 text-xs bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium"
+              title="Wymuś synchronizację dostępności dla wszystkich obiektów"
+            >
+              {syncing ? (
+                <>
+                  <RefreshCw size={14} className="animate-spin" />
+                  Sync...
+                </>
+              ) : (
+                <>
+                  <RefreshCw size={14} />
+                  Sync
+                </>
+              )}
+            </button>
 
             <input
               type="date"
