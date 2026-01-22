@@ -11,7 +11,7 @@ export const CalendarView: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [allUnitsAvailability, setAllUnitsAvailability] = useState<Map<string, Map<string, Availability['status']>>>(new Map());
   const [unreadNotifications, setUnreadNotifications] = useState<Notification[]>([]);
-  const [viewMode, setViewMode] = useState<'full' | 'notifications'>('full');
+  const [viewMode, setViewMode] = useState<'full' | 'notifications'>('notifications');
 
   const [loadingUnits, setLoadingUnits] = useState(true);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
@@ -176,7 +176,12 @@ export const CalendarView: React.FC = () => {
 
   // Get notification summary for tags
   const getNotificationSummary = () => {
-    const summary: Array<{ unitName: string; dateRange: string }> = [];
+    const summary: Array<{
+      unitName: string;
+      dateRange: string;
+      changeType: 'available' | 'blocked';
+      notificationId: string;
+    }> = [];
     const unitNotifications = new Map<string, Notification[]>();
 
     // Group notifications by unit
@@ -197,12 +202,29 @@ export const CalendarView: React.FC = () => {
         const endDate = new Date(notif.end_date).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' });
         summary.push({
           unitName: unit.name,
-          dateRange: `${startDate} - ${endDate}`
+          dateRange: `${startDate} - ${endDate}`,
+          changeType: notif.change_type,
+          notificationId: notif.id
         });
       });
     });
 
     return summary;
+  };
+
+  const handleMarkNotificationAsRead = async (notificationId: string) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    const userEmail = user?.email || null;
+    const readAt = new Date().toISOString();
+
+    // Update in database
+    await supabase
+      .from('notifications')
+      .update({ is_read: true, read_by_email: userEmail, read_at: readAt })
+      .eq('id', notificationId);
+
+    // Update local state
+    setUnreadNotifications(prev => prev.filter(n => n.id !== notificationId));
   };
 
   const getStatusColor = (status?: Availability['status']) => {
@@ -351,15 +373,25 @@ export const CalendarView: React.FC = () => {
         {/* Notification Tags */}
         {viewMode === 'notifications' && unreadNotifications.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
-            {getNotificationSummary().map((item, idx) => (
-              <div
-                key={idx}
-                className="inline-flex items-center gap-2 px-3 py-1 bg-yellow-900/30 border border-yellow-700/50 rounded-full text-xs"
-              >
-                <span className="font-semibold text-yellow-400">{item.unitName}</span>
-                <span className="text-yellow-300">{item.dateRange}</span>
-              </div>
-            ))}
+            {getNotificationSummary().map((item, idx) => {
+              const isAvailable = item.changeType === 'available';
+              const bgColor = isAvailable ? 'bg-green-900/30' : 'bg-red-900/30';
+              const borderColor = isAvailable ? 'border-green-700/50' : 'border-red-700/50';
+              const nameColor = isAvailable ? 'text-green-400' : 'text-red-400';
+              const dateColor = isAvailable ? 'text-green-300' : 'text-red-300';
+
+              return (
+                <button
+                  key={idx}
+                  onClick={() => handleMarkNotificationAsRead(item.notificationId)}
+                  className={`inline-flex items-center gap-2 px-3 py-1 ${bgColor} border ${borderColor} rounded-full text-xs hover:opacity-80 transition-opacity cursor-pointer`}
+                >
+                  <span className={`font-semibold ${nameColor}`}>{item.unitName}</span>
+                  <span className={dateColor}>{item.dateRange}</span>
+                  <span className="text-slate-500 text-[10px]">(kliknij aby odczytać)</span>
+                </button>
+              );
+            })}
           </div>
         )}
 

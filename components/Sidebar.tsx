@@ -39,7 +39,7 @@ export const Sidebar: React.FC = () => {
       setIsModalOpen(false);
       setFormData({ name: '', oid: '' });
       setModalMode('manual');
-      navigate(`/property/${newProperty.id}/units`);
+      navigate(`/property/${newProperty.id}/calendar`);
 
     } catch (err: any) {
       alert(`Błąd: ${err.message}`);
@@ -98,17 +98,17 @@ export const Sidebar: React.FC = () => {
           properties.map(property => (
             <div key={property.id} className="space-y-1">
                <NavLink
-                to={`/property/${property.id}/details`}
+                to={`/property/${property.id}/calendar`}
                 className={() => `block px-3 py-2.5 rounded-lg text-sm transition-colors ${activePropertyId === property.id ? 'bg-slate-800 text-white font-medium' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`}
               >
                 <div className="flex items-center gap-3"><Home size={16} /> <span className="truncate">{property.name}</span></div>
               </NavLink>
               {activePropertyId === property.id && (
                 <div className="ml-4 pl-3 border-l border-slate-700 space-y-1 my-1 animate-in slide-in-from-left-2 duration-200">
-                    <NavLink to={`/property/${property.id}/details`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><Settings size={14} /> Ustawienia</NavLink>
+                    <NavLink to={`/property/${property.id}/calendar`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><Calendar size={14} /> Dostępność</NavLink>
                     <NavLink to={`/property/${property.id}/units`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><BedDouble size={14} /> Kwatery</NavLink>
                     <NavLink to={`/property/${property.id}/pricing`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><BadgePercent size={14} /> Cenniki</NavLink>
-                    <NavLink to={`/property/${property.id}/calendar`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><Calendar size={14} /> Dostępność</NavLink>
+                    <NavLink to={`/property/${property.id}/details`} className={({isActive}) => `flex items-center gap-2 px-3 py-2 rounded-md text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><Settings size={14} /> Ustawienia</NavLink>
                 </div>
               )}
             </div>
