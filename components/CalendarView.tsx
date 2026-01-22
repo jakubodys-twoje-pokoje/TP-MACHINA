@@ -335,12 +335,12 @@ export const CalendarView: React.FC = () => {
                             {/* Checkboxes in one line - vertical labels */}
                             <div className="flex items-center justify-center gap-2">
                               <label className="flex flex-col items-center gap-0.5 cursor-pointer">
-                                <input type="checkbox" className="w-3.5 h-3.5 cursor-pointer" />
-                                <span className="text-slate-400 text-[8px]">cta</span>
+                                <input type="checkbox" className="w-5 h-5 cursor-pointer" />
+                                <span className="text-slate-400 text-[8px] font-semibold">CTA</span>
                               </label>
                               <label className="flex flex-col items-center gap-0.5 cursor-pointer">
-                                <input type="checkbox" className="w-3.5 h-3.5 cursor-pointer" />
-                                <span className="text-slate-400 text-[8px]">ctd</span>
+                                <input type="checkbox" className="w-5 h-5 cursor-pointer" />
+                                <span className="text-slate-400 text-[8px] font-semibold">CTD</span>
                               </label>
                             </div>
 
