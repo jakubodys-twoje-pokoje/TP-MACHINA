@@ -464,14 +464,14 @@ export const CalendarView: React.FC = () => {
                   <button
                     key={idx}
                     onClick={() => handleMarkNotificationAsRead(item.notificationId)}
-                    className={`inline-flex items-center gap-2 px-3 py-1 ${bgColor} border ${borderColor} rounded-full text-xs transition-opacity hover:opacity-80 cursor-pointer ${
+                    className={`inline-flex items-center gap-2 px-2.5 py-0.5 ${bgColor} border ${borderColor} rounded-full text-[10px] transition-opacity hover:opacity-80 cursor-pointer ${
                       isRead ? 'opacity-60' : ''
                     }`}
                   >
                     <span className={`font-semibold ${nameColor}`}>{item.unitName}</span>
                     <span className={dateColor}>{item.dateRange}</span>
-                    {!isRead && <span className="text-slate-500 text-[10px]">(kliknij aby odczytać)</span>}
-                    {isRead && <span className="text-slate-600 text-[10px]">✓ odczytane (kliknij aby cofnąć)</span>}
+                    {!isRead && <span className="text-slate-500 text-[9px]">(kliknij aby odczytać)</span>}
+                    {isRead && <span className="text-slate-600 text-[9px]">✓ odczytane (kliknij aby cofnąć)</span>}
                   </button>
                 );
               })}
@@ -520,6 +520,52 @@ export const CalendarView: React.FC = () => {
             <div className="overflow-x-auto max-h-[calc(100vh-300px)] overflow-y-auto" ref={scrollContainerRef} onScroll={handleMainScroll}>
           <table className="w-full border-collapse">
             <thead className="sticky top-0 z-30 border-b-2 border-border">
+              {/* Month headers row */}
+              <tr className="bg-surface border-b border-border">
+                <th className="sticky left-0 z-40 bg-surface border-r border-border min-w-[120px]"></th>
+                {(() => {
+                  const monthGroups: Array<{ month: string; year: string; count: number; startIdx: number }> = [];
+                  let currentMonth = '';
+                  let currentYear = '';
+                  let count = 0;
+                  let startIdx = 0;
+
+                  dates.forEach((date, idx) => {
+                    const month = date.toLocaleDateString('pl-PL', { month: 'long' });
+                    const year = date.getFullYear().toString();
+                    const monthYear = `${month} ${year}`;
+
+                    if (monthYear !== currentMonth) {
+                      if (count > 0) {
+                        monthGroups.push({ month: currentMonth.split(' ')[0], year: currentYear, count, startIdx });
+                      }
+                      currentMonth = monthYear;
+                      currentYear = year;
+                      count = 1;
+                      startIdx = idx;
+                    } else {
+                      count++;
+                    }
+                  });
+
+                  // Push last group
+                  if (count > 0) {
+                    monthGroups.push({ month: currentMonth.split(' ')[0], year: currentYear, count, startIdx });
+                  }
+
+                  return monthGroups.map((group, idx) => (
+                    <th
+                      key={idx}
+                      colSpan={group.count}
+                      className="p-1 text-center text-xs font-bold text-slate-300 border-r border-border bg-slate-800/50"
+                    >
+                      <div className="capitalize">{group.month}</div>
+                      <div className="text-[9px] text-slate-500 font-normal">{group.year}</div>
+                    </th>
+                  ));
+                })()}
+              </tr>
+              {/* Day headers row */}
               <tr className="bg-surface">
                 <th className="sticky left-0 z-40 bg-surface p-2 text-left text-[10px] font-bold text-slate-400 border-r border-border min-w-[120px]">
                   Pokój

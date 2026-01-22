@@ -425,40 +425,55 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         console.log('Importing:', { externalId, name, type, capacity, area, floor: floorNum, bathrooms: bathroomCount });
 
         if (externalId && name) {
+          // Check if unit already exists by external_type_id (primary identifier)
           const { data: existingUnit } = await supabase
             .from('units')
             .select('id')
             .eq('property_id', propertyId)
-            .eq('external_id', String(externalId))
+            .eq('external_type_id', String(externalTypeId))
             .maybeSingle();
 
-          if (!existingUnit) {
-            const insertData = {
-              property_id: propertyId,
-              name: name,
-              type: type,
-              capacity: capacity,
-              area: area,
-              external_id: String(externalId),
-              external_type_id: String(externalTypeId),
-              description: description,
-              beds_single: single,
-              beds_double: double,
-              beds_sofa: sofa,
-              beds_sofa_single: sofaSingle,
-              max_adults: maxAdults,
-              bathroom_count: bathroomCount,
-              floor: floorNum,
-              facilities: facilities,
-              photo_url: photoUrl,
-              photos: photos
-            };
+          const upsertData = {
+            property_id: propertyId,
+            name: name,
+            type: type,
+            capacity: capacity,
+            area: area,
+            external_id: String(externalId),
+            external_type_id: String(externalTypeId),
+            description: description,
+            beds_single: single,
+            beds_double: double,
+            beds_sofa: sofa,
+            beds_sofa_single: sofaSingle,
+            max_adults: maxAdults,
+            bathroom_count: bathroomCount,
+            floor: floorNum,
+            facilities: facilities,
+            photo_url: photoUrl,
+            photos: photos
+          };
 
-            console.log('Inserting data:', insertData);
+          if (existingUnit) {
+            // UPDATE existing unit
+            console.log('Updating existing unit:', upsertData);
+            const { error: updateError } = await supabase
+              .from('units')
+              .update(upsertData)
+              .eq('id', existingUnit.id);
 
+            if (updateError) {
+              console.error(`Failed to update room ${name}:`, updateError);
+              throw updateError;
+            }
+
+            console.log(`✓ Updated room: ${name} (ID: ${externalId})`);
+          } else {
+            // INSERT new unit
+            console.log('Inserting new unit:', upsertData);
             const { data: insertedRoom, error: insertError } = await supabase
               .from('units')
-              .insert(insertData)
+              .insert(upsertData)
               .select()
               .single();
 
@@ -468,8 +483,6 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
             }
 
             console.log(`✓ Imported room: ${name} (ID: ${externalId})`, insertedRoom);
-          } else {
-            console.log(`⊘ Room already exists: ${name} (ID: ${externalId})`);
           }
         }
       }
@@ -588,10 +601,17 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         const { data: units } = await supabase.from('units').select('id, name, external_id, external_type_id').eq('property_id', propertyId);
         if (!units || units.length === 0) throw new Error("Brak kwater w bazie.");
 
+        // Build unit mapping using ONLY external_type_id to avoid duplicates
+        // external_type_id is the primary identifier used by Hotres API
         const unitMap = new Map<string, string>();
         units.forEach((u: any) => {
-            if (u.external_id) unitMap.set(String(u.external_id).trim(), u.id);
-            if (u.external_type_id) unitMap.set(String(u.external_type_id).trim(), u.id);
+            if (u.external_type_id) {
+                const typeId = String(u.external_type_id).trim();
+                unitMap.set(typeId, u.id);
+                console.log(`  Mapped type_id ${typeId} → ${u.name} (${u.id})`);
+            } else {
+                console.warn(`  ⚠️  Unit ${u.name} missing external_type_id`);
+            }
         });
 
         const year = 2026;

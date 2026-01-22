@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { SyncHistory as SyncHistoryType } from '../types';
-import { ChevronDown, ChevronRight, Clock, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Bell, TrendingUp } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Bell, TrendingUp, List } from 'lucide-react';
 
 interface GroupedHistory {
   propertyId: string;
@@ -9,10 +9,20 @@ interface GroupedHistory {
   history: SyncHistoryType[];
 }
 
+interface UnitDetail {
+  id: string;
+  unit_name: string;
+  days_fetched: number;
+  records_compared: number;
+  changes_detected: number;
+}
+
 export const SyncHistory: React.FC = () => {
   const [history, setHistory] = useState<SyncHistoryType[]>([]);
   const [loading, setLoading] = useState(true);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [expandedSyncs, setExpandedSyncs] = useState<Set<string>>(new Set());
+  const [unitDetails, setUnitDetails] = useState<Map<string, UnitDetail[]>>(new Map());
 
   useEffect(() => {
     fetchSyncHistory();
@@ -66,6 +76,37 @@ export const SyncHistory: React.FC = () => {
       }
       return newSet;
     });
+  };
+
+  const toggleSyncDetails = async (syncId: string) => {
+    setExpandedSyncs(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(syncId)) {
+        newSet.delete(syncId);
+      } else {
+        newSet.add(syncId);
+      }
+      return newSet;
+    });
+
+    // Fetch unit details if not already loaded
+    if (!unitDetails.has(syncId)) {
+      try {
+        const { data, error } = await supabase
+          .from('sync_unit_details')
+          .select('*')
+          .eq('sync_history_id', syncId)
+          .order('unit_name');
+
+        if (error) {
+          console.error('Error fetching unit details:', error);
+        } else if (data) {
+          setUnitDetails(prev => new Map(prev).set(syncId, data));
+        }
+      } catch (err) {
+        console.error('Failed to fetch unit details:', err);
+      }
+    }
   };
 
   const formatDateTime = (dateStr: string) => {
@@ -191,6 +232,58 @@ export const SyncHistory: React.FC = () => {
                         {sync.error_message}
                       </div>
                     )}
+
+                    {/* Per-unit details button */}
+                    <div className="mt-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSyncDetails(sync.id);
+                        }}
+                        className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-300 transition-colors"
+                      >
+                        {expandedSyncs.has(sync.id) ? (
+                          <ChevronDown size={14} />
+                        ) : (
+                          <ChevronRight size={14} />
+                        )}
+                        <List size={14} />
+                        <span>Zobacz szczegóły kwater ({sync.records_compared || 0} rekordów)</span>
+                      </button>
+
+                      {/* Unit details dropdown */}
+                      {expandedSyncs.has(sync.id) && (
+                        <div className="mt-2 bg-slate-900/50 border border-slate-700 rounded-lg overflow-hidden">
+                          {unitDetails.has(sync.id) ? (
+                            <table className="w-full text-xs">
+                              <thead className="bg-slate-800/50">
+                                <tr>
+                                  <th className="px-3 py-2 text-left text-slate-400 font-medium">Kwatera</th>
+                                  <th className="px-3 py-2 text-right text-slate-400 font-medium">Dni pobrane</th>
+                                  <th className="px-3 py-2 text-right text-slate-400 font-medium">Porównane</th>
+                                  <th className="px-3 py-2 text-right text-slate-400 font-medium">Zmiany</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-700">
+                                {unitDetails.get(sync.id)!.map(unit => (
+                                  <tr key={unit.id} className="hover:bg-slate-800/30">
+                                    <td className="px-3 py-2 text-slate-300">{unit.unit_name}</td>
+                                    <td className="px-3 py-2 text-right text-indigo-400 font-medium">{unit.days_fetched}</td>
+                                    <td className="px-3 py-2 text-right text-slate-400">{unit.records_compared}</td>
+                                    <td className="px-3 py-2 text-right text-green-400 font-medium">{unit.changes_detected}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          ) : (
+                            <div className="p-4 text-center text-slate-500">
+                              <RefreshCw className="animate-spin inline-block mr-2" size={14} />
+                              Ładowanie szczegółów...
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

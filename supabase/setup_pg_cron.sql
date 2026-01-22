@@ -4,11 +4,11 @@ CREATE EXTENSION IF NOT EXISTS pg_cron;
 -- Grant usage to postgres role
 GRANT USAGE ON SCHEMA cron TO postgres;
 
--- Schedule sync-all-availability to run every 2 minutes
+-- Schedule sync-all-availability to run every 3 minutes
 -- This will call the Edge Function automatically
 SELECT cron.schedule(
   'sync-all-availability-job',  -- Job name
-  '*/2 * * * *',                -- Cron expression: every 2 minutes
+  '*/3 * * * *',                -- Cron expression: every 3 minutes
   $$
   SELECT
     net.http_post(

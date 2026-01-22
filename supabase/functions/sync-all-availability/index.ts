@@ -295,17 +295,18 @@ async function syncPropertyAvailability(
       throw new Error("No units found for property")
     }
 
-    // Build unit mapping
+    // Build unit mapping using ONLY external_type_id to avoid duplicates
+    // external_type_id is the primary identifier used by Hotres API
     const unitMap = new Map<string, string>()
     const unitNamesMap = new Map<string, string>()
     units.forEach((u: any) => {
-      if (u.external_id) {
-        unitMap.set(String(u.external_id).trim(), u.id)
-        unitNamesMap.set(String(u.external_id).trim(), u.name)
-      }
       if (u.external_type_id) {
-        unitMap.set(String(u.external_type_id).trim(), u.id)
-        unitNamesMap.set(String(u.external_type_id).trim(), u.name)
+        const typeId = String(u.external_type_id).trim()
+        unitMap.set(typeId, u.id)
+        unitNamesMap.set(typeId, u.name)
+        console.log(`  Mapped type_id ${typeId} → ${u.name} (${u.id})`)
+      } else {
+        console.warn(`  ⚠️  Unit ${u.name} missing external_type_id`)
       }
     })
 
@@ -366,6 +367,9 @@ async function syncPropertyAvailability(
     const matchedTypeIds = new Set<string>()
     const unmatchedTypeIds = new Set<string>()
 
+    // Track per-unit metrics
+    const unitMetrics = new Map<string, { unitName: string; daysFetched: number; recordsCompared: number }>()
+
     // Build rows to upsert
     const rowsToUpsert: any[] = []
     const processedKeys = new Set<string>()
@@ -377,12 +381,24 @@ async function syncPropertyAvailability(
 
       if (unitId && item.dates && Array.isArray(item.dates)) {
         matchedTypeIds.add(extId)
+
+        // Initialize unit metrics if not exists
+        if (!unitMetrics.has(unitId)) {
+          const unitName = unitNamesMap.get(extId) || 'Unknown'
+          unitMetrics.set(unitId, { unitName, daysFetched: 0, recordsCompared: 0 })
+        }
+
         for (const d of item.dates) {
           recordsCompared++ // Count each date record from API
           const dateStr = normalizeDate(d.date)
           const key = `${unitId}_${dateStr}`
           if (processedKeys.has(key)) continue
           processedKeys.add(key)
+
+          // Track per-unit metrics
+          const metrics = unitMetrics.get(unitId)!
+          metrics.daysFetched++
+          metrics.recordsCompared++
 
           const isBooked = (d.available === 0 || d.available === '0' || d.available === false)
           const targetStatus = isBooked ? 'booked' : 'available'
@@ -468,6 +484,9 @@ async function syncPropertyAvailability(
       toStatus: string
     }> = []
 
+    // Track changes per unit for metrics
+    const unitChangeCounts = new Map<string, number>()
+
     for (const [key, afterRecord] of afterPropertySnapshot.entries()) {
       const beforeRecord = beforePropertySnapshot.get(key)
       if (beforeRecord && beforeRecord.status !== afterRecord.status) {
@@ -479,6 +498,9 @@ async function syncPropertyAvailability(
           fromStatus: beforeRecord.status,
           toStatus: afterRecord.status
         })
+
+        // Track changes per unit
+        unitChangeCounts.set(unitId, (unitChangeCounts.get(unitId) || 0) + 1)
       }
     }
 
@@ -601,7 +623,7 @@ async function syncPropertyAvailability(
     console.log(`✓ Synced ${property.name}: ${rowsToUpsert.length} records`)
 
     // Save sync history for this property
-    await supabaseClient
+    const { data: syncHistory, error: syncHistoryError } = await supabaseClient
       .from('sync_history')
       .insert({
         property_id: property.id,
@@ -611,6 +633,33 @@ async function syncPropertyAvailability(
         notifications_sent: notificationsSent,
         status: 'success'
       })
+      .select()
+      .single()
+
+    if (syncHistoryError) {
+      console.error('Failed to save sync history:', syncHistoryError)
+    } else if (syncHistory && unitMetrics.size > 0) {
+      // Save per-unit details
+      const unitDetails = Array.from(unitMetrics.entries()).map(([unitId, metrics]) => ({
+        sync_history_id: syncHistory.id,
+        property_id: property.id,
+        unit_id: unitId,
+        unit_name: metrics.unitName,
+        days_fetched: metrics.daysFetched,
+        records_compared: metrics.recordsCompared,
+        changes_detected: unitChangeCounts.get(unitId) || 0
+      }))
+
+      const { error: detailsError } = await supabaseClient
+        .from('sync_unit_details')
+        .insert(unitDetails)
+
+      if (detailsError) {
+        console.error('Failed to save unit details:', detailsError)
+      } else {
+        console.log(`✓ Saved details for ${unitDetails.length} units`)
+      }
+    }
 
     return { recordsCompared, changesDetected, notificationsSent }
 
