@@ -31,8 +31,8 @@ export const CalendarView: React.FC = () => {
   // Auto-scroll to position selected date at 1/3 of viewport
   useEffect(() => {
     if (scrollContainerRef.current && !loadingAvailability) {
-      // Each day cell is ~60px wide (min-w-[60px])
-      const dayWidth = 60;
+      // Each day cell is ~90px wide (min-w-[90px])
+      const dayWidth = 90;
       // Selected date is 30 days from start (1 month before)
       const daysBeforeSelected = 30;
       // Scroll so selected date appears at 1/3 of container width
@@ -246,7 +246,7 @@ export const CalendarView: React.FC = () => {
                   return (
                     <th
                       key={idx}
-                      className={`p-2 text-center text-xs font-medium border-r border-border min-w-[60px] ${
+                      className={`p-2 text-center text-xs font-medium border-r border-border min-w-[90px] ${
                         isSelected ? 'bg-indigo-900/50' : isToday ? 'bg-indigo-900/30' : ''
                       }`}
                     >
@@ -298,11 +298,36 @@ export const CalendarView: React.FC = () => {
                             isSelected ? 'bg-indigo-900/30' : isToday ? 'bg-indigo-900/20' : ''
                           }`}
                         >
-                          <div
-                            className={cellClass}
-                            style={cellStyle}
-                            title={`${unit.name} - ${dateStr}: ${status || 'available'}${boundary ? ` (${boundary === 'start' ? 'początek' : 'koniec'} rezerwacji)` : ''}`}
-                          />
+                          <div className="flex flex-col gap-1">
+                            {/* Colored cell */}
+                            <div
+                              className={cellClass}
+                              style={cellStyle}
+                              title={`${unit.name} - ${dateStr}: ${status || 'available'}${boundary ? ` (${boundary === 'start' ? 'początek' : 'koniec'} rezerwacji)` : ''}`}
+                            />
+
+                            {/* Checkboxes in one line */}
+                            <div className="flex items-center justify-center gap-1.5 text-[9px]">
+                              <label className="flex items-center gap-0.5 cursor-pointer">
+                                <input type="checkbox" className="w-2.5 h-2.5 cursor-pointer" />
+                                <span className="text-slate-400">cta</span>
+                              </label>
+                              <label className="flex items-center gap-0.5 cursor-pointer">
+                                <input type="checkbox" className="w-2.5 h-2.5 cursor-pointer" />
+                                <span className="text-slate-400">ctd</span>
+                              </label>
+                            </div>
+
+                            {/* MIN input */}
+                            <div className="flex flex-col gap-0.5">
+                              <label className="text-[8px] text-slate-500 uppercase">MIN</label>
+                              <input
+                                type="text"
+                                className="w-full px-1 py-0.5 text-[10px] bg-slate-800 border border-slate-700 rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                placeholder="0"
+                              />
+                            </div>
+                          </div>
                         </td>
                       );
                     })}
