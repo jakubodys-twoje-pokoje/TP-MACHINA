@@ -388,6 +388,13 @@ async function syncPropertyAvailability(
           unitMetrics.set(unitId, { unitName, daysFetched: 0, recordsCompared: 0 })
         }
 
+        // Log first few dates from API for debugging
+        if (item.dates.length > 0) {
+          const firstDate = normalizeDate(item.dates[0].date)
+          const lastDate = normalizeDate(item.dates[item.dates.length - 1].date)
+          console.log(`   📅 Unit ${extId}: API returned ${item.dates.length} dates (${firstDate} → ${lastDate})`)
+        }
+
         for (const d of item.dates) {
           recordsCompared++ // Count each date record from API
           const dateStr = normalizeDate(d.date)
@@ -420,6 +427,7 @@ async function syncPropertyAvailability(
 
     // Add checkout days (+1 day after each booked sequence)
     console.log(`🔧 Adding checkout days for continuous booking sequences...`)
+    console.log(`   Total rows before checkout addition: ${rowsToUpsert.length}`)
     const unitBookings = new Map<string, string[]>() // unit_id -> sorted booked dates
 
     // Group booked dates by unit
@@ -432,9 +440,14 @@ async function syncPropertyAvailability(
       }
     })
 
+    console.log(`   Found ${unitBookings.size} units with bookings`)
+
     // For each unit, find sequences and add checkout days
     unitBookings.forEach((dates, unitId) => {
       const sortedDates = dates.sort()
+      console.log(`   📦 Unit ${unitId}: Processing ${sortedDates.length} booked dates`)
+      console.log(`      First date: ${sortedDates[0]}, Last date: ${sortedDates[sortedDates.length - 1]}`)
+
       const sequences: string[][] = []
       let currentSeq: string[] = []
 
@@ -464,8 +477,12 @@ async function syncPropertyAvailability(
         sequences.push(currentSeq)
       }
 
+      console.log(`      Found ${sequences.length} sequence(s)`)
+
       // Add checkout day (+1) for each sequence
-      sequences.forEach(seq => {
+      sequences.forEach((seq, idx) => {
+        console.log(`      Sequence ${idx + 1}: ${seq[0]} → ${seq[seq.length - 1]} (${seq.length} days)`)
+
         const lastDate = new Date(seq[seq.length - 1])
         lastDate.setDate(lastDate.getDate() + 1)
         const checkoutDateStr = lastDate.toISOString().split('T')[0]
@@ -482,10 +499,14 @@ async function syncPropertyAvailability(
             reservation_id: existingRow?.reservation_id || null
           })
           processedKeys.add(key)
-          console.log(`   ✓ Added checkout day ${checkoutDateStr} for unit ${unitId}`)
+          console.log(`      ✅ Added checkout day: ${checkoutDateStr}`)
+        } else {
+          console.log(`      ⚠️  Checkout day ${checkoutDateStr} already in processedKeys, skipping`)
         }
       })
     })
+
+    console.log(`   Total rows after checkout addition: ${rowsToUpsert.length}`)
 
     // Report diagnostics
     console.log(`📊 ${property.name} API Statistics:`)
