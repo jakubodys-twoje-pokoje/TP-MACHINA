@@ -11,10 +11,30 @@ export const CalendarView: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [allUnitsAvailability, setAllUnitsAvailability] = useState<Map<string, Map<string, Availability['status']>>>(new Map());
   const [unreadNotifications, setUnreadNotifications] = useState<Notification[]>([]);
+  const [readNotificationIds, setReadNotificationIds] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<'full' | 'notifications'>('notifications');
 
   const [loadingUnits, setLoadingUnits] = useState(true);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
+
+  // Hotres sync counter
+  const getHotresSyncCount = (): { count: number; hourStart: number } => {
+    const stored = localStorage.getItem('hotres_sync_count');
+    if (!stored) return { count: 0, hourStart: Date.now() };
+
+    const data = JSON.parse(stored);
+    const currentHour = Math.floor(Date.now() / 3600000);
+    const storedHour = Math.floor(data.hourStart / 3600000);
+
+    // Reset if different hour
+    if (currentHour !== storedHour) {
+      return { count: 0, hourStart: Date.now() };
+    }
+
+    return data;
+  };
+
+  const [hotresSyncCount, setHotresSyncCount] = useState(getHotresSyncCount());
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
@@ -223,8 +243,39 @@ export const CalendarView: React.FC = () => {
       .update({ is_read: true, read_by_email: userEmail, read_at: readAt })
       .eq('id', notificationId);
 
-    // Update local state
-    setUnreadNotifications(prev => prev.filter(n => n.id !== notificationId));
+    // Mark as read locally (gray out, but don't remove)
+    setReadNotificationIds(prev => new Set(prev).add(notificationId));
+  };
+
+  const handleSyncToHotres = async () => {
+    // Check limit
+    const currentData = getHotresSyncCount();
+    if (currentData.count >= 15) {
+      alert('Osiągnięto limit 15 synchronizacji na godzinę. Spróbuj ponownie za chwilę.');
+      return;
+    }
+
+    // Confirm
+    if (!confirm('Czy na pewno chcesz wysłać zmiany na Hotres? Ta operacja jest nieodwracalna.')) {
+      return;
+    }
+
+    // TODO: Implement actual Hotres sync logic here
+    // For now, just remove read notifications
+
+    // Update counter
+    const newCount = currentData.count + 1;
+    const newData = { count: newCount, hourStart: currentData.hourStart };
+    localStorage.setItem('hotres_sync_count', JSON.stringify(newData));
+    setHotresSyncCount(newData);
+
+    // Remove read notifications from view
+    setUnreadNotifications(prev =>
+      prev.filter(n => !readNotificationIds.has(n.id))
+    );
+    setReadNotificationIds(new Set());
+
+    alert(`Wysłano na Hotres. Pozostało ${15 - newCount} synchronizacji w tej godzinie.`);
   };
 
   const getStatusColor = (status?: Availability['status']) => {
@@ -232,10 +283,11 @@ export const CalendarView: React.FC = () => {
     return 'bg-red-600/50 hover:bg-red-600/70';
   };
 
-  // Helper to check if a date has an unread notification
+  // Helper to check if a date has an unread notification (not read yet)
   const hasUnreadNotification = (unitId: string, dateStr: string): boolean => {
     return unreadNotifications.some(notification => {
       if (notification.unit_id !== unitId) return false;
+      if (readNotificationIds.has(notification.id)) return false; // Skip read ones
 
       const notifStart = new Date(notification.start_date);
       const notifEnd = new Date(notification.end_date);
@@ -372,26 +424,61 @@ export const CalendarView: React.FC = () => {
 
         {/* Notification Tags */}
         {viewMode === 'notifications' && unreadNotifications.length > 0 && (
-          <div className="mb-3 flex flex-wrap gap-2">
-            {getNotificationSummary().map((item, idx) => {
-              const isAvailable = item.changeType === 'available';
-              const bgColor = isAvailable ? 'bg-green-900/30' : 'bg-red-900/30';
-              const borderColor = isAvailable ? 'border-green-700/50' : 'border-red-700/50';
-              const nameColor = isAvailable ? 'text-green-400' : 'text-red-400';
-              const dateColor = isAvailable ? 'text-green-300' : 'text-red-300';
+          <div className="mb-3 space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {getNotificationSummary().map((item, idx) => {
+                const isRead = readNotificationIds.has(item.notificationId);
+                const isAvailable = item.changeType === 'available';
 
-              return (
+                // Gray out if read
+                const bgColor = isRead
+                  ? 'bg-slate-800/50'
+                  : isAvailable ? 'bg-green-900/30' : 'bg-red-900/30';
+                const borderColor = isRead
+                  ? 'border-slate-700/50'
+                  : isAvailable ? 'border-green-700/50' : 'border-red-700/50';
+                const nameColor = isRead
+                  ? 'text-slate-500'
+                  : isAvailable ? 'text-green-400' : 'text-red-400';
+                const dateColor = isRead
+                  ? 'text-slate-600'
+                  : isAvailable ? 'text-green-300' : 'text-red-300';
+
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => !isRead && handleMarkNotificationAsRead(item.notificationId)}
+                    disabled={isRead}
+                    className={`inline-flex items-center gap-2 px-3 py-1 ${bgColor} border ${borderColor} rounded-full text-xs transition-opacity ${
+                      isRead ? 'opacity-50 cursor-default' : 'hover:opacity-80 cursor-pointer'
+                    }`}
+                  >
+                    <span className={`font-semibold ${nameColor}`}>{item.unitName}</span>
+                    <span className={dateColor}>{item.dateRange}</span>
+                    {!isRead && <span className="text-slate-500 text-[10px]">(kliknij aby odczytać)</span>}
+                    {isRead && <span className="text-slate-600 text-[10px]">✓ odczytane</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Sync to Hotres Button */}
+            {readNotificationIds.size > 0 && (
+              <div className="flex items-center gap-3">
                 <button
-                  key={idx}
-                  onClick={() => handleMarkNotificationAsRead(item.notificationId)}
-                  className={`inline-flex items-center gap-2 px-3 py-1 ${bgColor} border ${borderColor} rounded-full text-xs hover:opacity-80 transition-opacity cursor-pointer`}
+                  onClick={handleSyncToHotres}
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2"
                 >
-                  <span className={`font-semibold ${nameColor}`}>{item.unitName}</span>
-                  <span className={dateColor}>{item.dateRange}</span>
-                  <span className="text-slate-500 text-[10px]">(kliknij aby odczytać)</span>
+                  <span className="text-lg">Wyślij na Hotres</span>
+                  <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">
+                    {readNotificationIds.size} zmian
+                  </span>
                 </button>
-              );
-            })}
+                <div className="text-xs text-slate-400 whitespace-nowrap">
+                  Pozostało: <span className="font-bold text-white">{15 - hotresSyncCount.count}</span>/15
+                </div>
+              </div>
+            )}
           </div>
         )}
 
