@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { SyncHistory as SyncHistoryType } from '../types';
-import { ChevronDown, ChevronRight, Clock, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Bell, TrendingUp, List } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, RefreshCw, AlertCircle, CheckCircle2, BarChart3, Bell, TrendingUp, List, Play } from 'lucide-react';
 
 interface GroupedHistory {
   propertyId: string;
@@ -20,6 +20,7 @@ interface UnitDetail {
 export const SyncHistory: React.FC = () => {
   const [history, setHistory] = useState<SyncHistoryType[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [expandedSyncs, setExpandedSyncs] = useState<Set<string>>(new Set());
   const [unitDetails, setUnitDetails] = useState<Map<string, UnitDetail[]>>(new Map());
@@ -109,6 +110,53 @@ export const SyncHistory: React.FC = () => {
     }
   };
 
+  const triggerManualSync = async () => {
+    if (syncing) return;
+
+    if (!confirm('Czy na pewno chcesz wymusić ręczną synchronizację? To wywoła synchronizację wszystkich obiektów.')) {
+      return;
+    }
+
+    setSyncing(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert('Musisz być zalogowany aby wykonać synchronizację');
+        return;
+      }
+
+      const response = await fetch(
+        'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/sync-all-availability',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({})
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Sync failed: ${response.status} ${errorText}`);
+      }
+
+      const result = await response.json();
+      console.log('Manual sync result:', result);
+
+      alert(`Synchronizacja zakończona!\n✓ Sukces: ${result.success_count}\n✗ Błędy: ${result.error_count}`);
+
+      // Refresh history after sync
+      await fetchSyncHistory();
+    } catch (error: any) {
+      console.error('Manual sync error:', error);
+      alert(`Błąd synchronizacji: ${error.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const formatDateTime = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleString('pl-PL', {
@@ -141,13 +189,30 @@ export const SyncHistory: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-end mb-4">
+      <div className="flex items-center justify-end gap-3 mb-4">
+        <button
+          onClick={triggerManualSync}
+          disabled={syncing}
+          className="flex items-center gap-2 px-4 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium"
+        >
+          {syncing ? (
+            <>
+              <RefreshCw size={16} className="animate-spin" />
+              Synchronizacja...
+            </>
+          ) : (
+            <>
+              <Play size={16} />
+              Wymuś synchronizację
+            </>
+          )}
+        </button>
         <button
           onClick={fetchSyncHistory}
           className="flex items-center gap-2 px-3 py-2 text-sm bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors"
         >
           <RefreshCw size={16} />
-          Odśwież
+          Odśwież historię
         </button>
       </div>
 

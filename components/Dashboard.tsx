@@ -87,7 +87,7 @@ const NotificationItem: React.FC<{
 
 
 export const Dashboard: React.FC = () => {
-  const { notifications, loading, markNotificationAsRead, markNotificationAsUnread, markAllNotificationsAsRead, deleteAllReadNotifications, deleteNotification } = useProperties();
+  const { notifications, loading, markNotificationAsRead, markNotificationAsUnread, markAllNotificationsAsRead, deleteNotification } = useProperties();
   const [groupByProperty, setGroupByProperty] = useState(true);
   const [collapsedUnreadGroups, setCollapsedUnreadGroups] = useState<Set<string>>(new Set());
   const [collapsedReadGroups, setCollapsedReadGroups] = useState<Set<string>>(new Set());
@@ -247,12 +247,6 @@ export const Dashboard: React.FC = () => {
             <section>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-bold text-white">Ostatnio odczytane</h3>
-                <button
-                  onClick={deleteAllReadNotifications}
-                  className="text-sm flex items-center gap-2 px-3 py-1.5 text-red-400 hover:bg-red-500/10 rounded-md transition-colors"
-                >
-                  <Trash2 size={16} /> Usuń wszystkie przeczytane
-                </button>
               </div>
               <div className="opacity-60">
                 {groupByProperty ? (
