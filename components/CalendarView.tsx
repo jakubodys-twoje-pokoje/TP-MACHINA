@@ -11,6 +11,7 @@ export const CalendarView: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [allUnitsAvailability, setAllUnitsAvailability] = useState<Map<string, Map<string, Availability['status']>>>(new Map());
   const [unreadNotifications, setUnreadNotifications] = useState<Notification[]>([]);
+  const [viewMode, setViewMode] = useState<'full' | 'notifications'>('full');
 
   const [loadingUnits, setLoadingUnits] = useState(true);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
@@ -160,6 +161,50 @@ export const CalendarView: React.FC = () => {
 
   const dates = generateQuarterDates();
 
+  // Filter units based on view mode
+  const getFilteredUnits = (): Unit[] => {
+    if (viewMode === 'full') return units;
+
+    // Filter to only units with unread notifications
+    const unitsWithNotifications = new Set(
+      unreadNotifications.map(n => n.unit_id)
+    );
+    return units.filter(u => unitsWithNotifications.has(u.id));
+  };
+
+  const filteredUnits = getFilteredUnits();
+
+  // Get notification summary for tags
+  const getNotificationSummary = () => {
+    const summary: Array<{ unitName: string; dateRange: string }> = [];
+    const unitNotifications = new Map<string, Notification[]>();
+
+    // Group notifications by unit
+    unreadNotifications.forEach(notif => {
+      if (!unitNotifications.has(notif.unit_id)) {
+        unitNotifications.set(notif.unit_id, []);
+      }
+      unitNotifications.get(notif.unit_id)!.push(notif);
+    });
+
+    // Create summary entries
+    unitNotifications.forEach((notifs, unitId) => {
+      const unit = units.find(u => u.id === unitId);
+      if (!unit) return;
+
+      notifs.forEach(notif => {
+        const startDate = new Date(notif.start_date).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' });
+        const endDate = new Date(notif.end_date).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' });
+        summary.push({
+          unitName: unit.name,
+          dateRange: `${startDate} - ${endDate}`
+        });
+      });
+    });
+
+    return summary;
+  };
+
   const getStatusColor = (status?: Availability['status']) => {
     if (!status || status === 'available') return 'bg-green-600/50 hover:bg-green-600/70';
     return 'bg-red-600/50 hover:bg-red-600/70';
@@ -259,6 +304,30 @@ export const CalendarView: React.FC = () => {
           </button>
 
           <div className="flex items-center gap-4">
+            {/* View Mode Toggle */}
+            <div className="flex gap-1 bg-slate-800 rounded-lg p-1">
+              <button
+                onClick={() => setViewMode('full')}
+                className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                  viewMode === 'full'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Pełny
+              </button>
+              <button
+                onClick={() => setViewMode('notifications')}
+                className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                  viewMode === 'notifications'
+                    ? 'bg-yellow-600 text-white'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Powiadomienia
+              </button>
+            </div>
+
             <input
               type="date"
               value={selectedDateStr}
@@ -279,17 +348,42 @@ export const CalendarView: React.FC = () => {
           </button>
         </div>
 
-        {/* Top Scrollbar */}
-        <div
-          className="overflow-x-auto overflow-y-hidden mb-2"
-          ref={topScrollRef}
-          onScroll={handleTopScroll}
-        >
-          <div style={{ width: `${120 + (dates.length * 90)}px`, height: '1px' }}></div>
-        </div>
+        {/* Notification Tags */}
+        {viewMode === 'notifications' && unreadNotifications.length > 0 && (
+          <div className="mb-3 flex flex-wrap gap-2">
+            {getNotificationSummary().map((item, idx) => (
+              <div
+                key={idx}
+                className="inline-flex items-center gap-2 px-3 py-1 bg-yellow-900/30 border border-yellow-700/50 rounded-full text-xs"
+              >
+                <span className="font-semibold text-yellow-400">{item.unitName}</span>
+                <span className="text-yellow-300">{item.dateRange}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
-        {/* Scrollable Table */}
-        <div className="overflow-x-auto max-h-[calc(100vh-300px)] overflow-y-auto" ref={scrollContainerRef} onScroll={handleMainScroll}>
+        {/* Empty state for notifications view */}
+        {viewMode === 'notifications' && unreadNotifications.length === 0 && (
+          <div className="mb-3 p-4 bg-slate-800/50 rounded-lg text-center">
+            <p className="text-slate-400 text-sm">Brak nieodczytanych powiadomień</p>
+          </div>
+        )}
+
+        {/* Show table only if there are units to display */}
+        {filteredUnits.length > 0 && (
+          <>
+            {/* Top Scrollbar */}
+            <div
+              className="overflow-x-auto overflow-y-hidden mb-2"
+              ref={topScrollRef}
+              onScroll={handleTopScroll}
+            >
+              <div style={{ width: `${120 + (dates.length * 90)}px`, height: '1px' }}></div>
+            </div>
+
+            {/* Scrollable Table */}
+            <div className="overflow-x-auto max-h-[calc(100vh-300px)] overflow-y-auto" ref={scrollContainerRef} onScroll={handleMainScroll}>
           <table className="w-full border-collapse">
             <thead className="sticky top-0 z-30 border-b-2 border-border">
               <tr className="bg-surface">
@@ -318,7 +412,7 @@ export const CalendarView: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {units.map((unit) => {
+              {filteredUnits.map((unit) => {
                 const unitAvailability = allUnitsAvailability.get(unit.id);
                 return (
                   <tr key={unit.id} className="border-t border-border hover:bg-slate-800/30">
@@ -395,25 +489,27 @@ export const CalendarView: React.FC = () => {
           </table>
         </div>
 
-        {/* Legend */}
-        <div className="flex items-center justify-center gap-4 mt-2 text-xs flex-wrap">
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded bg-green-600/50"></div>
-            <span className="text-slate-400">Dostępny</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded bg-red-600/50"></div>
-            <span className="text-slate-400">Zajęty</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded" style={{ background: 'linear-gradient(135deg, rgb(22 163 74 / 0.5) 50%, rgb(220 38 38 / 0.5) 50%)' }}></div>
-            <span className="text-slate-400">Początek rezerwacji</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded" style={{ background: 'linear-gradient(135deg, rgb(220 38 38 / 0.5) 50%, rgb(22 163 74 / 0.5) 50%)' }}></div>
-            <span className="text-slate-400">Koniec rezerwacji</span>
-          </div>
-        </div>
+            {/* Legend */}
+            <div className="flex items-center justify-center gap-4 mt-2 text-xs flex-wrap">
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 rounded bg-green-600/50"></div>
+                <span className="text-slate-400">Dostępny</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 rounded bg-red-600/50"></div>
+                <span className="text-slate-400">Zajęty</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 rounded" style={{ background: 'linear-gradient(135deg, rgb(22 163 74 / 0.5) 50%, rgb(220 38 38 / 0.5) 50%)' }}></div>
+                <span className="text-slate-400">Początek rezerwacji</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-4 rounded" style={{ background: 'linear-gradient(135deg, rgb(220 38 38 / 0.5) 50%, rgb(22 163 74 / 0.5) 50%)' }}></div>
+                <span className="text-slate-400">Koniec rezerwacji</span>
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
