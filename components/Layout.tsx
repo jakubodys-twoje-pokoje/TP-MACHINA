@@ -101,8 +101,9 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   // Logic to determine layout width based on current path
   const isWorkflow = location.pathname === '/workflow';
-  // Use w-full for workflow to utilize ultrawide monitors, keep constrained width for other views
-  const containerClass = isWorkflow ? "w-full px-6" : "max-w-6xl mx-auto px-4";
+  const isCalendar = location.pathname.includes('/calendar');
+  // Use w-full for workflow and calendar to utilize ultrawide monitors, keep constrained width for other views
+  const containerClass = (isWorkflow || isCalendar) ? "w-full px-6" : "max-w-6xl mx-auto px-4";
 
   return (
     <div className="flex h-screen w-full bg-background text-slate-100 overflow-hidden font-sans">

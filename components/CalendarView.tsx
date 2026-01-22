@@ -15,6 +15,7 @@ export const CalendarView: React.FC = () => {
   const [loadingAvailability, setLoadingAvailability] = useState(false);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const topScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (propertyId) {
@@ -40,8 +41,24 @@ export const CalendarView: React.FC = () => {
       const scrollPosition = (daysBeforeSelected * dayWidth) - (containerWidth / 3);
 
       scrollContainerRef.current.scrollLeft = Math.max(0, scrollPosition);
+      if (topScrollRef.current) {
+        topScrollRef.current.scrollLeft = Math.max(0, scrollPosition);
+      }
     }
   }, [allUnitsAvailability, loadingAvailability]);
+
+  // Synchronize scroll between top and bottom scrollbars
+  const handleMainScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (topScrollRef.current) {
+      topScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
+    }
+  };
+
+  const handleTopScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollLeft = e.currentTarget.scrollLeft;
+    }
+  };
 
   const fetchPropertyAndUnits = async () => {
     if (!propertyId) return;
@@ -186,7 +203,7 @@ export const CalendarView: React.FC = () => {
   const endDateStr = dates[dates.length - 1].toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 w-full max-w-full">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-white">{property?.name}</h2>
@@ -194,7 +211,7 @@ export const CalendarView: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-surface rounded-xl border border-border p-3 shadow-lg relative">
+      <div className="bg-surface rounded-xl border border-border p-3 shadow-lg relative w-full">
         {loadingAvailability && (
           <div className="absolute inset-0 bg-surface/50 backdrop-blur-sm flex items-center justify-center z-10 rounded-xl">
             <Loader2 className="animate-spin text-indigo-400" size={32} />
@@ -232,12 +249,21 @@ export const CalendarView: React.FC = () => {
           </button>
         </div>
 
+        {/* Top Scrollbar */}
+        <div
+          className="overflow-x-auto overflow-y-hidden mb-2"
+          ref={topScrollRef}
+          onScroll={handleTopScroll}
+        >
+          <div style={{ width: `${120 + (dates.length * 90)}px`, height: '1px' }}></div>
+        </div>
+
         {/* Scrollable Table */}
-        <div className="overflow-x-auto" ref={scrollContainerRef}>
+        <div className="overflow-x-auto max-h-[calc(100vh-300px)] overflow-y-auto" ref={scrollContainerRef} onScroll={handleMainScroll}>
           <table className="w-full border-collapse">
-            <thead>
-              <tr>
-                <th className="sticky left-0 z-20 bg-surface p-2 text-left text-[10px] font-bold text-slate-400 border-r border-border min-w-[120px]">
+            <thead className="sticky top-0 z-30 border-b-2 border-border">
+              <tr className="bg-surface">
+                <th className="sticky left-0 z-40 bg-surface p-2 text-left text-[10px] font-bold text-slate-400 border-r border-border min-w-[120px]">
                   Pokój
                 </th>
                 {dates.map((date, idx) => {
@@ -247,7 +273,7 @@ export const CalendarView: React.FC = () => {
                     <th
                       key={idx}
                       className={`p-2 text-center text-xs font-medium border-r border-border min-w-[90px] ${
-                        isSelected ? 'bg-indigo-900/50' : isToday ? 'bg-indigo-900/30' : ''
+                        isSelected ? 'bg-indigo-900/50' : isToday ? 'bg-indigo-900/30' : 'bg-surface'
                       }`}
                     >
                       <div className="text-slate-300 font-bold">
@@ -266,7 +292,7 @@ export const CalendarView: React.FC = () => {
                 const unitAvailability = allUnitsAvailability.get(unit.id);
                 return (
                   <tr key={unit.id} className="border-t border-border hover:bg-slate-800/30">
-                    <td className="sticky left-0 z-10 bg-surface p-2 text-[11px] font-medium text-white border-r border-border">
+                    <td className="sticky left-0 z-20 bg-surface p-2 text-[11px] font-medium text-white border-r border-border">
                       {unit.name}
                     </td>
                     {dates.map((date, idx) => {
