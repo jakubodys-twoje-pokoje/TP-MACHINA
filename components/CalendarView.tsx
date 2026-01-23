@@ -427,10 +427,9 @@ export const CalendarView: React.FC = () => {
     console.log('🏠 Sending changes for property:', property.name, 'ID:', property.id);
 
     // First check ALL rate_plans (including those without external_id)
-    // ADDED: select parent_id and type_id to map correctly to rooms
     const { data: allRatePlansRaw, error: rpError } = await supabase
       .from('rate_plans')
-      .select('id, name, external_id, parent_id, type_id')
+      .select('id, name, external_id')
       .eq('property_id', property.id);
 
     console.log('📊 Query: property_id =', property.id);
