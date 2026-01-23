@@ -696,7 +696,7 @@ async function syncPropertyAvailability(
 }
 
 // Sync prices/restrictions for a single property
-async function syncPropertyPrices(property: Property, supabaseClient: any): Promise<void> {
+async function syncPropertyPrices(property: Property, supabaseClient: any): Promise<{ recordsCompared: number; changesDetected: number; notificationsSent: number }> {
   try {
     console.log(`💰 Syncing prices for ${property.name}...`)
 
@@ -799,8 +799,10 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       console.log(`  ✓ Synced ${pricesToUpsert.length} price records for ${property.name}`)
     }
 
+    return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
   } catch (error: any) {
     console.error(`❌ Error syncing prices for ${property.name}:`, error.message)
+    return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
   }
 }
 
@@ -856,28 +858,54 @@ Deno.serve(async (req) => {
     )
 
     // Collect successes, errors, and aggregate metrics
-    const successes: Array<{ propertyName: string; propertyId: string }> = []
-    const errors: Array<{ propertyName: string; propertyId: string; error: string }> = []
+    // Track success/error per property (we have 2 tasks per property)
+    const propertyResults = new Map<string, { success: number; errors: string[] }>()
     let totalRecordsCompared = 0
     let totalChangesDetected = 0
     let totalNotificationsSent = 0
 
+    // Process results - we have 2 results per property (availability + prices)
     results.forEach((result, index) => {
-      const property = properties[index]
+      const propertyIndex = Math.floor(index / 2)
+      const property = properties[propertyIndex]
+
+      if (!propertyResults.has(property.id)) {
+        propertyResults.set(property.id, { success: 0, errors: [] })
+      }
+
+      const propertyResult = propertyResults.get(property.id)!
+
       if (result.status === 'fulfilled') {
-        successes.push({
-          propertyName: property.name,
-          propertyId: property.id
-        })
+        propertyResult.success++
         totalRecordsCompared += result.value.recordsCompared
         totalChangesDetected += result.value.changesDetected
         totalNotificationsSent += result.value.notificationsSent
       } else {
-        errors.push({
-          propertyName: property.name,
-          propertyId: property.id,
-          error: result.reason?.message || 'Unknown error'
-        })
+        propertyResult.errors.push(result.reason?.message || 'Unknown error')
+      }
+    })
+
+    // Convert to successes/errors arrays
+    const successes: Array<{ propertyName: string; propertyId: string }> = []
+    const errors: Array<{ propertyName: string; propertyId: string; error: string }> = []
+
+    properties.forEach(property => {
+      const result = propertyResults.get(property.id)
+      if (result) {
+        if (result.success > 0 && result.errors.length === 0) {
+          // Both tasks succeeded
+          successes.push({
+            propertyName: property.name,
+            propertyId: property.id
+          })
+        } else if (result.errors.length > 0) {
+          // At least one task failed
+          errors.push({
+            propertyName: property.name,
+            propertyId: property.id,
+            error: result.errors.join('; ')
+          })
+        }
       }
     })
 
