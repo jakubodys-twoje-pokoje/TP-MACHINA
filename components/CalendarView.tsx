@@ -152,12 +152,17 @@ export const CalendarView: React.FC = () => {
     console.log('📊 Fetching prices for date range:', startDate.toISOString().split('T')[0], 'to', endDate.toISOString().split('T')[0]);
     console.log('📊 Unit IDs:', unitIds);
 
+    // Fetch prices - join with rate_plans to filter only "Booking"
     const { data, error } = await supabase
       .from('prices')
-      .select('*')
+      .select(`
+        *,
+        rate_plans!inner(name)
+      `)
       .in('unit_id', unitIds)
       .gte('date', startDate.toISOString().split('T')[0])
-      .lte('date', endDate.toISOString().split('T')[0]);
+      .lte('date', endDate.toISOString().split('T')[0])
+      .eq('rate_plans.name', 'Booking');
 
     if (error) {
       console.error('❌ Error fetching prices:', error);

@@ -716,17 +716,20 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
     }
 
-    // Get rate plans for this property
+    // Get rate plans for this property - ONLY "Booking" rate plan
     const { data: ratePlans } = await supabaseClient
       .from('rate_plans')
-      .select('id, external_id')
+      .select('id, external_id, name')
       .eq('property_id', property.id)
+      .eq('name', 'Booking')
       .not('external_id', 'is', null)
 
     if (!ratePlans || ratePlans.length === 0) {
-      console.log(`  No rate plans for ${property.name}`)
+      console.log(`  No "Booking" rate plan for ${property.name}`)
       return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
     }
+
+    console.log(`  Found ${ratePlans.length} "Booking" rate plan(s) for ${property.name}`)
 
     // Fetch prices from Hotres - from 20 January to end of 2026
     const fromDate = '2026-01-20'
