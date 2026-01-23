@@ -459,22 +459,11 @@ export const CalendarView: React.FC = () => {
       });
     });
 
-    // Helper do bezpiecznego sprawdzania czy data jest "następnym dniem"
-    const isNextDay = (dateStr1: string, dateStr2: string) => {
-      const d1 = new Date(dateStr1);
-      const d2 = new Date(dateStr2);
-      d1.setHours(12, 0, 0, 0);
-      d2.setHours(12, 0, 0, 0);
-      const diffTime = Math.abs(d2.getTime() - d1.getTime());
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-      return diffDays === 1 && d2 > d1;
-    };
-
     // Build payload array in Hotres format
-    // Zmieniono typy z string na number zgodnie z wymaganiami API
+    // For each type_id that has changes, send entry for EVERY rate_plan
     const payloadArray: Array<{
-      type_id: number;
-      rate_id: number;
+      type_id: string;
+      rate_id: string;
       mode: string;
       prices: Array<{
         from: string;
@@ -486,10 +475,7 @@ export const CalendarView: React.FC = () => {
     }> = [];
 
     // For each type_id, group changes into continuous ranges
-    for (const [typeIdStr, changes] of changesByTypeId) {
-      // 1. Konwersja typeId na liczbę (Integer) - naprawia błąd stringa
-      const currentTypeId = parseInt(typeIdStr, 10);
-
+    for (const [typeId, changes] of changesByTypeId) {
       // Sort changes by date
       changes.sort((a, b) => a.date.localeCompare(b.date));
 
@@ -510,16 +496,17 @@ export const CalendarView: React.FC = () => {
           currentRange.ctd === change.ctd &&
           currentRange.min === change.min;
 
-        // Używamy helpera isNextDay
-        const isNext = currentRange && isNextDay(currentRange.till, change.date);
+        const isNextDay = currentRange &&
+          new Date(change.date).getTime() === new Date(currentRange.till).getTime() + 86400000;
 
-        if (isSameValues && isNext) {
+        if (isSameValues && isNextDay) {
           // Extend current range
           currentRange.till = change.date;
         } else {
+          // Start new range
           if (currentRange) ranges.push(currentRange);
 
-          // Start new range (delta mode)
+          // Build range with only defined values (delta mode - only send what changed)
           currentRange = {
             from: change.date,
             till: change.date
@@ -532,25 +519,17 @@ export const CalendarView: React.FC = () => {
 
       if (currentRange) ranges.push(currentRange);
 
-      // 2. Filtrowanie Rate Planów - wysyłamy tylko te pasujące do aktualnego type_id
-      // UPEWNIJ SIĘ, że 'rp.type_id' lub 'rp.parent_id' to właściwe pole w Twoim obiekcie allRatePlans
-      const relevantRatePlans = allRatePlans.filter(rp => 
-        String(rp.type_id || rp.parent_id) === String(currentTypeId)
-      );
-
-      for (const ratePlan of relevantRatePlans)  {
+      // Send same changes to ALL rate_plans for this type_id
+      // CTA/CTD/MIN are shared across all rate plans for same unit type
+      // Each rate_plan gets its own entry in the array (per Hotres API spec)
+      for (const ratePlan of allRatePlans) {
         payloadArray.push({
-          type_id: currentTypeId, // Integer
-          rate_id: parseInt(ratePlan.external_id!, 10), // Integer - naprawia błąd stringa
-          mode: 'delta',
+          type_id: typeId,
+          rate_id: ratePlan.external_id!,
+          mode: '"delta"',
           prices: ranges
         });
       }
-    }
-
-    if (payloadArray.length === 0) {
-      console.log('ℹ️ No changes detected to send.');
-      return; 
     }
 
     // Send all changes in one request to Hotres
@@ -558,31 +537,6 @@ export const CalendarView: React.FC = () => {
     if (!session) throw new Error('Musisz być zalogowany');
 
     console.log('📤 Sending to Hotres:', JSON.stringify(payloadArray, null, 2));
-
-    // Tutaj zachowałem nazwę 'response'. 
-    // Jeśli nadal masz błąd "Identifier 'response' has already been declared",
-    // sprawdź czy wyżej w tej funkcji nie masz innej zmiennej 'const response'.
-    const response = await fetch(
-      'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/update-hotres-prices',
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          property_id: property.id,
-          payload: payloadArray
-        })
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Hotres update failed: ${response.status} ${errorText}`);
-    }
-
-    console.log('✅ Hotres update successful');
 
     const response = await fetch(
       'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/update-hotres-prices',
