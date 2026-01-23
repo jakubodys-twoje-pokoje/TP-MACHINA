@@ -424,6 +424,8 @@ export const CalendarView: React.FC = () => {
   const sendPriceChangesToHotres = async () => {
     if (!property) throw new Error('Brak informacji o obiekcie');
 
+    console.log('🏠 Sending changes for property:', property.name, 'ID:', property.id);
+
     // First check ALL rate_plans (including those without external_id)
     // ADDED: select parent_id and type_id to map correctly to rooms
     const { data: allRatePlansRaw, error: rpError } = await supabase
@@ -431,7 +433,9 @@ export const CalendarView: React.FC = () => {
       .select('id, name, external_id, parent_id, type_id')
       .eq('property_id', property.id);
 
+    console.log('📊 Query: property_id =', property.id);
     console.log('📊 ALL rate_plans for property (including null external_id):', allRatePlansRaw);
+    console.log('📊 Error:', rpError);
 
     if (rpError || !allRatePlansRaw || allRatePlansRaw.length === 0) {
       throw new Error('Brak cenników dla tego obiektu. Dodaj cenniki w zakładce "Cenniki i Oferty".');
