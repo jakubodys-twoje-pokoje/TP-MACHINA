@@ -55,14 +55,23 @@ serve(async (req) => {
 
     const oid = property.hotres_id;
 
+    // Convert type_id and rate_id to numbers
+    const normalizedPayload = payload.map((item: any) => ({
+      ...item,
+      type_id: parseInt(item.type_id),
+      rate_id: parseInt(item.rate_id)
+    }));
+
     // Build URL with auth parameters only
     const url = `https://panel.hotres.pl/api_updateprices?user=${HOTRES_API_USER}&password=${HOTRES_API_PASSWORD}&oid=${oid}`;
 
-    console.log(`📤 Sending price update to Hotres with payload:`, JSON.stringify(payload, null, 2));
+    console.log(`📤 Sending price update to Hotres with payload:`, JSON.stringify(normalizedPayload, null, 2));
 
-    // Build form data with payload as JSON string
+    // Build form data with payload as JSON string (Hotres expects this format)
     const formData = new URLSearchParams();
-    formData.append('payload', JSON.stringify(payload));
+    formData.append('payload', JSON.stringify(normalizedPayload));
+
+    console.log(`📤 Form data payload value:`, formData.get('payload'));
 
     // Call Hotres API with POST
     const hotresResponse = await fetch(url, {

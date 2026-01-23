@@ -152,6 +152,25 @@ export const CalendarView: React.FC = () => {
     console.log('📊 Fetching prices for date range:', startDate.toISOString().split('T')[0], 'to', endDate.toISOString().split('T')[0]);
     console.log('📊 Unit IDs:', unitIds);
 
+    // First check if rate_plans exist for this property
+    if (property) {
+      const { data: ratePlans, error: rpError } = await supabase
+        .from('rate_plans')
+        .select('id, name, external_id')
+        .eq('property_id', property.id);
+
+      console.log('📊 Rate plans for property:', ratePlans);
+
+      if (!ratePlans || ratePlans.length === 0) {
+        console.error('❌ No rate_plans found for this property! Run sync to import rate plans from Hotres.');
+      } else {
+        const bookingRatePlan = ratePlans.find(rp => rp.name === 'Booking');
+        if (!bookingRatePlan) {
+          console.warn('⚠️ No "Booking" rate plan found! Available plans:', ratePlans.map(rp => rp.name));
+        }
+      }
+    }
+
     // Fetch prices - join with rate_plans to filter only "Booking"
     const { data, error } = await supabase
       .from('prices')
