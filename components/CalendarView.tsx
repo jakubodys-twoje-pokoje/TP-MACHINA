@@ -593,9 +593,10 @@ export const CalendarView: React.FC = () => {
 
       alert(`Synchronizacja zakończona!\n✓ Sukces: ${result.success_count}\n✗ Błędy: ${result.error_count}`);
 
-      // Refresh availability data after sync
+      // Refresh availability and prices data after sync
       if (units.length > 0) {
-        await fetchAvailability();
+        await fetchQuarterAvailability();
+        await fetchPricesData();
       }
     } catch (error: any) {
       console.error('Manual sync error:', error);
