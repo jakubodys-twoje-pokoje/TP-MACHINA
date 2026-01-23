@@ -30,11 +30,11 @@ serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    const { property_id, type_id, from, till, cta, ctd, min } = await req.json();
+    const { property_id, payload } = await req.json();
 
-    if (!property_id || !type_id || !from || !till) {
+    if (!property_id || !payload || !Array.isArray(payload)) {
       return new Response(
-        JSON.stringify({ error: 'Missing required fields: property_id, type_id, from, till' }),
+        JSON.stringify({ error: 'Missing required fields: property_id, payload (array)' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -55,29 +55,12 @@ serve(async (req) => {
 
     const oid = property.hotres_id;
 
-    // Build payload object
-    const payload: any = {
-      type_id: type_id,
-      from: from,
-      till: till
-    };
-
-    if (cta !== undefined && cta !== null) {
-      payload.cta = cta;
-    }
-    if (ctd !== undefined && ctd !== null) {
-      payload.ctd = ctd;
-    }
-    if (min !== undefined && min !== null) {
-      payload.min = min;
-    }
-
     // Build URL with auth parameters only
     const url = `https://panel.hotres.pl/api_updateprices?user=${HOTRES_API_USER}&password=${HOTRES_API_PASSWORD}&oid=${oid}`;
 
-    console.log(`📤 Sending price update to Hotres with payload:`, JSON.stringify(payload));
+    console.log(`📤 Sending price update to Hotres with payload:`, JSON.stringify(payload, null, 2));
 
-    // Build form data
+    // Build form data with payload as JSON string
     const formData = new URLSearchParams();
     formData.append('payload', JSON.stringify(payload));
 

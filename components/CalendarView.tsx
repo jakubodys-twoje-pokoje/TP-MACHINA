@@ -405,15 +405,26 @@ export const CalendarView: React.FC = () => {
   const sendPriceChangesToHotres = async () => {
     if (!property) throw new Error('Brak informacji o obiekcie');
 
-    // Group changes by unit
-    const changesByUnit = new Map<string, Array<{ date: string; cta?: number; ctd?: number; min?: number | null }>>();
+    // Group changes by type_id to build Hotres payload
+    const changesByTypeId = new Map<string, { type_id: string; rate_id: string; changes: Array<{ date: string; cta?: number; ctd?: number; min?: number | null }> }>();
 
     priceChanges.forEach((change, key) => {
       const unitId = change.unit_id!;
-      if (!changesByUnit.has(unitId)) {
-        changesByUnit.set(unitId, []);
+      const unit = units.find(u => u.id === unitId);
+      if (!unit || !unit.external_type_id) return;
+
+      const typeId = unit.external_type_id;
+      const rateId = change.rate_id!;
+
+      if (!changesByTypeId.has(typeId)) {
+        changesByTypeId.set(typeId, {
+          type_id: typeId,
+          rate_id: rateId,
+          changes: []
+        });
       }
-      changesByUnit.get(unitId)!.push({
+
+      changesByTypeId.get(typeId)!.changes.push({
         date: change.date!,
         cta: change.cta,
         ctd: change.ctd,
@@ -421,13 +432,24 @@ export const CalendarView: React.FC = () => {
       });
     });
 
-    // For each unit, find continuous date ranges and send to Hotres
-    for (const [unitId, changes] of changesByUnit) {
-      const unit = units.find(u => u.id === unitId);
-      if (!unit || !unit.external_type_id) continue;
+    // Build payload array in Hotres format
+    const payloadArray: Array<{
+      type_id: string;
+      rate_id: string;
+      mode: string;
+      prices: Array<{
+        from: string;
+        till: string;
+        cta?: number;
+        ctd?: number;
+        min?: number | null;
+      }>;
+    }> = [];
 
+    // For each type_id, group into continuous ranges
+    for (const [typeId, group] of changesByTypeId) {
       // Sort changes by date
-      changes.sort((a, b) => a.date.localeCompare(b.date));
+      group.changes.sort((a, b) => a.date.localeCompare(b.date));
 
       // Group into continuous ranges with same values
       const ranges: Array<{
@@ -440,7 +462,7 @@ export const CalendarView: React.FC = () => {
 
       let currentRange: any = null;
 
-      for (const change of changes) {
+      for (const change of group.changes) {
         const isSameValues = currentRange &&
           currentRange.cta === change.cta &&
           currentRange.ctd === change.ctd &&
@@ -467,63 +489,60 @@ export const CalendarView: React.FC = () => {
 
       if (currentRange) ranges.push(currentRange);
 
-      // Send each range to Hotres via Edge Function
-      for (const range of ranges) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) throw new Error('Musisz być zalogowany');
+      payloadArray.push({
+        type_id: typeId,
+        rate_id: group.rate_id,
+        mode: 'delta',
+        prices: ranges
+      });
+    }
 
-        const payload = {
+    // Send all changes in one request to Hotres
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Musisz być zalogowany');
+
+    console.log('📤 Sending to Hotres:', JSON.stringify(payloadArray, null, 2));
+
+    const response = await fetch(
+      'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/update-hotres-prices',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
           property_id: property.id,
-          type_id: unit.external_type_id,
-          from: range.from,
-          till: range.till,
-          cta: range.cta,
-          ctd: range.ctd,
-          min: range.min
-        };
+          payload: payloadArray
+        })
+      }
+    );
 
-        const response = await fetch(
-          'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/update-hotres-prices',
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${session.access_token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(payload)
-          }
-        );
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Hotres update failed: ${response.status} ${errorText}`);
+    }
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Hotres update failed: ${response.status} ${errorText}`);
-        }
+    console.log('✅ Hotres update successful');
 
-        // Update database with new values
-        const datesToUpdate = [];
-        let currentDate = new Date(range.from);
-        const endDate = new Date(range.till);
+    // Update database with all changes
+    for (const [typeId, group] of changesByTypeId) {
+      const unit = units.find(u => u.external_type_id === typeId);
+      if (!unit) continue;
 
-        while (currentDate <= endDate) {
-          datesToUpdate.push(currentDate.toISOString().split('T')[0]);
-          currentDate.setDate(currentDate.getDate() + 1);
-        }
+      for (const change of group.changes) {
+        const priceKey = `${unit.id}_${change.date}`;
+        const existingPrice = pricesData.get(priceKey);
 
-        for (const date of datesToUpdate) {
-          const priceKey = `${unitId}_${date}`;
-          const existingPrice = pricesData.get(priceKey);
-
-          if (existingPrice) {
-            // Update existing price
-            await supabase
-              .from('prices')
-              .update({
-                cta: range.cta !== undefined ? range.cta : existingPrice.cta,
-                ctd: range.ctd !== undefined ? range.ctd : existingPrice.ctd,
-                min: range.min !== undefined ? range.min : existingPrice.min
-              })
-              .eq('id', existingPrice.id);
-          }
+        if (existingPrice) {
+          await supabase
+            .from('prices')
+            .update({
+              cta: change.cta !== undefined ? change.cta : existingPrice.cta,
+              ctd: change.ctd !== undefined ? change.ctd : existingPrice.ctd,
+              min: change.min !== undefined ? change.min : existingPrice.min
+            })
+            .eq('id', existingPrice.id);
         }
       }
     }
