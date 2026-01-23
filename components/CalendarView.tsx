@@ -424,19 +424,28 @@ export const CalendarView: React.FC = () => {
   const sendPriceChangesToHotres = async () => {
     if (!property) throw new Error('Brak informacji o obiekcie');
 
-    // Get ALL rate_plans for this property
+    // First check ALL rate_plans (including those without external_id)
     // ADDED: select parent_id and type_id to map correctly to rooms
-    const { data: allRatePlans, error: rpError } = await supabase
+    const { data: allRatePlansRaw, error: rpError } = await supabase
       .from('rate_plans')
       .select('id, name, external_id, parent_id, type_id')
-      .eq('property_id', property.id)
-      .not('external_id', 'is', null);
+      .eq('property_id', property.id);
 
-    if (rpError || !allRatePlans || allRatePlans.length === 0) {
-      throw new Error('Brak cenników dla tego obiektu. Uruchom synchronizację aby pobrać cenniki z Hotres.');
+    console.log('📊 ALL rate_plans for property (including null external_id):', allRatePlansRaw);
+
+    if (rpError || !allRatePlansRaw || allRatePlansRaw.length === 0) {
+      throw new Error('Brak cenników dla tego obiektu. Dodaj cenniki w zakładce "Cenniki i Oferty".');
     }
 
-    console.log('📊 Found rate_plans for property:', allRatePlans);
+    // Filter only those with external_id (needed for Hotres API)
+    const allRatePlans = allRatePlansRaw.filter(rp => rp.external_id !== null && rp.external_id !== undefined);
+
+    console.log('📊 Rate_plans WITH external_id:', allRatePlans);
+
+    if (allRatePlans.length === 0) {
+      const names = allRatePlansRaw.map(rp => rp.name).join(', ');
+      throw new Error(`Cenniki istnieją (${names}), ale nie mają external_id. Pobierz cenniki z Hotres używając przycisku "Pobierz z Hotres" w zakładce Cenniki.`);
+    }
 
     // Group changes by type_id
     const changesByTypeId = new Map<string, Array<{ date: string; cta?: number; ctd?: number; min?: number | null }>>();
