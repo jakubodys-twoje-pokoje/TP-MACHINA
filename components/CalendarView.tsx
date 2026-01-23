@@ -533,16 +533,29 @@ export const CalendarView: React.FC = () => {
     const key = `${unitId}_${dateStr}`;
     const currentPrice = pricesData.get(key);
     const currentChange = priceChanges.get(key);
+    const newCta = checked ? 1 : 0;
 
     setPriceChanges(prev => {
       const updated = new Map(prev);
-      updated.set(key, {
+      const updatedChange = {
         ...currentChange,
         unit_id: unitId,
         date: dateStr,
         rate_id: currentPrice?.rate_id || '',
-        cta: checked ? 1 : 0
-      });
+        cta: newCta
+      };
+
+      // Check if all values match original - if so, remove from changes
+      const ctaMatches = (currentPrice?.cta === 1) === checked;
+      const ctdMatches = updatedChange.ctd === undefined || updatedChange.ctd === (currentPrice?.ctd === 1 ? 1 : 0);
+      const minMatches = updatedChange.min === undefined || updatedChange.min === (currentPrice?.min || null);
+
+      if (ctaMatches && ctdMatches && minMatches) {
+        updated.delete(key);
+      } else {
+        updated.set(key, updatedChange);
+      }
+
       return updated;
     });
   };
@@ -551,16 +564,29 @@ export const CalendarView: React.FC = () => {
     const key = `${unitId}_${dateStr}`;
     const currentPrice = pricesData.get(key);
     const currentChange = priceChanges.get(key);
+    const newCtd = checked ? 1 : 0;
 
     setPriceChanges(prev => {
       const updated = new Map(prev);
-      updated.set(key, {
+      const updatedChange = {
         ...currentChange,
         unit_id: unitId,
         date: dateStr,
         rate_id: currentPrice?.rate_id || '',
-        ctd: checked ? 1 : 0
-      });
+        ctd: newCtd
+      };
+
+      // Check if all values match original - if so, remove from changes
+      const ctaMatches = updatedChange.cta === undefined || updatedChange.cta === (currentPrice?.cta === 1 ? 1 : 0);
+      const ctdMatches = (currentPrice?.ctd === 1) === checked;
+      const minMatches = updatedChange.min === undefined || updatedChange.min === (currentPrice?.min || null);
+
+      if (ctaMatches && ctdMatches && minMatches) {
+        updated.delete(key);
+      } else {
+        updated.set(key, updatedChange);
+      }
+
       return updated;
     });
   };
@@ -569,18 +595,29 @@ export const CalendarView: React.FC = () => {
     const key = `${unitId}_${dateStr}`;
     const currentPrice = pricesData.get(key);
     const currentChange = priceChanges.get(key);
-
     const minValue = value === '' ? null : parseInt(value);
 
     setPriceChanges(prev => {
       const updated = new Map(prev);
-      updated.set(key, {
+      const updatedChange = {
         ...currentChange,
         unit_id: unitId,
         date: dateStr,
         rate_id: currentPrice?.rate_id || '',
         min: minValue
-      });
+      };
+
+      // Check if all values match original - if so, remove from changes
+      const ctaMatches = updatedChange.cta === undefined || updatedChange.cta === (currentPrice?.cta === 1 ? 1 : 0);
+      const ctdMatches = updatedChange.ctd === undefined || updatedChange.ctd === (currentPrice?.ctd === 1 ? 1 : 0);
+      const minMatches = (currentPrice?.min || null) === minValue;
+
+      if (ctaMatches && ctdMatches && minMatches) {
+        updated.delete(key);
+      } else {
+        updated.set(key, updatedChange);
+      }
+
       return updated;
     });
   };
