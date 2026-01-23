@@ -728,10 +728,8 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       return
     }
 
-    // Fetch prices from Hotres - from current month to end of 2026
-    const year = new Date().getFullYear()
-    const month = new Date().getMonth() + 1
-    const fromDate = `${year}-${month.toString().padStart(2, '0')}-01`
+    // Fetch prices from Hotres - from 20 January to end of 2026
+    const fromDate = '2026-01-20'
     const tillDate = '2026-12-31'
 
     const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`
