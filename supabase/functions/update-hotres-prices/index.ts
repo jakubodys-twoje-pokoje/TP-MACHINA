@@ -55,23 +55,40 @@ serve(async (req) => {
 
     const oid = property.hotres_id;
 
-    // Build api_updateprices URL with parameters
-    let url = `https://panel.hotres.pl/api_updateprices?user=${HOTRES_API_USER}&password=${HOTRES_API_PASSWORD}&oid=${oid}&type_id=${type_id}&from=${from}&till=${till}`;
+    // Build payload object
+    const payload: any = {
+      type_id: type_id,
+      from: from,
+      till: till
+    };
 
     if (cta !== undefined && cta !== null) {
-      url += `&cta=${cta}`;
+      payload.cta = cta;
     }
     if (ctd !== undefined && ctd !== null) {
-      url += `&ctd=${ctd}`;
+      payload.ctd = ctd;
     }
     if (min !== undefined && min !== null) {
-      url += `&min=${min}`;
+      payload.min = min;
     }
 
-    console.log(`📤 Sending price update to Hotres: ${url.replace(HOTRES_API_PASSWORD, '***')}`);
+    // Build URL with auth parameters only
+    const url = `https://panel.hotres.pl/api_updateprices?user=${HOTRES_API_USER}&password=${HOTRES_API_PASSWORD}&oid=${oid}`;
 
-    // Call Hotres API
-    const hotresResponse = await fetch(url);
+    console.log(`📤 Sending price update to Hotres with payload:`, JSON.stringify(payload));
+
+    // Build form data
+    const formData = new URLSearchParams();
+    formData.append('payload', JSON.stringify(payload));
+
+    // Call Hotres API with POST
+    const hotresResponse = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: formData.toString()
+    });
     const responseText = await hotresResponse.text();
 
     console.log(`📥 Hotres response: ${responseText}`);

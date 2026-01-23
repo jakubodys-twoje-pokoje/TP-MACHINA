@@ -552,8 +552,10 @@ export const CalendarView: React.FC = () => {
 
       if (ctaMatches && ctdMatches && minMatches) {
         updated.delete(key);
+        console.log('CTA: Removed change for', key, '- matches original');
       } else {
         updated.set(key, updatedChange);
+        console.log('CTA: Added/updated change for', key, '- total changes:', updated.size);
       }
 
       return updated;
@@ -583,8 +585,10 @@ export const CalendarView: React.FC = () => {
 
       if (ctaMatches && ctdMatches && minMatches) {
         updated.delete(key);
+        console.log('CTD: Removed change for', key, '- matches original');
       } else {
         updated.set(key, updatedChange);
+        console.log('CTD: Added/updated change for', key, '- total changes:', updated.size);
       }
 
       return updated;
@@ -614,8 +618,10 @@ export const CalendarView: React.FC = () => {
 
       if (ctaMatches && ctdMatches && minMatches) {
         updated.delete(key);
+        console.log('MIN: Removed change for', key, '- matches original');
       } else {
         updated.set(key, updatedChange);
+        console.log('MIN: Added/updated change for', key, '- total changes:', updated.size);
       }
 
       return updated;
