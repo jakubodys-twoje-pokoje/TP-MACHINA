@@ -174,11 +174,13 @@ export const CalendarView: React.FC = () => {
     }
 
     // Create map keyed by unit_id + date
-    // NOTE: If multiple rate_plans exist for same unit+date, last one wins
+    // NOTE: If multiple rate_plans exist for same unit+date, use first one found
     const pricesMap = new Map<string, Price>();
     data?.forEach(price => {
       const key = `${price.unit_id}_${price.date}`;
-      pricesMap.set(key, price);
+      if (!pricesMap.has(key)) {
+        pricesMap.set(key, price);
+      }
     });
 
     console.log('📊 Prices map size:', pricesMap.size);
@@ -189,6 +191,18 @@ export const CalendarView: React.FC = () => {
     if (sampleKey) {
       const samplePrice = pricesMap.get(sampleKey);
       console.log(`📊 Sample price for today (${today}):`, samplePrice);
+    }
+
+    // Debug: Check if data issue is about date range
+    if (data && data.length > 0) {
+      const dates = data.map(p => p.date).sort();
+      console.log(`📊 Date range in fetched data: ${dates[0]} to ${dates[dates.length - 1]}`);
+      console.log(`📊 Today (${today}) is in range:`, dates.includes(today));
+    } else if (unitIds.length > 0) {
+      console.warn(`⚠️ No prices data for this property! Check:`);
+      console.warn(`   - Does this property have rate_plans in database?`);
+      console.warn(`   - Did sync-all-availability log "No rate plans for ${property?.name}"?`);
+      console.warn(`   - Check Supabase Edge Function logs for this property`);
     }
 
     setPricesData(pricesMap);
