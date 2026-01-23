@@ -713,7 +713,7 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
 
     if (!units || units.length === 0) {
       console.log(`  No units with external_type_id for ${property.name}`)
-      return
+      return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
     }
 
     // Get rate plans for this property
@@ -725,7 +725,7 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
 
     if (!ratePlans || ratePlans.length === 0) {
       console.log(`  No rate plans for ${property.name}`)
-      return
+      return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
     }
 
     // Fetch prices from Hotres - from 20 January to end of 2026
@@ -738,7 +738,7 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
 
     if (!Array.isArray(pricesData)) {
       console.log(`  Invalid prices response for ${property.name}`)
-      return
+      return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
     }
 
     // Create mappings
