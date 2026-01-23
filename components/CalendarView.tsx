@@ -545,33 +545,35 @@ export const CalendarView: React.FC = () => {
 
       if (currentRange) ranges.push(currentRange);
 
-      // FILTER: Only send changes to rate plans belonging to this Type ID
-      // Checks both type_id and parent_id (common Hotres mappings)
-      const relevantRatePlans = allRatePlans.filter(rp => 
-        String(rp.type_id || rp.parent_id) === String(currentTypeId)
-      );
+      // Send same changes to ALL rate_plans for this property
+      // CTA/CTD/MIN are shared across all rate plans for same unit type
+      console.log(`📋 Building payload for type_id ${currentTypeId} with ${allRatePlans.length} rate plans`);
 
-      // Each rate_plan gets its own entry
-      for (const ratePlan of relevantRatePlans) {
-        payloadArray.push({
+      for (const ratePlan of allRatePlans) {
+        const entry = {
           type_id: currentTypeId, // Integer
           rate_id: parseInt(ratePlan.external_id!, 10), // Integer (API fix)
           mode: 'delta',
           prices: ranges
-        });
+        };
+        console.log(`  ➕ Adding entry for rate_plan: ${ratePlan.name} (external_id: ${ratePlan.external_id})`);
+        payloadArray.push(entry);
       }
     }
 
     if (payloadArray.length === 0) {
-       console.log('ℹ️ No matching rate plans/types found to update.');
+       console.error('❌ payloadArray is EMPTY - no entries to send!');
+       console.log('Debug: allRatePlans:', allRatePlans);
+       console.log('Debug: changesByTypeId:', changesByTypeId);
        return;
     }
+
+    console.log(`📦 FINAL PAYLOAD (${payloadArray.length} entries):`);
+    console.log(JSON.stringify(payloadArray, null, 2));
 
     // Send all changes in one request to Hotres
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Musisz być zalogowany');
-
-    console.log('📤 Sending to Hotres:', JSON.stringify(payloadArray, null, 2));
 
     const response = await fetch(
       'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/update-hotres-prices',
@@ -588,12 +590,16 @@ export const CalendarView: React.FC = () => {
       }
     );
 
+    const responseData = await response.json();
+
+    console.log(`📥 Edge Function response:`, responseData);
+
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Hotres update failed: ${response.status} ${errorText}`);
+      throw new Error(`Hotres update failed: ${response.status} ${JSON.stringify(responseData)}`);
     }
 
-    console.log('✅ Hotres update successful');
+    console.log('✅ Hotres API responded successfully');
+    console.log('📥 Hotres raw response:', responseData.hotres_response);
 
     // Update database with all changes
     for (const [typeId, group] of changesByTypeId) {
