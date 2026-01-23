@@ -695,6 +695,120 @@ async function syncPropertyAvailability(
   }
 }
 
+// Sync prices/restrictions for a single property
+async function syncPropertyPrices(property: Property, supabaseClient: any): Promise<void> {
+  try {
+    console.log(`💰 Syncing prices for ${property.name}...`)
+
+    const oid = property.hotres_id
+    const apiUser = 'admin@twojepokoje.com.pl'
+    const apiPass = 'Admin123@@'
+
+    // Get units for this property
+    const { data: units } = await supabaseClient
+      .from('units')
+      .select('id, external_type_id')
+      .eq('property_id', property.id)
+      .not('external_type_id', 'is', null)
+
+    if (!units || units.length === 0) {
+      console.log(`  No units with external_type_id for ${property.name}`)
+      return
+    }
+
+    // Get rate plans for this property
+    const { data: ratePlans } = await supabaseClient
+      .from('rate_plans')
+      .select('id, external_id')
+      .eq('property_id', property.id)
+      .not('external_id', 'is', null)
+
+    if (!ratePlans || ratePlans.length === 0) {
+      console.log(`  No rate plans for ${property.name}`)
+      return
+    }
+
+    // Fetch prices from Hotres for next 3 months
+    const year = new Date().getFullYear()
+    const month = new Date().getMonth() + 1
+    const fromDate = `${year}-${month.toString().padStart(2, '0')}-01`
+
+    const endDate = new Date()
+    endDate.setMonth(endDate.getMonth() + 3)
+    const tillDate = `${endDate.getFullYear()}-${(endDate.getMonth() + 1).toString().padStart(2, '0')}-${endDate.getDate().toString().padStart(2, '0')}`
+
+    const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`
+    const rawResponse = await fetchFromHotres(pricesUrl)
+    const pricesData = JSON.parse(rawResponse)
+
+    if (!Array.isArray(pricesData)) {
+      console.log(`  Invalid prices response for ${property.name}`)
+      return
+    }
+
+    // Create mappings
+    const unitMap = new Map<string, string>() // type_id -> unit_id
+    units.forEach(u => {
+      if (u.external_type_id) {
+        unitMap.set(String(u.external_type_id).trim(), u.id)
+      }
+    })
+
+    const ratePlanMap = new Map<string, string>() // external_rate_id -> rate_plan_id
+    ratePlans.forEach(rp => {
+      if (rp.external_id) {
+        ratePlanMap.set(String(rp.external_id).trim(), rp.id)
+      }
+    })
+
+    // Process prices
+    const pricesToUpsert: any[] = []
+
+    for (const item of pricesData) {
+      const typeId = String(item.type_id).trim()
+      const rateId = String(item.rate_id).trim()
+
+      const unitId = unitMap.get(typeId)
+      const ratePlanId = ratePlanMap.get(rateId)
+
+      if (!unitId || !ratePlanId) continue
+
+      if (item.dates && Array.isArray(item.dates)) {
+        for (const d of item.dates) {
+          pricesToUpsert.push({
+            unit_id: unitId,
+            rate_id: ratePlanId,
+            date: d.date,
+            price: d.price ? parseFloat(d.price) : null,
+            min: d.min ? parseInt(d.min) : null,
+            max: d.max ? parseInt(d.max) : null,
+            cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
+            ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
+          })
+        }
+      }
+    }
+
+    // Upsert prices
+    if (pricesToUpsert.length > 0) {
+      const BATCH_SIZE = 500
+      for (let i = 0; i < pricesToUpsert.length; i += BATCH_SIZE) {
+        const batch = pricesToUpsert.slice(i, i + BATCH_SIZE)
+        const { error } = await supabaseClient
+          .from('prices')
+          .upsert(batch, { onConflict: 'unit_id,rate_id,date' })
+        if (error) {
+          console.error(`  Error upserting prices batch:`, error)
+        }
+      }
+      console.log(`  ✓ Synced ${pricesToUpsert.length} price records for ${property.name}`)
+    }
+
+  } catch (error: any) {
+    console.error(`❌ Error syncing prices for ${property.name}:`, error.message)
+  }
+}
+
 Deno.serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -738,9 +852,12 @@ Deno.serve(async (req) => {
 
     console.log(`🔄 Starting sync for ${properties.length} properties...`)
 
-    // Sync all properties in parallel (each property handles its own change detection and notifications)
+    // Sync availability and prices for all properties in parallel
     const results = await Promise.allSettled(
-      properties.map(property => syncPropertyAvailability(property, supabaseClient))
+      properties.flatMap(property => [
+        syncPropertyAvailability(property, supabaseClient),
+        syncPropertyPrices(property, supabaseClient)
+      ])
     )
 
     // Collect successes, errors, and aggregate metrics
