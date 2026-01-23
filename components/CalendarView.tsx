@@ -363,6 +363,30 @@ export const CalendarView: React.FC = () => {
     });
   };
 
+  // Helper to get notification boundary position (for continuous yellow box)
+  const getNotificationPosition = (unitId: string, dateStr: string): 'start' | 'middle' | 'end' | 'single' | null => {
+    const notification = unreadNotifications.find(notif => {
+      if (notif.unit_id !== unitId) return false;
+      if (readNotificationIds.has(notif.id)) return false;
+
+      const notifStart = new Date(notif.start_date);
+      const notifEnd = new Date(notif.end_date);
+      const checkDate = new Date(dateStr);
+
+      return checkDate >= notifStart && checkDate <= notifEnd;
+    });
+
+    if (!notification) return null;
+
+    const notifStart = new Date(notification.start_date).toISOString().split('T')[0];
+    const notifEnd = new Date(notification.end_date).toISOString().split('T')[0];
+
+    if (notifStart === notifEnd) return 'single';
+    if (dateStr === notifStart) return 'start';
+    if (dateStr === notifEnd) return 'end';
+    return 'middle';
+  };
+
   if (loadingUnits) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -640,19 +664,31 @@ export const CalendarView: React.FC = () => {
                       const status = unitAvailability?.get(dateStr);
                       const isToday = date.toDateString() === new Date().toDateString();
                       const isSelected = dateStr === selectedDateStr;
-                      const hasUnread = hasUnreadNotification(unit.id, dateStr);
+                      const notifPosition = getNotificationPosition(unit.id, dateStr);
 
                       const isBooked = status === 'booked';
                       const cellClass = isBooked
                         ? 'h-7 rounded-sm transition-colors cursor-pointer bg-red-600/60 hover:bg-red-600/80 flex items-center justify-center text-white font-bold text-sm'
                         : 'h-7 rounded-sm transition-colors cursor-pointer bg-green-600/60 hover:bg-green-600/80 flex items-center justify-center text-white font-bold text-sm';
 
+                      // Continuous yellow box styling
+                      let notifBoxClass = '';
+                      if (notifPosition === 'single') {
+                        notifBoxClass = 'border-2 border-yellow-500 rounded';
+                      } else if (notifPosition === 'start') {
+                        notifBoxClass = 'border-2 border-yellow-500 rounded-l border-r-0';
+                      } else if (notifPosition === 'middle') {
+                        notifBoxClass = 'border-t-2 border-b-2 border-yellow-500';
+                      } else if (notifPosition === 'end') {
+                        notifBoxClass = 'border-2 border-yellow-500 rounded-r border-l-0';
+                      }
+
                       return (
                         <td
                           key={idx}
                           className={`p-1 border-r border-border ${
                             isSelected ? 'bg-indigo-900/30' : isToday ? 'bg-indigo-900/20' : ''
-                          } ${hasUnread ? 'ring-2 ring-yellow-500 ring-inset' : ''}`}
+                          } ${notifBoxClass}`}
                         >
                           <div className="flex flex-col gap-1">
                             {/* Colored cell with 0/1 */}
