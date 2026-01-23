@@ -488,9 +488,13 @@ async function syncPropertyAvailability(
         const checkoutDateStr = lastDate.toISOString().split('T')[0]
         const key = `${unitId}_${checkoutDateStr}`
 
-        // Only add if not already processed as booked
-        if (!processedKeys.has(key)) {
-          const existingRow = dbMap.get(key)
+        // Always add checkout day - upsert will handle duplicates
+        const existingRow = dbMap.get(key)
+
+        // Check if already in rowsToUpsert
+        const alreadyInRows = rowsToUpsert.some(r => r.unit_id === unitId && r.date === checkoutDateStr)
+
+        if (!alreadyInRows) {
           rowsToUpsert.push({
             id: existingRow ? existingRow.id : uuidv4(),
             unit_id: unitId,
@@ -501,7 +505,7 @@ async function syncPropertyAvailability(
           processedKeys.add(key)
           console.log(`      ✅ Added checkout day: ${checkoutDateStr}`)
         } else {
-          console.log(`      ⚠️  Checkout day ${checkoutDateStr} already in processedKeys, skipping`)
+          console.log(`      ⚠️  Checkout day ${checkoutDateStr} already in rowsToUpsert, skipping`)
         }
       })
     })
