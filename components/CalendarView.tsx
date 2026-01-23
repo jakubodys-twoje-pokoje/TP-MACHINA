@@ -519,16 +519,17 @@ export const CalendarView: React.FC = () => {
 
       if (currentRange) ranges.push(currentRange);
 
-      // Try sending rate_id as comma-separated string for all rate plans
+      // Send same changes to ALL rate_plans for this type_id
       // CTA/CTD/MIN are shared across all rate plans for same unit type
-      const allRateIds = allRatePlans.map(rp => rp.external_id).join(',');
-
-      payloadArray.push({
-        type_id: typeId,
-        rate_id: allRateIds,
-        mode: 'delta',
-        prices: ranges
-      });
+      // Each rate_plan gets its own entry in the array (per Hotres API spec)
+      for (const ratePlan of allRatePlans) {
+        payloadArray.push({
+          type_id: typeId,
+          rate_id: ratePlan.external_id!,
+          mode: 'delta',
+          prices: ranges
+        });
+      }
     }
 
     // Send all changes in one request to Hotres
