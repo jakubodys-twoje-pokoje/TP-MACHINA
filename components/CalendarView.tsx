@@ -171,7 +171,8 @@ export const CalendarView: React.FC = () => {
       }
     }
 
-    // Fetch prices - join with rate_plans to filter only "Booking"
+    // Fetch prices - join with rate_plans
+    // Don't filter by "Booking" - CTA/CTD/MIN are same across all rate plans
     const { data, error } = await supabase
       .from('prices')
       .select(`
@@ -180,8 +181,13 @@ export const CalendarView: React.FC = () => {
       `)
       .in('unit_id', unitIds)
       .gte('date', startDate.toISOString().split('T')[0])
-      .lte('date', endDate.toISOString().split('T')[0])
-      .eq('rate_plans.name', 'Booking');
+      .lte('date', endDate.toISOString().split('T')[0]);
+
+    console.log('📊 Query params:', {
+      unitIds,
+      startDate: startDate.toISOString().split('T')[0],
+      endDate: endDate.toISOString().split('T')[0]
+    });
 
     if (error) {
       console.error('❌ Error fetching prices:', error);
@@ -189,6 +195,9 @@ export const CalendarView: React.FC = () => {
     }
 
     console.log('📊 Prices data fetched:', data?.length || 0, 'records');
+    if (data && data.length > 0) {
+      console.log('📊 Sample price records:', data.slice(0, 3));
+    }
 
     // Show sample with CTA/CTD/MIN values
     const withRestrictions = data?.filter(p => p.cta !== null || p.ctd !== null || p.min !== null) || [];
