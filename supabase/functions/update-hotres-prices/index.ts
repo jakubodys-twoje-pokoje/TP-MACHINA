@@ -55,11 +55,11 @@ serve(async (req) => {
 
     const oid = property.hotres_id;
 
-    // Convert type_id to number, keep rate_id as is (can be string or number)
+    // Convert type_id and rate_id to INTEGER (Hotres requires numbers, not strings)
     const normalizedPayload = payload.map((item: any) => ({
       ...item,
       type_id: parseInt(item.type_id),
-      rate_id: item.rate_id // Keep as string - Hotres accepts both
+      rate_id: parseInt(item.rate_id)  // MUST be integer, not string!
     }));
 
     // Build URL with auth parameters only
