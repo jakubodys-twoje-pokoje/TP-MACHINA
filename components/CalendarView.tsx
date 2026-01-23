@@ -919,6 +919,28 @@ export const CalendarView: React.FC = () => {
           </div>
         )}
 
+        {/* Sync to Hotres Button for Full View */}
+        {viewMode === 'full' && priceChanges.size > 0 && (
+          <div className="mb-3 flex items-center gap-3">
+            <button
+              onClick={handleSyncToHotres}
+              className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-2.5 px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+            >
+              <span className="text-sm">Wyślij na Hotres</span>
+              <div className="flex gap-1">
+                {priceChanges.size > 0 && (
+                  <span className="text-[10px] bg-yellow-800 px-2 py-0.5 rounded-full">
+                    {priceChanges.size} zmian
+                  </span>
+                )}
+              </div>
+            </button>
+            <div className="text-xs text-slate-400 whitespace-nowrap">
+              Pozostało: <span className="font-bold text-yellow-400">{10 - hotresSyncCount.count}</span>/10
+            </div>
+          </div>
+        )}
+
         {/* Show table only if there are units to display */}
         {filteredUnits.length > 0 && (
           <>
