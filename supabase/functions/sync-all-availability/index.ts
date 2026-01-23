@@ -716,20 +716,32 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
     }
 
-    // Get rate plans for this property - ONLY "Booking" rate plan
-    const { data: ratePlans } = await supabaseClient
+    // Get rate plans for this property - ONLY "Booking" rate plan (case-insensitive)
+    const { data: ratePlans, error: ratePlansError } = await supabaseClient
       .from('rate_plans')
       .select('id, external_id, name')
       .eq('property_id', property.id)
-      .eq('name', 'Booking')
+      .ilike('name', 'Booking')  // Case-insensitive match
       .not('external_id', 'is', null)
 
+    console.log(`  📋 Rate plans query result:`, {
+      count: ratePlans?.length || 0,
+      error: ratePlansError,
+      ratePlans: ratePlans?.map(rp => ({ id: rp.id, name: rp.name, external_id: rp.external_id }))
+    })
+
     if (!ratePlans || ratePlans.length === 0) {
-      console.log(`  No "Booking" rate plan for ${property.name}`)
+      // Log all rate plans for this property to help debug
+      const { data: allRatePlans } = await supabaseClient
+        .from('rate_plans')
+        .select('id, name, external_id')
+        .eq('property_id', property.id)
+      console.log(`  ⚠️ No "Booking" rate plan found for ${property.name}. Available rate plans:`,
+        allRatePlans?.map(rp => `"${rp.name}" (ext_id: ${rp.external_id})`))
       return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
     }
 
-    console.log(`  Found ${ratePlans.length} "Booking" rate plan(s) for ${property.name}`)
+    console.log(`  ✓ Found ${ratePlans.length} "Booking" rate plan(s) for ${property.name}`)
 
     // Fetch prices from Hotres - from 20 January to end of 2026
     const fromDate = '2026-01-20'
@@ -789,21 +801,36 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     }
 
     const pricesToUpsert = Array.from(pricesByUnitDate.values())
-    console.log(`  Collected ${pricesToUpsert.length} unique price records (unit+date combinations)`)
+    console.log(`  📦 Collected ${pricesToUpsert.length} unique price records (unit+date combinations)`)
+
+    // Show sample records with CTA/CTD/MIN
+    const samplesWithRestrictions = pricesToUpsert.filter(p =>
+      p.cta !== null || p.ctd !== null || p.min !== null
+    ).slice(0, 3)
+    if (samplesWithRestrictions.length > 0) {
+      console.log(`  📊 Sample records with CTA/CTD/MIN:`, samplesWithRestrictions)
+    }
 
     // Upsert prices
     if (pricesToUpsert.length > 0) {
       const BATCH_SIZE = 500
+      let upsertedCount = 0
       for (let i = 0; i < pricesToUpsert.length; i += BATCH_SIZE) {
         const batch = pricesToUpsert.slice(i, i + BATCH_SIZE)
-        const { error } = await supabaseClient
+        const { data, error } = await supabaseClient
           .from('prices')
           .upsert(batch, { onConflict: 'unit_id,rate_id,date' })
+          .select('id')
         if (error) {
-          console.error(`  Error upserting prices batch:`, error)
+          console.error(`  ❌ Error upserting prices batch ${i}-${i + batch.length}:`, error)
+        } else {
+          upsertedCount += batch.length
+          console.log(`  ✓ Upserted batch ${i}-${i + batch.length} (${batch.length} records)`)
         }
       }
-      console.log(`  ✓ Synced ${pricesToUpsert.length} price records for ${property.name}`)
+      console.log(`  ✅ Synced ${upsertedCount} price records for ${property.name}`)
+    } else {
+      console.log(`  ⚠️ No price records to upsert for ${property.name}`)
     }
 
     return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
