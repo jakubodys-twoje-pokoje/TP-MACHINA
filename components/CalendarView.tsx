@@ -171,6 +171,20 @@ export const CalendarView: React.FC = () => {
       }
     }
 
+    // First, check if ANY prices exist for these units (without join)
+    const { data: rawPrices, error: rawError } = await supabase
+      .from('prices')
+      .select('*')
+      .in('unit_id', unitIds)
+      .gte('date', startDate.toISOString().split('T')[0])
+      .lte('date', endDate.toISOString().split('T')[0])
+      .limit(5);
+
+    console.log('📊 Raw prices query (no join):', {
+      count: rawPrices?.length || 0,
+      sample: rawPrices?.slice(0, 2)
+    });
+
     // Fetch prices - join with rate_plans
     // Don't filter by "Booking" - CTA/CTD/MIN are same across all rate plans
     const { data, error } = await supabase
@@ -194,7 +208,7 @@ export const CalendarView: React.FC = () => {
       return;
     }
 
-    console.log('📊 Prices data fetched:', data?.length || 0, 'records');
+    console.log('📊 Prices data fetched (with join):', data?.length || 0, 'records');
     if (data && data.length > 0) {
       console.log('📊 Sample price records:', data.slice(0, 3));
     }
