@@ -526,7 +526,7 @@ export const CalendarView: React.FC = () => {
         payloadArray.push({
           type_id: typeId,
           rate_id: ratePlan.external_id!,
-          mode: '"delta"',
+          mode: 'delta',
           prices: ranges
         });
       }
