@@ -65,21 +65,15 @@ serve(async (req) => {
     // Build URL with auth parameters only
     const url = `https://panel.hotres.pl/api_updateprices?user=${HOTRES_API_USER}&password=${HOTRES_API_PASSWORD}&oid=${oid}`;
 
-    console.log(`📤 Sending price update to Hotres with payload:`, JSON.stringify(normalizedPayload, null, 2));
+    console.log(`📤 Sending price update to Hotres with payload (${normalizedPayload.length} entries):`, JSON.stringify(normalizedPayload, null, 2));
 
-    // Build form data with payload as JSON string (Hotres expects this format)
-    const formData = new URLSearchParams();
-    formData.append('payload', JSON.stringify(normalizedPayload));
-
-    console.log(`📤 Form data payload value:`, formData.get('payload'));
-
-    // Call Hotres API with POST
+    // Try sending as raw JSON body (Hotres docs say "raw data in request body")
     const hotresResponse = await fetch(url, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
+        'Content-Type': 'application/json'
       },
-      body: formData.toString()
+      body: JSON.stringify(normalizedPayload)
     });
     const responseText = await hotresResponse.text();
 
