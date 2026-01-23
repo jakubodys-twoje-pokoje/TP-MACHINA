@@ -152,7 +152,7 @@ export const CalendarView: React.FC = () => {
     console.log('📊 Fetching prices for date range:', startDate.toISOString().split('T')[0], 'to', endDate.toISOString().split('T')[0]);
     console.log('📊 Unit IDs:', unitIds);
 
-    // First check if rate_plans exist for this property
+    // Check if rate_plans exist for this property
     if (property) {
       const { data: ratePlans, error: rpError } = await supabase
         .from('rate_plans')
@@ -163,12 +163,8 @@ export const CalendarView: React.FC = () => {
 
       if (!ratePlans || ratePlans.length === 0) {
         console.error('❌ No rate_plans found for this property! Run sync to import rate plans from Hotres.');
-      } else {
-        const bookingRatePlan = ratePlans.find(rp => rp.name === 'Booking');
-        if (!bookingRatePlan) {
-          console.warn('⚠️ No "Booking" rate plan found! Available plans:', ratePlans.map(rp => rp.name));
-        }
       }
+      // We accept any rate plan now (not just "Booking")
     }
 
     // First, check if ANY prices exist for these units (without join)

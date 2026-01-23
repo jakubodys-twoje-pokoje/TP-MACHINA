@@ -716,47 +716,60 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
     }
 
-    // Get rate plans for this property - ONLY "Booking" rate plan (case-insensitive)
-    const { data: ratePlans, error: ratePlansError } = await supabaseClient
+    // Get ALL rate plans for this property
+    const { data: allRatePlans, error: ratePlansError } = await supabaseClient
       .from('rate_plans')
       .select('id, external_id, name')
       .eq('property_id', property.id)
-      .ilike('name', 'Booking')  // Case-insensitive match
       .not('external_id', 'is', null)
 
-    console.log(`  📋 Rate plans query result:`, {
-      count: ratePlans?.length || 0,
-      error: ratePlansError,
-      ratePlans: ratePlans?.map(rp => ({ id: rp.id, name: rp.name, external_id: rp.external_id }))
-    })
-
-    if (!ratePlans || ratePlans.length === 0) {
-      // Log all rate plans for this property to help debug
-      const { data: allRatePlans } = await supabaseClient
-        .from('rate_plans')
-        .select('id, name, external_id')
-        .eq('property_id', property.id)
-      console.log(`  ⚠️ No "Booking" rate plan found for ${property.name}. Available rate plans:`,
-        allRatePlans?.map(rp => `"${rp.name}" (ext_id: ${rp.external_id})`))
+    if (!allRatePlans || allRatePlans.length === 0) {
+      console.log(`  ⚠️ No rate plans with external_id for ${property.name}`)
       return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
     }
 
-    console.log(`  ✓ Found ${ratePlans.length} "Booking" rate plan(s) for ${property.name}`)
+    // Prefer "Booking" rate plan, but use first available if "Booking" doesn't exist
+    const bookingPlan = allRatePlans.find(rp => rp.name.toLowerCase().includes('booking'))
+    const targetRatePlan = bookingPlan || allRatePlans[0]
 
-    // Fetch prices from Hotres - from 20 January to end of 2026
-    const fromDate = '2026-01-20'
-    const tillDate = '2026-12-31'
+    console.log(`  📋 Rate plans for ${property.name}:`, {
+      total: allRatePlans.length,
+      using: `"${targetRatePlan.name}" (id: ${targetRatePlan.id}, ext_id: ${targetRatePlan.external_id})`,
+      all: allRatePlans.map(rp => rp.name)
+    })
+
+    // Fetch prices from Hotres - full year from today
+    const today = new Date()
+    const oneYearFromNow = new Date(today)
+    oneYearFromNow.setFullYear(today.getFullYear() + 1)
+
+    const fromDate = today.toISOString().split('T')[0]
+    const tillDate = oneYearFromNow.toISOString().split('T')[0]
 
     const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`
+
+    console.log(`  📅 Fetching prices from ${fromDate} to ${tillDate}`)
+
     const rawResponse = await fetchFromHotres(pricesUrl)
     const pricesData = JSON.parse(rawResponse)
 
     if (!Array.isArray(pricesData)) {
-      console.log(`  Invalid prices response for ${property.name}`)
+      console.log(`  ❌ Invalid prices response for ${property.name} (not an array):`, typeof pricesData)
       return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
     }
 
-    console.log(`  Hotres returned ${pricesData.length} rate plan entries`)
+    console.log(`  ✓ Hotres API returned ${pricesData.length} rate plan entries`)
+
+    // Log sample of what Hotres returned
+    if (pricesData.length > 0) {
+      const sampleItem = pricesData[0]
+      console.log(`  📊 Sample Hotres entry:`, {
+        type_id: sampleItem.type_id,
+        rate_id: sampleItem.rate_id,
+        dates_count: sampleItem.dates?.length || 0,
+        sample_date: sampleItem.dates?.[0]
+      })
+    }
 
     // Create mappings
     const unitMap = new Map<string, string>() // type_id -> unit_id
@@ -766,12 +779,14 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       }
     })
 
-    // Use the first (or only) Booking rate plan - all Hotres data will be saved to this rate plan
-    const bookingRatePlanId = ratePlans[0].id
+    // All Hotres data will be saved to the target rate plan
+    const targetRatePlanId = targetRatePlan.id
 
     // Process prices - group by unit+date and take first available values
     // CTA/CTD/MIN are the same across all rate plans in Hotres, so we take from any rate_id
     const pricesByUnitDate = new Map<string, any>()
+
+    console.log(`  🔄 Processing ${pricesData.length} entries from Hotres...`)
 
     for (const item of pricesData) {
       const typeId = String(item.type_id).trim()
@@ -787,7 +802,7 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
           if (!pricesByUnitDate.has(key)) {
             pricesByUnitDate.set(key, {
               unit_id: unitId,
-              rate_id: bookingRatePlanId,
+              rate_id: targetRatePlanId,
               date: d.date,
               price: d.price ? parseFloat(d.price) : null,
               min: d.min ? parseInt(d.min) : null,
