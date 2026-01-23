@@ -459,11 +459,11 @@ export const CalendarView: React.FC = () => {
       });
     });
 
-    // Build payload array in Hotres format
-    // For each type_id that has changes, send entry for EVERY rate_plan
+// Build payload array in Hotres format
+    // Zmieniono typy z string na number zgodnie z wymaganiami API
     const payloadArray: Array<{
-      type_id: string;
-      rate_id: string;
+      type_id: number;
+      rate_id: number;
       mode: string;
       prices: Array<{
         from: string;
@@ -474,8 +474,23 @@ export const CalendarView: React.FC = () => {
       }>;
     }> = [];
 
+    // Helper do bezpiecznego sprawdzania czy data jest "następnym dniem"
+    const isNextDay = (dateStr1: string, dateStr2: string) => {
+      const d1 = new Date(dateStr1);
+      const d2 = new Date(dateStr2);
+      // Ustawiamy godziny na 12:00, żeby uniknąć problemów ze zmianą czasu/strefami przy prostym odejmowaniu
+      d1.setHours(12, 0, 0, 0);
+      d2.setHours(12, 0, 0, 0);
+      const diffTime = Math.abs(d2.getTime() - d1.getTime());
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+      return diffDays === 1 && d2 > d1;
+    };
+
     // For each type_id, group changes into continuous ranges
-    for (const [typeId, changes] of changesByTypeId) {
+    for (const [typeIdStr, changes] of changesByTypeId) {
+      // Skonwertuj typeId na liczbę (fix dla API)
+      const currentTypeId = parseInt(typeIdStr, 10);
+
       // Sort changes by date
       changes.sort((a, b) => a.date.localeCompare(b.date));
 
@@ -491,47 +506,62 @@ export const CalendarView: React.FC = () => {
       let currentRange: any = null;
 
       for (const change of changes) {
+        // Sprawdź czy wartości są identyczne (uwzględniając undefined)
         const isSameValues = currentRange &&
           currentRange.cta === change.cta &&
           currentRange.ctd === change.ctd &&
           currentRange.min === change.min;
 
-        const isNextDay = currentRange &&
-          new Date(change.date).getTime() === new Date(currentRange.till).getTime() + 86400000;
+        // Sprawdź czy to kolejny dzień w kalendarzu
+        const isNext = currentRange && isNextDay(currentRange.till, change.date);
 
-        if (isSameValues && isNextDay) {
+        if (isSameValues && isNext) {
           // Extend current range
           currentRange.till = change.date;
         } else {
-          // Start new range
+          // Push old range if exists
           if (currentRange) ranges.push(currentRange);
 
-          // Build range with only defined values (delta mode - only send what changed)
+          // Start new range
           currentRange = {
             from: change.date,
             till: change.date
           };
+          // Dodajemy tylko to, co faktycznie się zmienia (delta)
           if (change.cta !== undefined) currentRange.cta = change.cta;
           if (change.ctd !== undefined) currentRange.ctd = change.ctd;
           if (change.min !== undefined) currentRange.min = change.min;
         }
       }
 
+      // Push the last range
       if (currentRange) ranges.push(currentRange);
 
-      // Send same changes to ALL rate_plans for this type_id
-      // CTA/CTD/MIN are shared across all rate plans for same unit type
-      // Each rate_plan gets its own entry in the array (per Hotres API spec)
-      for (const ratePlan of allRatePlans) 
-      [
-      {
+      // --- KLUCZOWA POPRAWKA ---
+      // Filtrujemy plany cenowe. Musimy wysłać update tylko dla RatePlanów
+      // które należą do aktualnie przetwarzanego TypeID.
+      // Zakładam, że w obiekcie ratePlan masz pole łączące go z type_id (np. room_type_id, parent_id lub type_id)
+      // Jeśli Twoja struktura ratePlan nie ma type_id, musisz tu użyć odpowiedniego mapowania.
+      const relevantRatePlans = allRatePlans.filter(rp => 
+        // Tutaj sprawdź jak nazywa się pole w Twoim obiekcie (np. rp.room_type_id, rp.type_id itp.)
+        // Konwertujemy na stringi do porównania dla pewności
+        String(rp.type_id || rp.parent_id) === String(currentTypeId)
+      );
+
+      for (const ratePlan of relevantRatePlans)  {
         payloadArray.push({
-          type_id: typeId,
-          rate_id: ratePlan.external_id!,
+          type_id: currentTypeId, // Integer
+          rate_id: parseInt(ratePlan.external_id!, 10), // Integer (fix dla API)
           mode: 'delta',
           prices: ranges
         });
       }
+    }
+
+    // --- Walidacja przed wysłaniem ---
+    if (payloadArray.length === 0) {
+        console.log('ℹ️ No changes detected to send.');
+        return; 
     }
 
     // Send all changes in one request to Hotres
@@ -539,6 +569,28 @@ export const CalendarView: React.FC = () => {
     if (!session) throw new Error('Musisz być zalogowany');
 
     console.log('📤 Sending to Hotres:', JSON.stringify(payloadArray, null, 2));
+
+    const response = await fetch(
+      'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/update-hotres-prices',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          property_id: property.id,
+          payload: payloadArray
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Hotres update failed: ${response.status} ${errorText}`);
+    }
+
+    console.log('✅ Hotres update successful');
 
     const response = await fetch(
       'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/update-hotres-prices',
