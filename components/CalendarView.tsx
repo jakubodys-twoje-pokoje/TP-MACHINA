@@ -424,8 +424,21 @@ export const CalendarView: React.FC = () => {
   const sendPriceChangesToHotres = async () => {
     if (!property) throw new Error('Brak informacji o obiekcie');
 
-    // Group changes by type_id to build Hotres payload
-    const changesByTypeId = new Map<string, { type_id: string; rate_id: string; changes: Array<{ date: string; cta?: number; ctd?: number; min?: number | null }> }>();
+    // Get ALL rate_plans for this property
+    const { data: allRatePlans, error: rpError } = await supabase
+      .from('rate_plans')
+      .select('id, name, external_id')
+      .eq('property_id', property.id)
+      .not('external_id', 'is', null);
+
+    if (rpError || !allRatePlans || allRatePlans.length === 0) {
+      throw new Error('Brak cenników dla tego obiektu. Uruchom synchronizację aby pobrać cenniki z Hotres.');
+    }
+
+    console.log('📊 Found rate_plans for property:', allRatePlans);
+
+    // Group changes by type_id
+    const changesByTypeId = new Map<string, Array<{ date: string; cta?: number; ctd?: number; min?: number | null }>>();
 
     priceChanges.forEach((change, key) => {
       const unitId = change.unit_id!;
@@ -433,17 +446,12 @@ export const CalendarView: React.FC = () => {
       if (!unit || !unit.external_type_id) return;
 
       const typeId = unit.external_type_id;
-      const rateId = change.rate_id!;
 
       if (!changesByTypeId.has(typeId)) {
-        changesByTypeId.set(typeId, {
-          type_id: typeId,
-          rate_id: rateId,
-          changes: []
-        });
+        changesByTypeId.set(typeId, []);
       }
 
-      changesByTypeId.get(typeId)!.changes.push({
+      changesByTypeId.get(typeId)!.push({
         date: change.date!,
         cta: change.cta,
         ctd: change.ctd,
@@ -452,6 +460,7 @@ export const CalendarView: React.FC = () => {
     });
 
     // Build payload array in Hotres format
+    // For each type_id that has changes, send entry for EVERY rate_plan
     const payloadArray: Array<{
       type_id: string;
       rate_id: string;
@@ -465,10 +474,10 @@ export const CalendarView: React.FC = () => {
       }>;
     }> = [];
 
-    // For each type_id, group into continuous ranges
-    for (const [typeId, group] of changesByTypeId) {
+    // For each type_id, group changes into continuous ranges
+    for (const [typeId, changes] of changesByTypeId) {
       // Sort changes by date
-      group.changes.sort((a, b) => a.date.localeCompare(b.date));
+      changes.sort((a, b) => a.date.localeCompare(b.date));
 
       // Group into continuous ranges with same values
       const ranges: Array<{
@@ -481,7 +490,7 @@ export const CalendarView: React.FC = () => {
 
       let currentRange: any = null;
 
-      for (const change of group.changes) {
+      for (const change of changes) {
         const isSameValues = currentRange &&
           currentRange.cta === change.cta &&
           currentRange.ctd === change.ctd &&
@@ -508,12 +517,16 @@ export const CalendarView: React.FC = () => {
 
       if (currentRange) ranges.push(currentRange);
 
-      payloadArray.push({
-        type_id: typeId,
-        rate_id: group.rate_id,
-        mode: 'delta',
-        prices: ranges
-      });
+      // Send same changes to ALL rate_plans for this type_id
+      // CTA/CTD/MIN are shared across all rate plans for same unit type
+      for (const ratePlan of allRatePlans) {
+        payloadArray.push({
+          type_id: typeId,
+          rate_id: ratePlan.external_id!,
+          mode: 'delta',
+          prices: ranges
+        });
+      }
     }
 
     // Send all changes in one request to Hotres
