@@ -425,9 +425,10 @@ export const CalendarView: React.FC = () => {
     if (!property) throw new Error('Brak informacji o obiekcie');
 
     // Get ALL rate_plans for this property
+    // ADDED: select parent_id and type_id to map correctly to rooms
     const { data: allRatePlans, error: rpError } = await supabase
       .from('rate_plans')
-      .select('id, name, external_id')
+      .select('id, name, external_id, parent_id, type_id')
       .eq('property_id', property.id)
       .not('external_id', 'is', null);
 
@@ -459,11 +460,22 @@ export const CalendarView: React.FC = () => {
       });
     });
 
+    // Helper: Is next day check
+    const isNextDay = (dateStr1: string, dateStr2: string) => {
+      const d1 = new Date(dateStr1);
+      const d2 = new Date(dateStr2);
+      d1.setHours(12, 0, 0, 0);
+      d2.setHours(12, 0, 0, 0);
+      const diffTime = Math.abs(d2.getTime() - d1.getTime());
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+      return diffDays === 1 && d2 > d1;
+    };
+
     // Build payload array in Hotres format
-    // For each type_id that has changes, send entry for EVERY rate_plan
+    // CHANGED: IDs are numbers now
     const payloadArray: Array<{
-      type_id: string;
-      rate_id: string;
+      type_id: number;
+      rate_id: number;
       mode: string;
       prices: Array<{
         from: string;
@@ -475,7 +487,10 @@ export const CalendarView: React.FC = () => {
     }> = [];
 
     // For each type_id, group changes into continuous ranges
-    for (const [typeId, changes] of changesByTypeId) {
+    for (const [typeIdStr, changes] of changesByTypeId) {
+      // Convert to Integer (API fix)
+      const currentTypeId = parseInt(typeIdStr, 10);
+
       // Sort changes by date
       changes.sort((a, b) => a.date.localeCompare(b.date));
 
@@ -496,17 +511,16 @@ export const CalendarView: React.FC = () => {
           currentRange.ctd === change.ctd &&
           currentRange.min === change.min;
 
-        const isNextDay = currentRange &&
-          new Date(change.date).getTime() === new Date(currentRange.till).getTime() + 86400000;
+        const isNext = currentRange && isNextDay(currentRange.till, change.date);
 
-        if (isSameValues && isNextDay) {
+        if (isSameValues && isNext) {
           // Extend current range
           currentRange.till = change.date;
         } else {
-          // Start new range
+          // Push old range if exists
           if (currentRange) ranges.push(currentRange);
 
-          // Build range with only defined values (delta mode - only send what changed)
+          // Start new range
           currentRange = {
             from: change.date,
             till: change.date
@@ -519,17 +533,26 @@ export const CalendarView: React.FC = () => {
 
       if (currentRange) ranges.push(currentRange);
 
-      // Send same changes to ALL rate_plans for this type_id
-      // CTA/CTD/MIN are shared across all rate plans for same unit type
-      // Each rate_plan gets its own entry in the array (per Hotres API spec)
-      for (const ratePlan of allRatePlans) {
+      // FILTER: Only send changes to rate plans belonging to this Type ID
+      // Checks both type_id and parent_id (common Hotres mappings)
+      const relevantRatePlans = allRatePlans.filter(rp => 
+        String(rp.type_id || rp.parent_id) === String(currentTypeId)
+      );
+
+      // Each rate_plan gets its own entry
+      for (const ratePlan of relevantRatePlans) {
         payloadArray.push({
-          type_id: typeId,
-          rate_id: ratePlan.external_id!,
-          mode: '"delta"',
+          type_id: currentTypeId, // Integer
+          rate_id: parseInt(ratePlan.external_id!, 10), // Integer (API fix)
+          mode: 'delta',
           prices: ranges
         });
       }
+    }
+
+    if (payloadArray.length === 0) {
+       console.log('ℹ️ No matching rate plans/types found to update.');
+       return;
     }
 
     // Send all changes in one request to Hotres
@@ -565,7 +588,7 @@ export const CalendarView: React.FC = () => {
       const unit = units.find(u => u.external_type_id === typeId);
       if (!unit) continue;
 
-      for (const change of group.changes) {
+      for (const change of group) {
         const priceKey = `${unit.id}_${change.date}`;
         const existingPrice = pricesData.get(priceKey);
 
