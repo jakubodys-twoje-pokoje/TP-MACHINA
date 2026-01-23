@@ -363,24 +363,45 @@ export const CalendarView: React.FC = () => {
     });
   };
 
-  // Helper to get notification boundary position (for continuous yellow box)
+  // Helper to get notification boundary position (for separate notification boxes)
   const getNotificationPosition = (unitId: string, dateStr: string, dateIndex: number): 'start' | 'middle' | 'end' | 'single' | null => {
-    // Check if current day has any notification
-    const hasCurrentNotif = hasUnreadNotification(unitId, dateStr);
-    if (!hasCurrentNotif) return null;
+    const currentDate = new Date(dateStr);
 
-    // Check if previous day has ANY notification (doesn't need to be the same one)
+    // Find all notifications covering current day
+    const currentNotifs = unreadNotifications.filter(notif => {
+      if (notif.unit_id !== unitId) return false;
+      if (readNotificationIds.has(notif.id)) return false;
+
+      const notifStart = new Date(notif.start_date);
+      const notifEnd = new Date(notif.end_date);
+
+      return currentDate >= notifStart && currentDate <= notifEnd;
+    });
+
+    if (currentNotifs.length === 0) return null;
+
+    // Check if any of current notifications also cover previous day
     const prevDateStr = dateIndex > 0 ? dates[dateIndex - 1].toISOString().split('T')[0] : null;
-    const hasPrevNotif = prevDateStr ? hasUnreadNotification(unitId, prevDateStr) : false;
+    const prevDate = prevDateStr ? new Date(prevDateStr) : null;
+    const hasPrevSharedNotif = prevDate ? currentNotifs.some(notif => {
+      const notifStart = new Date(notif.start_date);
+      const notifEnd = new Date(notif.end_date);
+      return prevDate >= notifStart && prevDate <= notifEnd;
+    }) : false;
 
-    // Check if next day has ANY notification (doesn't need to be the same one)
+    // Check if any of current notifications also cover next day
     const nextDateStr = dateIndex < dates.length - 1 ? dates[dateIndex + 1].toISOString().split('T')[0] : null;
-    const hasNextNotif = nextDateStr ? hasUnreadNotification(unitId, nextDateStr) : false;
+    const nextDate = nextDateStr ? new Date(nextDateStr) : null;
+    const hasNextSharedNotif = nextDate ? currentNotifs.some(notif => {
+      const notifStart = new Date(notif.start_date);
+      const notifEnd = new Date(notif.end_date);
+      return nextDate >= notifStart && nextDate <= notifEnd;
+    }) : false;
 
-    // Determine position - connects all adjacent notifications regardless of type
-    if (!hasPrevNotif && !hasNextNotif) return 'single';
-    if (!hasPrevNotif && hasNextNotif) return 'start';
-    if (hasPrevNotif && !hasNextNotif) return 'end';
+    // Separate boxes for each notification
+    if (!hasPrevSharedNotif && !hasNextSharedNotif) return 'single';
+    if (!hasPrevSharedNotif && hasNextSharedNotif) return 'start';
+    if (hasPrevSharedNotif && !hasNextSharedNotif) return 'end';
     return 'middle';
   };
 
