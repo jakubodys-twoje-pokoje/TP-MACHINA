@@ -1,8 +1,8 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
 
-const HOTRES_API_USER = Deno.env.get('HOTRES_API_USER') || '';
-const HOTRES_API_PASSWORD = Deno.env.get('HOTRES_API_PASSWORD') || '';
+const HOTRES_API_USER = 'admin@twojepokoje.com.pl';
+const HOTRES_API_PASSWORD = 'Admin123@@';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
