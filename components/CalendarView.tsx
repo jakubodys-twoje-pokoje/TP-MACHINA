@@ -148,6 +148,10 @@ export const CalendarView: React.FC = () => {
     endDate.setDate(endDate.getDate() + 60);
 
     const unitIds = units.map(u => u.id);
+
+    console.log('📊 Fetching prices for date range:', startDate.toISOString().split('T')[0], 'to', endDate.toISOString().split('T')[0]);
+    console.log('📊 Unit IDs:', unitIds);
+
     const { data, error } = await supabase
       .from('prices')
       .select('*')
@@ -156,8 +160,17 @@ export const CalendarView: React.FC = () => {
       .lte('date', endDate.toISOString().split('T')[0]);
 
     if (error) {
-      console.error('Error fetching prices:', error);
+      console.error('❌ Error fetching prices:', error);
       return;
+    }
+
+    console.log('📊 Prices data fetched:', data?.length || 0, 'records');
+
+    // Show sample with CTA/CTD/MIN values
+    const withRestrictions = data?.filter(p => p.cta !== null || p.ctd !== null || p.min !== null) || [];
+    console.log('📊 Records with CTA/CTD/MIN:', withRestrictions.length);
+    if (withRestrictions.length > 0) {
+      console.log('📊 Sample:', withRestrictions.slice(0, 3));
     }
 
     // Create map keyed by unit_id + date
@@ -167,6 +180,7 @@ export const CalendarView: React.FC = () => {
       pricesMap.set(key, price);
     });
 
+    console.log('📊 Prices map size:', pricesMap.size);
     setPricesData(pricesMap);
   };
 
