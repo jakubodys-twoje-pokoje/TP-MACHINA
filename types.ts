@@ -116,3 +116,16 @@ export interface SyncHistory {
   status: 'success' | 'error';
   error_message?: string | null;
 }
+
+export interface Price {
+  id: string;
+  unit_id: string;
+  rate_id: string;
+  date: string;
+  price: number | null;
+  min: number | null;
+  max: number | null;
+  cta: 0 | 1 | null;
+  ctd: 0 | 1 | null;
+  synced_at?: string;
+}
