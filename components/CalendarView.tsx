@@ -364,26 +364,23 @@ export const CalendarView: React.FC = () => {
   };
 
   // Helper to get notification boundary position (for continuous yellow box)
-  const getNotificationPosition = (unitId: string, dateStr: string): 'start' | 'middle' | 'end' | 'single' | null => {
-    const notification = unreadNotifications.find(notif => {
-      if (notif.unit_id !== unitId) return false;
-      if (readNotificationIds.has(notif.id)) return false;
+  const getNotificationPosition = (unitId: string, dateStr: string, dateIndex: number): 'start' | 'middle' | 'end' | 'single' | null => {
+    // Check if current day has any notification
+    const hasCurrentNotif = hasUnreadNotification(unitId, dateStr);
+    if (!hasCurrentNotif) return null;
 
-      const notifStart = new Date(notif.start_date);
-      const notifEnd = new Date(notif.end_date);
-      const checkDate = new Date(dateStr);
+    // Check previous day
+    const prevDateStr = dateIndex > 0 ? dates[dateIndex - 1].toISOString().split('T')[0] : null;
+    const hasPrevNotif = prevDateStr ? hasUnreadNotification(unitId, prevDateStr) : false;
 
-      return checkDate >= notifStart && checkDate <= notifEnd;
-    });
+    // Check next day
+    const nextDateStr = dateIndex < dates.length - 1 ? dates[dateIndex + 1].toISOString().split('T')[0] : null;
+    const hasNextNotif = nextDateStr ? hasUnreadNotification(unitId, nextDateStr) : false;
 
-    if (!notification) return null;
-
-    const notifStart = new Date(notification.start_date).toISOString().split('T')[0];
-    const notifEnd = new Date(notification.end_date).toISOString().split('T')[0];
-
-    if (notifStart === notifEnd) return 'single';
-    if (dateStr === notifStart) return 'start';
-    if (dateStr === notifEnd) return 'end';
+    // Determine position based on neighbors
+    if (!hasPrevNotif && !hasNextNotif) return 'single';
+    if (!hasPrevNotif && hasNextNotif) return 'start';
+    if (hasPrevNotif && !hasNextNotif) return 'end';
     return 'middle';
   };
 
@@ -664,7 +661,7 @@ export const CalendarView: React.FC = () => {
                       const status = unitAvailability?.get(dateStr);
                       const isToday = date.toDateString() === new Date().toDateString();
                       const isSelected = dateStr === selectedDateStr;
-                      const notifPosition = getNotificationPosition(unit.id, dateStr);
+                      const notifPosition = getNotificationPosition(unit.id, dateStr, idx);
 
                       const isBooked = status === 'booked';
                       const cellClass = isBooked
