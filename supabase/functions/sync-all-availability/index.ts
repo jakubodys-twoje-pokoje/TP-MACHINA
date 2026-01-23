@@ -730,7 +730,6 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     }
 
     console.log(`  Found ${ratePlans.length} "Booking" rate plan(s) for ${property.name}`)
-    console.log(`  Booking rate plan external_id(s):`, ratePlans.map(rp => rp.external_id))
 
     // Fetch prices from Hotres - from 20 January to end of 2026
     const fromDate = '2026-01-20'
@@ -741,15 +740,11 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     const pricesData = JSON.parse(rawResponse)
 
     if (!Array.isArray(pricesData)) {
-      console.log(`  Invalid prices response for ${property.name}:`, rawResponse.substring(0, 200))
+      console.log(`  Invalid prices response for ${property.name}`)
       return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
     }
 
     console.log(`  Hotres returned ${pricesData.length} rate plan entries`)
-    if (pricesData.length > 0) {
-      const allRateIds = [...new Set(pricesData.map(item => String(item.rate_id).trim()))]
-      console.log(`  Hotres rate_ids in response:`, allRateIds)
-    }
 
     // Create mappings
     const unitMap = new Map<string, string>() // type_id -> unit_id
@@ -759,46 +754,42 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       }
     })
 
-    const ratePlanMap = new Map<string, string>() // external_rate_id -> rate_plan_id
-    ratePlans.forEach(rp => {
-      if (rp.external_id) {
-        ratePlanMap.set(String(rp.external_id).trim(), rp.id)
-      }
-    })
+    // Use the first (or only) Booking rate plan - all Hotres data will be saved to this rate plan
+    const bookingRatePlanId = ratePlans[0].id
 
-    // Process prices
-    const pricesToUpsert: any[] = []
-    let skippedCount = 0
+    // Process prices - group by unit+date and take first available values
+    // CTA/CTD/MIN are the same across all rate plans in Hotres, so we take from any rate_id
+    const pricesByUnitDate = new Map<string, any>()
 
     for (const item of pricesData) {
       const typeId = String(item.type_id).trim()
-      const rateId = String(item.rate_id).trim()
-
       const unitId = unitMap.get(typeId)
-      const ratePlanId = ratePlanMap.get(rateId)
 
-      if (!unitId || !ratePlanId) {
-        skippedCount++
-        continue
-      }
+      if (!unitId) continue
 
       if (item.dates && Array.isArray(item.dates)) {
         for (const d of item.dates) {
-          pricesToUpsert.push({
-            unit_id: unitId,
-            rate_id: ratePlanId,
-            date: d.date,
-            price: d.price ? parseFloat(d.price) : null,
-            min: d.min ? parseInt(d.min) : null,
-            max: d.max ? parseInt(d.max) : null,
-            cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
-            ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
-          })
+          const key = `${unitId}:${d.date}`
+
+          // Take first available data for each unit+date combination
+          if (!pricesByUnitDate.has(key)) {
+            pricesByUnitDate.set(key, {
+              unit_id: unitId,
+              rate_id: bookingRatePlanId,
+              date: d.date,
+              price: d.price ? parseFloat(d.price) : null,
+              min: d.min ? parseInt(d.min) : null,
+              max: d.max ? parseInt(d.max) : null,
+              cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
+              ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
+            })
+          }
         }
       }
     }
 
-    console.log(`  Matched ${pricesToUpsert.length} price records, skipped ${skippedCount} (no matching unit or rate plan)`)
+    const pricesToUpsert = Array.from(pricesByUnitDate.values())
+    console.log(`  Collected ${pricesToUpsert.length} unique price records (unit+date combinations)`)
 
     // Upsert prices
     if (pricesToUpsert.length > 0) {
@@ -813,8 +804,6 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
         }
       }
       console.log(`  ✓ Synced ${pricesToUpsert.length} price records for ${property.name}`)
-    } else {
-      console.log(`  ⚠️ No price records to sync for ${property.name} (rate_id from Hotres doesn't match Booking rate plan external_id)`)
     }
 
     return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
