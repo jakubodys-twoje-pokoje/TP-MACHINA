@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { Property, Availability, Unit, Notification } from '../types';
+import { Property, Availability, Unit, Notification, Price } from '../types';
 import { Loader2, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 
 export const CalendarView: React.FC = () => {
@@ -17,6 +17,8 @@ export const CalendarView: React.FC = () => {
   const [loadingUnits, setLoadingUnits] = useState(true);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [pricesData, setPricesData] = useState<Map<string, Price>>(new Map());
+  const [priceChanges, setPriceChanges] = useState<Map<string, Partial<Price>>>(new Map());
 
   // Hotres sync counter
   const getHotresSyncCount = (): { count: number; hourStart: number } => {
@@ -50,6 +52,7 @@ export const CalendarView: React.FC = () => {
   useEffect(() => {
     if (units.length > 0) {
       fetchQuarterAvailability();
+      fetchPricesData();
     }
   }, [selectedDate, units]);
 
@@ -132,6 +135,39 @@ export const CalendarView: React.FC = () => {
 
     setAllUnitsAvailability(availabilityMap);
     setLoadingAvailability(false);
+  };
+
+  const fetchPricesData = async () => {
+    if (units.length === 0) return;
+
+    // Calculate date range: 1 month before, 2 months after (~90 days total)
+    const startDate = new Date(selectedDate);
+    startDate.setDate(startDate.getDate() - 30);
+
+    const endDate = new Date(selectedDate);
+    endDate.setDate(endDate.getDate() + 60);
+
+    const unitIds = units.map(u => u.id);
+    const { data, error } = await supabase
+      .from('prices')
+      .select('*')
+      .in('unit_id', unitIds)
+      .gte('date', startDate.toISOString().split('T')[0])
+      .lte('date', endDate.toISOString().split('T')[0]);
+
+    if (error) {
+      console.error('Error fetching prices:', error);
+      return;
+    }
+
+    // Create map keyed by unit_id + date
+    const pricesMap = new Map<string, Price>();
+    data?.forEach(price => {
+      const key = `${price.unit_id}_${price.date}`;
+      pricesMap.set(key, price);
+    });
+
+    setPricesData(pricesMap);
   };
 
   const fetchUnreadNotifications = async () => {
@@ -272,27 +308,238 @@ export const CalendarView: React.FC = () => {
       return;
     }
 
-    // Confirm
-    if (!confirm('Czy na pewno chcesz wysłać zmiany na Hotres? Ta operacja jest nieodwracalna.')) {
+    const hasNotifications = readNotificationIds.size > 0;
+    const hasPriceChanges = priceChanges.size > 0;
+
+    if (!hasNotifications && !hasPriceChanges) {
+      alert('Brak zmian do wysłania.');
       return;
     }
 
-    // TODO: Implement actual Hotres sync logic here
-    // For now, just remove read notifications
+    // Build confirmation message
+    let confirmMsg = 'Czy na pewno chcesz wysłać zmiany na Hotres?\n\n';
+    if (hasNotifications) confirmMsg += `• ${readNotificationIds.size} odczytanych powiadomień\n`;
+    if (hasPriceChanges) confirmMsg += `• ${priceChanges.size} zmian w cenach/restrykcjach\n`;
+    confirmMsg += '\nTa operacja jest nieodwracalna.';
 
-    // Update counter
-    const newCount = currentData.count + 1;
-    const newData = { count: newCount, hourStart: currentData.hourStart };
-    localStorage.setItem('hotres_sync_count', JSON.stringify(newData));
-    setHotresSyncCount(newData);
+    if (!confirm(confirmMsg)) {
+      return;
+    }
 
-    // Remove read notifications from view
-    setUnreadNotifications(prev =>
-      prev.filter(n => !readNotificationIds.has(n.id))
-    );
-    setReadNotificationIds(new Set());
+    try {
+      // Send price changes to Hotres if any
+      if (hasPriceChanges) {
+        await sendPriceChangesToHotres();
+      }
 
-    alert(`Wysłano na Hotres. Pozostało ${10 - newCount} synchronizacji w tej godzinie.`);
+      // Update counter
+      const newCount = currentData.count + 1;
+      const newData = { count: newCount, hourStart: currentData.hourStart };
+      localStorage.setItem('hotres_sync_count', JSON.stringify(newData));
+      setHotresSyncCount(newData);
+
+      // Remove read notifications from view
+      if (hasNotifications) {
+        setUnreadNotifications(prev =>
+          prev.filter(n => !readNotificationIds.has(n.id))
+        );
+        setReadNotificationIds(new Set());
+      }
+
+      // Clear price changes
+      if (hasPriceChanges) {
+        setPriceChanges(new Map());
+        // Refresh prices data to get updated values from DB
+        await fetchPricesData();
+      }
+
+      alert(`✓ Wysłano na Hotres.\nPozostało ${10 - newCount} synchronizacji w tej godzinie.`);
+    } catch (error: any) {
+      alert(`✗ Błąd synchronizacji: ${error.message}`);
+    }
+  };
+
+  const sendPriceChangesToHotres = async () => {
+    if (!property) throw new Error('Brak informacji o obiekcie');
+
+    // Group changes by unit
+    const changesByUnit = new Map<string, Array<{ date: string; cta?: number; ctd?: number; min?: number | null }>>();
+
+    priceChanges.forEach((change, key) => {
+      const unitId = change.unit_id!;
+      if (!changesByUnit.has(unitId)) {
+        changesByUnit.set(unitId, []);
+      }
+      changesByUnit.get(unitId)!.push({
+        date: change.date!,
+        cta: change.cta,
+        ctd: change.ctd,
+        min: change.min
+      });
+    });
+
+    // For each unit, find continuous date ranges and send to Hotres
+    for (const [unitId, changes] of changesByUnit) {
+      const unit = units.find(u => u.id === unitId);
+      if (!unit || !unit.external_type_id) continue;
+
+      // Sort changes by date
+      changes.sort((a, b) => a.date.localeCompare(b.date));
+
+      // Group into continuous ranges with same values
+      const ranges: Array<{
+        from: string;
+        till: string;
+        cta?: number;
+        ctd?: number;
+        min?: number | null;
+      }> = [];
+
+      let currentRange: any = null;
+
+      for (const change of changes) {
+        const isSameValues = currentRange &&
+          currentRange.cta === change.cta &&
+          currentRange.ctd === change.ctd &&
+          currentRange.min === change.min;
+
+        const isNextDay = currentRange &&
+          new Date(change.date).getTime() === new Date(currentRange.till).getTime() + 86400000;
+
+        if (isSameValues && isNextDay) {
+          // Extend current range
+          currentRange.till = change.date;
+        } else {
+          // Start new range
+          if (currentRange) ranges.push(currentRange);
+          currentRange = {
+            from: change.date,
+            till: change.date,
+            cta: change.cta,
+            ctd: change.ctd,
+            min: change.min
+          };
+        }
+      }
+
+      if (currentRange) ranges.push(currentRange);
+
+      // Send each range to Hotres via Edge Function
+      for (const range of ranges) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) throw new Error('Musisz być zalogowany');
+
+        const payload = {
+          property_id: property.id,
+          type_id: unit.external_type_id,
+          from: range.from,
+          till: range.till,
+          cta: range.cta,
+          ctd: range.ctd,
+          min: range.min
+        };
+
+        const response = await fetch(
+          'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/update-hotres-prices',
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload)
+          }
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Hotres update failed: ${response.status} ${errorText}`);
+        }
+
+        // Update database with new values
+        const datesToUpdate = [];
+        let currentDate = new Date(range.from);
+        const endDate = new Date(range.till);
+
+        while (currentDate <= endDate) {
+          datesToUpdate.push(currentDate.toISOString().split('T')[0]);
+          currentDate.setDate(currentDate.getDate() + 1);
+        }
+
+        for (const date of datesToUpdate) {
+          const priceKey = `${unitId}_${date}`;
+          const existingPrice = pricesData.get(priceKey);
+
+          if (existingPrice) {
+            // Update existing price
+            await supabase
+              .from('prices')
+              .update({
+                cta: range.cta !== undefined ? range.cta : existingPrice.cta,
+                ctd: range.ctd !== undefined ? range.ctd : existingPrice.ctd,
+                min: range.min !== undefined ? range.min : existingPrice.min
+              })
+              .eq('id', existingPrice.id);
+          }
+        }
+      }
+    }
+  };
+
+  const handleCtaChange = (unitId: string, dateStr: string, checked: boolean) => {
+    const key = `${unitId}_${dateStr}`;
+    const currentPrice = pricesData.get(key);
+    const currentChange = priceChanges.get(key);
+
+    setPriceChanges(prev => {
+      const updated = new Map(prev);
+      updated.set(key, {
+        ...currentChange,
+        unit_id: unitId,
+        date: dateStr,
+        rate_id: currentPrice?.rate_id || '',
+        cta: checked ? 1 : 0
+      });
+      return updated;
+    });
+  };
+
+  const handleCtdChange = (unitId: string, dateStr: string, checked: boolean) => {
+    const key = `${unitId}_${dateStr}`;
+    const currentPrice = pricesData.get(key);
+    const currentChange = priceChanges.get(key);
+
+    setPriceChanges(prev => {
+      const updated = new Map(prev);
+      updated.set(key, {
+        ...currentChange,
+        unit_id: unitId,
+        date: dateStr,
+        rate_id: currentPrice?.rate_id || '',
+        ctd: checked ? 1 : 0
+      });
+      return updated;
+    });
+  };
+
+  const handleMinChange = (unitId: string, dateStr: string, value: string) => {
+    const key = `${unitId}_${dateStr}`;
+    const currentPrice = pricesData.get(key);
+    const currentChange = priceChanges.get(key);
+
+    const minValue = value === '' ? null : parseInt(value);
+
+    setPriceChanges(prev => {
+      const updated = new Map(prev);
+      updated.set(key, {
+        ...currentChange,
+        unit_id: unitId,
+        date: dateStr,
+        rate_id: currentPrice?.rate_id || '',
+        min: minValue
+      });
+      return updated;
+    });
   };
 
   const triggerAvailabilitySync = async () => {
@@ -556,16 +803,25 @@ export const CalendarView: React.FC = () => {
             </div>
 
             {/* Sync to Hotres Button */}
-            {readNotificationIds.size > 0 && (
+            {(readNotificationIds.size > 0 || priceChanges.size > 0) && (
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleSyncToHotres}
                   className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-2.5 px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
                 >
                   <span className="text-sm">Wyślij na Hotres</span>
-                  <span className="text-[10px] bg-yellow-800 px-2 py-0.5 rounded-full">
-                    {readNotificationIds.size}
-                  </span>
+                  <div className="flex gap-1">
+                    {readNotificationIds.size > 0 && (
+                      <span className="text-[10px] bg-yellow-800 px-2 py-0.5 rounded-full">
+                        {readNotificationIds.size} powiad.
+                      </span>
+                    )}
+                    {priceChanges.size > 0 && (
+                      <span className="text-[10px] bg-yellow-800 px-2 py-0.5 rounded-full">
+                        {priceChanges.size} zmian
+                      </span>
+                    )}
+                  </div>
                 </button>
                 <div className="text-xs text-slate-400 whitespace-nowrap">
                   Pozostało: <span className="font-bold text-yellow-400">{10 - hotresSyncCount.count}</span>/10
@@ -708,37 +964,62 @@ export const CalendarView: React.FC = () => {
                             isSelected ? 'bg-indigo-900/30' : isToday ? 'bg-indigo-900/20' : ''
                           } ${notifBoxClass}`}
                         >
-                          <div className="flex flex-col gap-1">
-                            {/* Colored cell with 0/1 */}
-                            <div
-                              className={cellClass}
-                              title={`${unit.name} - ${dateStr}: ${status || 'available'}`}
-                            >
-                              {isBooked ? '0' : '1'}
-                            </div>
+                          {(() => {
+                            const priceKey = `${unit.id}_${dateStr}`;
+                            const priceData = pricesData.get(priceKey);
+                            const changeData = priceChanges.get(priceKey);
 
-                            {/* Checkboxes in one line - vertical labels */}
-                            <div className="flex items-center justify-center gap-2">
-                              <label className="flex flex-col items-center gap-0.5 cursor-pointer">
-                                <input type="checkbox" className="w-5 h-5 cursor-pointer" />
-                                <span className="text-slate-400 text-[8px] font-semibold">CTA</span>
-                              </label>
-                              <label className="flex flex-col items-center gap-0.5 cursor-pointer">
-                                <input type="checkbox" className="w-5 h-5 cursor-pointer" />
-                                <span className="text-slate-400 text-[8px] font-semibold">CTD</span>
-                              </label>
-                            </div>
+                            // Use change data if available, otherwise use price data
+                            const ctaValue = changeData?.cta !== undefined ? changeData.cta === 1 : priceData?.cta === 1;
+                            const ctdValue = changeData?.ctd !== undefined ? changeData.ctd === 1 : priceData?.ctd === 1;
+                            const minValue = changeData?.min !== undefined ? (changeData.min || '') : (priceData?.min || '');
 
-                            {/* MIN input - centered with label below */}
-                            <div className="flex flex-col gap-0.5 items-center">
-                              <input
-                                type="text"
-                                className="w-full px-1.5 py-1 text-center text-[11px] bg-slate-800 border border-slate-700 rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                placeholder="000"
-                              />
-                              <label className="text-[8px] text-slate-500 uppercase">MIN</label>
-                            </div>
-                          </div>
+                            return (
+                              <div className="flex flex-col gap-1">
+                                {/* Colored cell with 0/1 */}
+                                <div
+                                  className={cellClass}
+                                  title={`${unit.name} - ${dateStr}: ${status || 'available'}`}
+                                >
+                                  {isBooked ? '0' : '1'}
+                                </div>
+
+                                {/* Checkboxes in one line - vertical labels */}
+                                <div className="flex items-center justify-center gap-2">
+                                  <label className="flex flex-col items-center gap-0.5 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      className="w-5 h-5 cursor-pointer"
+                                      checked={ctaValue}
+                                      onChange={(e) => handleCtaChange(unit.id, dateStr, e.target.checked)}
+                                    />
+                                    <span className="text-slate-400 text-[8px] font-semibold">CTA</span>
+                                  </label>
+                                  <label className="flex flex-col items-center gap-0.5 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      className="w-5 h-5 cursor-pointer"
+                                      checked={ctdValue}
+                                      onChange={(e) => handleCtdChange(unit.id, dateStr, e.target.checked)}
+                                    />
+                                    <span className="text-slate-400 text-[8px] font-semibold">CTD</span>
+                                  </label>
+                                </div>
+
+                                {/* MIN input - centered with label below */}
+                                <div className="flex flex-col gap-0.5 items-center">
+                                  <input
+                                    type="text"
+                                    className="w-full px-1.5 py-1 text-center text-[11px] bg-slate-800 border border-slate-700 rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                    placeholder="000"
+                                    value={minValue}
+                                    onChange={(e) => handleMinChange(unit.id, dateStr, e.target.value)}
+                                  />
+                                  <label className="text-[8px] text-slate-500 uppercase">MIN</label>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </td>
                       );
                     })}
