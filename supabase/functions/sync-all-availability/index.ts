@@ -388,13 +388,6 @@ async function syncPropertyAvailability(
           unitMetrics.set(unitId, { unitName, daysFetched: 0, recordsCompared: 0 })
         }
 
-        // Log first few dates from API for debugging
-        if (item.dates.length > 0) {
-          const firstDate = normalizeDate(item.dates[0].date)
-          const lastDate = normalizeDate(item.dates[item.dates.length - 1].date)
-          console.log(`   📅 Unit ${extId}: API returned ${item.dates.length} dates (${firstDate} → ${lastDate})`)
-        }
-
         for (const d of item.dates) {
           recordsCompared++ // Count each date record from API
           const dateStr = normalizeDate(d.date)
@@ -424,93 +417,6 @@ async function syncPropertyAvailability(
         unmatchedTypeIds.add(extId)
       }
     }
-
-    // Add checkout days (+1 day after each booked sequence)
-    console.log(`🔧 Adding checkout days for continuous booking sequences...`)
-    console.log(`   Total rows before checkout addition: ${rowsToUpsert.length}`)
-    const unitBookings = new Map<string, string[]>() // unit_id -> sorted booked dates
-
-    // Group booked dates by unit
-    rowsToUpsert.forEach(row => {
-      if (row.status === 'booked') {
-        if (!unitBookings.has(row.unit_id)) {
-          unitBookings.set(row.unit_id, [])
-        }
-        unitBookings.get(row.unit_id)!.push(row.date)
-      }
-    })
-
-    console.log(`   Found ${unitBookings.size} units with bookings`)
-
-    // For each unit, find sequences and add checkout days
-    unitBookings.forEach((dates, unitId) => {
-      const sortedDates = dates.sort()
-      console.log(`   📦 Unit ${unitId}: Processing ${sortedDates.length} booked dates`)
-      console.log(`      First date: ${sortedDates[0]}, Last date: ${sortedDates[sortedDates.length - 1]}`)
-
-      const sequences: string[][] = []
-      let currentSeq: string[] = []
-
-      // Find continuous sequences
-      for (let i = 0; i < sortedDates.length; i++) {
-        const currentDate = new Date(sortedDates[i])
-
-        if (currentSeq.length === 0) {
-          currentSeq.push(sortedDates[i])
-        } else {
-          const lastDate = new Date(currentSeq[currentSeq.length - 1])
-          const dayDiff = Math.round((currentDate.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24))
-
-          if (dayDiff === 1) {
-            // Continuous sequence
-            currentSeq.push(sortedDates[i])
-          } else {
-            // Gap found, save sequence and start new one
-            sequences.push([...currentSeq])
-            currentSeq = [sortedDates[i]]
-          }
-        }
-      }
-
-      // Save last sequence
-      if (currentSeq.length > 0) {
-        sequences.push(currentSeq)
-      }
-
-      console.log(`      Found ${sequences.length} sequence(s)`)
-
-      // Add checkout day (+1) for each sequence
-      sequences.forEach((seq, idx) => {
-        console.log(`      Sequence ${idx + 1}: ${seq[0]} → ${seq[seq.length - 1]} (${seq.length} days)`)
-
-        const lastDate = new Date(seq[seq.length - 1])
-        lastDate.setDate(lastDate.getDate() + 1)
-        const checkoutDateStr = lastDate.toISOString().split('T')[0]
-        const key = `${unitId}_${checkoutDateStr}`
-
-        // Always add checkout day - upsert will handle duplicates
-        const existingRow = dbMap.get(key)
-
-        // Check if already in rowsToUpsert
-        const alreadyInRows = rowsToUpsert.some(r => r.unit_id === unitId && r.date === checkoutDateStr)
-
-        if (!alreadyInRows) {
-          rowsToUpsert.push({
-            id: existingRow ? existingRow.id : uuidv4(),
-            unit_id: unitId,
-            date: checkoutDateStr,
-            status: 'booked',
-            reservation_id: existingRow?.reservation_id || null
-          })
-          processedKeys.add(key)
-          console.log(`      ✅ Added checkout day: ${checkoutDateStr}`)
-        } else {
-          console.log(`      ⚠️  Checkout day ${checkoutDateStr} already in rowsToUpsert, skipping`)
-        }
-      })
-    })
-
-    console.log(`   Total rows after checkout addition: ${rowsToUpsert.length}`)
 
     // Report diagnostics
     console.log(`📊 ${property.name} API Statistics:`)

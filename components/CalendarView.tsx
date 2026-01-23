@@ -363,40 +363,6 @@ export const CalendarView: React.FC = () => {
     });
   };
 
-  // Helper to check if a day is the start or end of a reservation
-  const getReservationBoundary = (
-    unitId: string,
-    dateIndex: number
-  ): 'start' | 'end' | null => {
-    const unitAvailability = allUnitsAvailability.get(unitId);
-    if (!unitAvailability) return null;
-
-    const currentDateStr = dates[dateIndex].toISOString().split('T')[0];
-    const currentStatus = unitAvailability.get(currentDateStr);
-
-    if (!currentStatus || currentStatus === 'available') return null;
-
-    const prevDateStr = dateIndex > 0
-      ? dates[dateIndex - 1].toISOString().split('T')[0]
-      : null;
-    const prevStatus = prevDateStr ? unitAvailability.get(prevDateStr) : 'available';
-
-    const nextDateStr = dateIndex < dates.length - 1
-      ? dates[dateIndex + 1].toISOString().split('T')[0]
-      : null;
-    const nextStatus = nextDateStr ? unitAvailability.get(nextDateStr) : 'available';
-
-    if ((!prevStatus || prevStatus === 'available') && currentStatus === 'booked') {
-      return 'start';
-    }
-
-    if (currentStatus === 'booked' && (!nextStatus || nextStatus === 'available')) {
-      return 'end';
-    }
-
-    return null;
-  };
-
   if (loadingUnits) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -674,23 +640,12 @@ export const CalendarView: React.FC = () => {
                       const status = unitAvailability?.get(dateStr);
                       const isToday = date.toDateString() === new Date().toDateString();
                       const isSelected = dateStr === selectedDateStr;
-                      const boundary = getReservationBoundary(unit.id, idx);
                       const hasUnread = hasUnreadNotification(unit.id, dateStr);
 
-                      let cellStyle: React.CSSProperties = {};
-                      let cellClass = `h-5 rounded-sm transition-colors cursor-pointer ${getStatusColor(status)}`;
-
-                      if (boundary === 'start') {
-                        cellStyle = {
-                          background: 'linear-gradient(135deg, rgb(22 163 74 / 0.5) 50%, rgb(220 38 38 / 0.5) 50%)'
-                        };
-                        cellClass = 'h-5 rounded-sm transition-opacity cursor-pointer hover:opacity-80';
-                      } else if (boundary === 'end') {
-                        cellStyle = {
-                          background: 'linear-gradient(135deg, rgb(220 38 38 / 0.5) 50%, rgb(22 163 74 / 0.5) 50%)'
-                        };
-                        cellClass = 'h-5 rounded-sm transition-opacity cursor-pointer hover:opacity-80';
-                      }
+                      const isBooked = status === 'booked';
+                      const cellClass = isBooked
+                        ? 'h-7 rounded-sm transition-colors cursor-pointer bg-red-600/60 hover:bg-red-600/80 flex items-center justify-center text-white font-bold text-sm'
+                        : 'h-7 rounded-sm transition-colors cursor-pointer bg-green-600/60 hover:bg-green-600/80 flex items-center justify-center text-white font-bold text-sm';
 
                       return (
                         <td
@@ -700,12 +655,13 @@ export const CalendarView: React.FC = () => {
                           } ${hasUnread ? 'ring-2 ring-yellow-500 ring-inset' : ''}`}
                         >
                           <div className="flex flex-col gap-1">
-                            {/* Colored cell */}
+                            {/* Colored cell with 0/1 */}
                             <div
                               className={cellClass}
-                              style={cellStyle}
-                              title={`${unit.name} - ${dateStr}: ${status || 'available'}${boundary ? ` (${boundary === 'start' ? 'początek' : 'koniec'} rezerwacji)` : ''}`}
-                            />
+                              title={`${unit.name} - ${dateStr}: ${status || 'available'}`}
+                            >
+                              {isBooked ? '0' : '1'}
+                            </div>
 
                             {/* Checkboxes in one line - vertical labels */}
                             <div className="flex items-center justify-center gap-2">
@@ -743,37 +699,29 @@ export const CalendarView: React.FC = () => {
             <div className="space-y-2 mt-2">
               <div className="flex items-center justify-center gap-4 text-xs flex-wrap">
                 <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded bg-green-600/50"></div>
+                  <div className="w-6 h-6 rounded bg-green-600/60 flex items-center justify-center text-white font-bold text-xs">1</div>
                   <span className="text-slate-400">Dostępny</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded bg-red-600/50"></div>
+                  <div className="w-6 h-6 rounded bg-red-600/60 flex items-center justify-center text-white font-bold text-xs">0</div>
                   <span className="text-slate-400">Zajęty</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded" style={{ background: 'linear-gradient(135deg, rgb(22 163 74 / 0.5) 50%, rgb(220 38 38 / 0.5) 50%)' }}></div>
-                  <span className="text-slate-400">Początek rezerwacji</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded" style={{ background: 'linear-gradient(135deg, rgb(220 38 38 / 0.5) 50%, rgb(22 163 74 / 0.5) 50%)' }}></div>
-                  <span className="text-slate-400">Koniec rezerwacji</span>
                 </div>
                 <div className="w-px h-4 bg-slate-700"></div>
                 <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded border-2 border-yellow-500"></div>
+                  <div className="w-6 h-6 rounded border-2 border-yellow-500"></div>
                   <span className="text-slate-400">Nieodczytane</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded bg-green-900/30 border border-green-700/50"></div>
-                  <span className="text-slate-400">Zwolnienie</span>
+                  <div className="w-6 h-6 rounded bg-green-900/30 border border-green-700/50"></div>
+                  <span className="text-slate-400">Zwolnienie (powiadomienie)</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded bg-red-900/30 border border-red-700/50"></div>
-                  <span className="text-slate-400">Blokada</span>
+                  <div className="w-6 h-6 rounded bg-red-900/30 border border-red-700/50"></div>
+                  <span className="text-slate-400">Blokada (powiadomienie)</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-4 h-4 rounded bg-slate-800/50 border border-slate-700/50"></div>
-                  <span className="text-slate-400">Odczytane</span>
+                  <div className="w-6 h-6 rounded bg-slate-800/50 border border-slate-700/50"></div>
+                  <span className="text-slate-400">Odczytane (powiadomienie)</span>
                 </div>
               </div>
               <div className="flex items-center justify-center gap-6 text-[11px] text-slate-500">
