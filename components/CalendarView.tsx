@@ -459,7 +459,18 @@ export const CalendarView: React.FC = () => {
       });
     });
 
-// Build payload array in Hotres format
+    // Helper do bezpiecznego sprawdzania czy data jest "następnym dniem"
+    const isNextDay = (dateStr1: string, dateStr2: string) => {
+      const d1 = new Date(dateStr1);
+      const d2 = new Date(dateStr2);
+      d1.setHours(12, 0, 0, 0);
+      d2.setHours(12, 0, 0, 0);
+      const diffTime = Math.abs(d2.getTime() - d1.getTime());
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+      return diffDays === 1 && d2 > d1;
+    };
+
+    // Build payload array in Hotres format
     // Zmieniono typy z string na number zgodnie z wymaganiami API
     const payloadArray: Array<{
       type_id: number;
@@ -474,21 +485,9 @@ export const CalendarView: React.FC = () => {
       }>;
     }> = [];
 
-    // Helper do bezpiecznego sprawdzania czy data jest "następnym dniem"
-    const isNextDay = (dateStr1: string, dateStr2: string) => {
-      const d1 = new Date(dateStr1);
-      const d2 = new Date(dateStr2);
-      // Ustawiamy godziny na 12:00, żeby uniknąć problemów ze zmianą czasu/strefami przy prostym odejmowaniu
-      d1.setHours(12, 0, 0, 0);
-      d2.setHours(12, 0, 0, 0);
-      const diffTime = Math.abs(d2.getTime() - d1.getTime());
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-      return diffDays === 1 && d2 > d1;
-    };
-
     // For each type_id, group changes into continuous ranges
     for (const [typeIdStr, changes] of changesByTypeId) {
-      // Skonwertuj typeId na liczbę (fix dla API)
+      // 1. Konwersja typeId na liczbę (Integer) - naprawia błąd stringa
       const currentTypeId = parseInt(typeIdStr, 10);
 
       // Sort changes by date
@@ -506,62 +505,52 @@ export const CalendarView: React.FC = () => {
       let currentRange: any = null;
 
       for (const change of changes) {
-        // Sprawdź czy wartości są identyczne (uwzględniając undefined)
         const isSameValues = currentRange &&
           currentRange.cta === change.cta &&
           currentRange.ctd === change.ctd &&
           currentRange.min === change.min;
 
-        // Sprawdź czy to kolejny dzień w kalendarzu
+        // Używamy helpera isNextDay
         const isNext = currentRange && isNextDay(currentRange.till, change.date);
 
         if (isSameValues && isNext) {
           // Extend current range
           currentRange.till = change.date;
         } else {
-          // Push old range if exists
           if (currentRange) ranges.push(currentRange);
 
-          // Start new range
+          // Start new range (delta mode)
           currentRange = {
             from: change.date,
             till: change.date
           };
-          // Dodajemy tylko to, co faktycznie się zmienia (delta)
           if (change.cta !== undefined) currentRange.cta = change.cta;
           if (change.ctd !== undefined) currentRange.ctd = change.ctd;
           if (change.min !== undefined) currentRange.min = change.min;
         }
       }
 
-      // Push the last range
       if (currentRange) ranges.push(currentRange);
 
-      // --- KLUCZOWA POPRAWKA ---
-      // Filtrujemy plany cenowe. Musimy wysłać update tylko dla RatePlanów
-      // które należą do aktualnie przetwarzanego TypeID.
-      // Zakładam, że w obiekcie ratePlan masz pole łączące go z type_id (np. room_type_id, parent_id lub type_id)
-      // Jeśli Twoja struktura ratePlan nie ma type_id, musisz tu użyć odpowiedniego mapowania.
+      // 2. Filtrowanie Rate Planów - wysyłamy tylko te pasujące do aktualnego type_id
+      // UPEWNIJ SIĘ, że 'rp.type_id' lub 'rp.parent_id' to właściwe pole w Twoim obiekcie allRatePlans
       const relevantRatePlans = allRatePlans.filter(rp => 
-        // Tutaj sprawdź jak nazywa się pole w Twoim obiekcie (np. rp.room_type_id, rp.type_id itp.)
-        // Konwertujemy na stringi do porównania dla pewności
         String(rp.type_id || rp.parent_id) === String(currentTypeId)
       );
 
       for (const ratePlan of relevantRatePlans)  {
         payloadArray.push({
           type_id: currentTypeId, // Integer
-          rate_id: parseInt(ratePlan.external_id!, 10), // Integer (fix dla API)
+          rate_id: parseInt(ratePlan.external_id!, 10), // Integer - naprawia błąd stringa
           mode: 'delta',
           prices: ranges
         });
       }
     }
 
-    // --- Walidacja przed wysłaniem ---
     if (payloadArray.length === 0) {
-        console.log('ℹ️ No changes detected to send.');
-        return; 
+      console.log('ℹ️ No changes detected to send.');
+      return; 
     }
 
     // Send all changes in one request to Hotres
@@ -570,6 +559,9 @@ export const CalendarView: React.FC = () => {
 
     console.log('📤 Sending to Hotres:', JSON.stringify(payloadArray, null, 2));
 
+    // Tutaj zachowałem nazwę 'response'. 
+    // Jeśli nadal masz błąd "Identifier 'response' has already been declared",
+    // sprawdź czy wyżej w tej funkcji nie masz innej zmiennej 'const response'.
     const response = await fetch(
       'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/update-hotres-prices',
       {
