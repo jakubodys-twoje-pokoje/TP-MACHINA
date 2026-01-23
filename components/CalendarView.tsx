@@ -174,6 +174,7 @@ export const CalendarView: React.FC = () => {
     }
 
     // Create map keyed by unit_id + date
+    // NOTE: If multiple rate_plans exist for same unit+date, last one wins
     const pricesMap = new Map<string, Price>();
     data?.forEach(price => {
       const key = `${price.unit_id}_${price.date}`;
@@ -181,6 +182,15 @@ export const CalendarView: React.FC = () => {
     });
 
     console.log('📊 Prices map size:', pricesMap.size);
+
+    // Debug: Check if we have data for visible dates
+    const today = new Date().toISOString().split('T')[0];
+    const sampleKey = unitIds.length > 0 ? `${unitIds[0]}_${today}` : null;
+    if (sampleKey) {
+      const samplePrice = pricesMap.get(sampleKey);
+      console.log(`📊 Sample price for today (${today}):`, samplePrice);
+    }
+
     setPricesData(pricesMap);
   };
 

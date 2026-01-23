@@ -42,18 +42,18 @@ serve(async (req) => {
     // Get property to fetch oid
     const { data: property, error: propError } = await supabaseClient
       .from('properties')
-      .select('external_id')
+      .select('hotres_id')
       .eq('id', property_id)
       .single();
 
-    if (propError || !property?.external_id) {
+    if (propError || !property?.hotres_id) {
       return new Response(
-        JSON.stringify({ error: 'Property not found or missing external_id' }),
+        JSON.stringify({ error: 'Property not found or missing hotres_id' }),
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const oid = property.external_id;
+    const oid = property.hotres_id;
 
     // Build api_updateprices URL with parameters
     let url = `https://panel.hotres.pl/api_updateprices?user=${HOTRES_API_USER}&password=${HOTRES_API_PASSWORD}&oid=${oid}&type_id=${type_id}&from=${from}&till=${till}`;
