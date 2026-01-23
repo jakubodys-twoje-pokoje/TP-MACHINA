@@ -505,28 +505,30 @@ export const CalendarView: React.FC = () => {
         } else {
           // Start new range
           if (currentRange) ranges.push(currentRange);
+
+          // Build range with only defined values (delta mode - only send what changed)
           currentRange = {
             from: change.date,
-            till: change.date,
-            cta: change.cta,
-            ctd: change.ctd,
-            min: change.min
+            till: change.date
           };
+          if (change.cta !== undefined) currentRange.cta = change.cta;
+          if (change.ctd !== undefined) currentRange.ctd = change.ctd;
+          if (change.min !== undefined) currentRange.min = change.min;
         }
       }
 
       if (currentRange) ranges.push(currentRange);
 
-      // Send same changes to ALL rate_plans for this type_id
+      // Try sending rate_id as comma-separated string for all rate plans
       // CTA/CTD/MIN are shared across all rate plans for same unit type
-      for (const ratePlan of allRatePlans) {
-        payloadArray.push({
-          type_id: typeId,
-          rate_id: ratePlan.external_id!,
-          mode: 'delta',
-          prices: ranges
-        });
-      }
+      const allRateIds = allRatePlans.map(rp => rp.external_id).join(',');
+
+      payloadArray.push({
+        type_id: typeId,
+        rate_id: allRateIds,
+        mode: 'delta',
+        prices: ranges
+      });
     }
 
     // Send all changes in one request to Hotres
