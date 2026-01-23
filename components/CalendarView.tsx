@@ -267,8 +267,8 @@ export const CalendarView: React.FC = () => {
   const handleSyncToHotres = async () => {
     // Check limit
     const currentData = getHotresSyncCount();
-    if (currentData.count >= 15) {
-      alert('Osiągnięto limit 15 synchronizacji na godzinę. Spróbuj ponownie za chwilę.');
+    if (currentData.count >= 10) {
+      alert('Osiągnięto limit 10 synchronizacji na godzinę. Spróbuj ponownie za chwilę.');
       return;
     }
 
@@ -292,7 +292,7 @@ export const CalendarView: React.FC = () => {
     );
     setReadNotificationIds(new Set());
 
-    alert(`Wysłano na Hotres. Pozostało ${15 - newCount} synchronizacji w tej godzinie.`);
+    alert(`Wysłano na Hotres. Pozostało ${10 - newCount} synchronizacji w tej godzinie.`);
   };
 
   const triggerAvailabilitySync = async () => {
@@ -568,7 +568,7 @@ export const CalendarView: React.FC = () => {
                   </span>
                 </button>
                 <div className="text-xs text-slate-400 whitespace-nowrap">
-                  Pozostało: <span className="font-bold text-yellow-400">{15 - hotresSyncCount.count}</span>/15
+                  Pozostało: <span className="font-bold text-yellow-400">{10 - hotresSyncCount.count}</span>/10
                 </div>
               </div>
             )}
