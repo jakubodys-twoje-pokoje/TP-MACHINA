@@ -730,6 +730,7 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     }
 
     console.log(`  Found ${ratePlans.length} "Booking" rate plan(s) for ${property.name}`)
+    console.log(`  Booking rate plan external_id(s):`, ratePlans.map(rp => rp.external_id))
 
     // Fetch prices from Hotres - from 20 January to end of 2026
     const fromDate = '2026-01-20'
@@ -740,8 +741,14 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     const pricesData = JSON.parse(rawResponse)
 
     if (!Array.isArray(pricesData)) {
-      console.log(`  Invalid prices response for ${property.name}`)
+      console.log(`  Invalid prices response for ${property.name}:`, rawResponse.substring(0, 200))
       return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
+    }
+
+    console.log(`  Hotres returned ${pricesData.length} rate plan entries`)
+    if (pricesData.length > 0) {
+      const allRateIds = [...new Set(pricesData.map(item => String(item.rate_id).trim()))]
+      console.log(`  Hotres rate_ids in response:`, allRateIds)
     }
 
     // Create mappings
@@ -761,6 +768,7 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
 
     // Process prices
     const pricesToUpsert: any[] = []
+    let skippedCount = 0
 
     for (const item of pricesData) {
       const typeId = String(item.type_id).trim()
@@ -769,7 +777,10 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       const unitId = unitMap.get(typeId)
       const ratePlanId = ratePlanMap.get(rateId)
 
-      if (!unitId || !ratePlanId) continue
+      if (!unitId || !ratePlanId) {
+        skippedCount++
+        continue
+      }
 
       if (item.dates && Array.isArray(item.dates)) {
         for (const d of item.dates) {
@@ -787,6 +798,8 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       }
     }
 
+    console.log(`  Matched ${pricesToUpsert.length} price records, skipped ${skippedCount} (no matching unit or rate plan)`)
+
     // Upsert prices
     if (pricesToUpsert.length > 0) {
       const BATCH_SIZE = 500
@@ -800,6 +813,8 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
         }
       }
       console.log(`  ✓ Synced ${pricesToUpsert.length} price records for ${property.name}`)
+    } else {
+      console.log(`  ⚠️ No price records to sync for ${property.name} (rate_id from Hotres doesn't match Booking rate plan external_id)`)
     }
 
     return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
