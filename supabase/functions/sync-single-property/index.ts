@@ -200,11 +200,14 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     // Fetch prices from Hotres - fixed date range: 20.01.2026 to 31.12.2026
     const fromDate = '2026-01-20'
     const tillDate = '2026-12-31'
+    const targetRatePlanId = targetRatePlan.id
+    const targetRateExternalId = targetRatePlan.external_id
 
-    const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`
+    const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&rate_id=${targetRateExternalId}&from=${fromDate}&till=${tillDate}`
 
     console.log(`  📅 Fetching prices from ${fromDate} to ${tillDate}`)
     console.log(`  🔗 URL: ${pricesUrl.substring(0, 80)}...`)
+    console.log(`  📋 Using rate_id: ${targetRateExternalId}`)
 
     const rawResponse = await fetchFromHotres(pricesUrl)
     console.log(`  ✓ Got response, length: ${rawResponse.length} chars`)
@@ -213,55 +216,34 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     console.log(`  ✓ Parsed JSON, type: ${Array.isArray(pricesData) ? 'array' : typeof pricesData}`)
 
     if (!Array.isArray(pricesData)) {
-      console.log(`  ❌ Invalid prices response for ${property.name} (not an array):`, typeof pricesData)
+      console.log(`  ❌ Invalid prices response (not an array):`, typeof pricesData)
       return { recordsCompared: 0, changesDetected: 0 }
     }
 
-    console.log(`  ✓ Hotres API returned ${pricesData.length} rate plan entries`)
+    console.log(`  ✓ Hotres API returned ${pricesData.length} units`)
 
-    // Log sample of what Hotres returned
-    if (pricesData.length > 0) {
-      const sampleItem = pricesData[0]
-      console.log(`  📊 Sample Hotres entry:`, {
-        type_id: sampleItem.type_id,
-        rate_id: sampleItem.rate_id,
-        dates_count: sampleItem.dates?.length || 0,
-        sample_date: sampleItem.dates?.[0]
-      })
-    }
-
-    // Create mappings
-    const unitMap = new Map<string, string>() // type_id -> unit_id
+    // Create mapping: external_type_id -> unit
+    const unitMap = new Map<string, any>()
     units.forEach(u => {
       if (u.external_type_id) {
         unitMap.set(String(u.external_type_id).trim(), u.id)
       }
     })
 
-    // All Hotres data will be saved to the target rate plan
-    const targetRatePlanId = targetRatePlan.id
-
-    // Process prices - group by unit+date and take first available values
+    // Process prices - group by unit+date
     const pricesByUnitDate = new Map<string, any>()
-
-    console.log(`  🔄 Processing ${pricesData.length} entries from Hotres...`)
 
     for (const item of pricesData) {
       const typeId = String(item.type_id).trim()
       const unitId = unitMap.get(typeId)
 
-      if (!unitId) {
-        console.log(`  ⚠️ No unit mapping for type_id: ${typeId}`)
-        continue
-      }
+      if (!unitId) continue
 
       if (item.dates && Array.isArray(item.dates)) {
-        console.log(`  🔍 Processing type_id ${typeId} (unit ${unitId}): ${item.dates.length} dates`)
-
         for (const d of item.dates) {
           const key = `${unitId}:${d.date}`
 
-          // Take first available data for each unit+date combination
+          // Store price data
           if (!pricesByUnitDate.has(key)) {
             pricesByUnitDate.set(key, {
               unit_id: unitId,

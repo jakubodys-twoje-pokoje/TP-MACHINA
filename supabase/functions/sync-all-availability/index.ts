@@ -741,11 +741,14 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     // Fetch prices from Hotres - fixed date range: 20.01.2026 to 31.12.2026
     const fromDate = '2026-01-20'
     const tillDate = '2026-12-31'
+    const targetRatePlanId = targetRatePlan.id
+    const targetRateExternalId = targetRatePlan.external_id
 
-    const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`
+    const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&rate_id=${targetRateExternalId}&from=${fromDate}&till=${tillDate}`
 
     console.log(`  📅 Fetching prices from ${fromDate} to ${tillDate}`)
     console.log(`  🔗 URL: ${pricesUrl.substring(0, 80)}...`)
+    console.log(`  📋 Using rate_id: ${targetRateExternalId}`)
 
     const rawResponse = await fetchFromHotres(pricesUrl)
     console.log(`  ✓ Got response, length: ${rawResponse.length} chars`)
@@ -778,9 +781,6 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
         unitMap.set(String(u.external_type_id).trim(), u.id)
       }
     })
-
-    // All Hotres data will be saved to the target rate plan
-    const targetRatePlanId = targetRatePlan.id
 
     // Process prices - group by unit+date and take first available values
     // CTA/CTD/MIN are the same across all rate plans in Hotres, so we take from any rate_id
