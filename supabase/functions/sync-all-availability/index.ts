@@ -772,31 +772,37 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
         const rawResponse = await fetchFromHotres(pricesUrl)
         let pricesData = JSON.parse(rawResponse)
 
-        // Hotres returns array with single object: [{rate_id, type_id, dates: [...]}]
-        if (Array.isArray(pricesData) && pricesData.length > 0) {
-          pricesData = pricesData[0]
+        // Hotres returns array: [{rate_id, type_id, dates: [...]}, ...]
+        if (!Array.isArray(pricesData)) {
+          pricesData = [pricesData]
         }
 
-        // Now check for dates array
-        if (pricesData && pricesData.dates && Array.isArray(pricesData.dates)) {
-          for (const d of pricesData.dates) {
-            const key = `${unit.id}:${d.date}`
+        let processedDates = 0
+        // Process all items in array (usually just one, but could be multiple rate plans)
+        for (const item of pricesData) {
+          if (item && item.dates && Array.isArray(item.dates)) {
+            for (const d of item.dates) {
+              const key = `${unit.id}:${d.date}`
 
-            // Store price data
-            if (!pricesByUnitDate.has(key)) {
-              pricesByUnitDate.set(key, {
-                unit_id: unit.id,
-                rate_id: targetRatePlanId,
-                date: d.date,
-                price: d.price ? parseFloat(d.price) : null,
-                min: d.min ? parseInt(d.min) : null,
-                max: d.max ? parseInt(d.max) : null,
-                cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
-                ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
-              })
+              // Store price data (keep first occurrence only)
+              if (!pricesByUnitDate.has(key)) {
+                pricesByUnitDate.set(key, {
+                  unit_id: unit.id,
+                  rate_id: targetRatePlanId,
+                  date: d.date,
+                  price: d.price ? parseFloat(d.price) : null,
+                  min: d.min ? parseInt(d.min) : null,
+                  max: d.max ? parseInt(d.max) : null,
+                  cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
+                  ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
+                })
+                processedDates++
+              }
             }
           }
+        }
 
+        if (processedDates > 0) {
           successfulFetches++
         } else {
           failedFetches++
