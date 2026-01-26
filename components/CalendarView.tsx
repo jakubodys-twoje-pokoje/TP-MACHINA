@@ -20,9 +20,12 @@ export const CalendarView: React.FC = () => {
   const [pricesData, setPricesData] = useState<Map<string, Price>>(new Map());
   const [priceChanges, setPriceChanges] = useState<Map<string, Partial<Price>>>(new Map());
 
-  // Hotres sync counter
-  const getHotresSyncCount = (): { count: number; hourStart: number } => {
-    const stored = localStorage.getItem('hotres_sync_count');
+  // Hotres sync counter - separate for each property
+  const getHotresSyncCount = (propertyId: string | null): { count: number; hourStart: number } => {
+    if (!propertyId) return { count: 0, hourStart: Date.now() };
+
+    const key = `hotres_sync_count_${propertyId}`;
+    const stored = localStorage.getItem(key);
     if (!stored) return { count: 0, hourStart: Date.now() };
 
     const data = JSON.parse(stored);
@@ -37,7 +40,7 @@ export const CalendarView: React.FC = () => {
     return data;
   };
 
-  const [hotresSyncCount, setHotresSyncCount] = useState(getHotresSyncCount());
+  const [hotresSyncCount, setHotresSyncCount] = useState(getHotresSyncCount(propertyId));
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
@@ -149,7 +152,8 @@ export const CalendarView: React.FC = () => {
 
     const unitIds = units.map(u => u.id);
 
-    console.log('📊 Fetching prices for date range:', startDate.toISOString().split('T')[0], 'to', endDate.toISOString().split('T')[0]);
+    console.log('📊 Fetching prices for property:', property?.name, `(${property?.id})`);
+    console.log('📊 Date range:', startDate.toISOString().split('T')[0], 'to', endDate.toISOString().split('T')[0]);
     console.log('📊 Unit IDs:', unitIds);
 
     // Check if rate_plans exist for this property
@@ -364,10 +368,12 @@ export const CalendarView: React.FC = () => {
   };
 
   const handleSyncToHotres = async () => {
-    // Check limit
-    const currentData = getHotresSyncCount();
+    if (!property) return;
+
+    // Check limit - separate for each property
+    const currentData = getHotresSyncCount(property.id);
     if (currentData.count >= 10) {
-      alert('Osiągnięto limit 10 synchronizacji na godzinę. Spróbuj ponownie za chwilę.');
+      alert('Osiągnięto limit 10 synchronizacji na godzinę dla tego obiektu. Spróbuj ponownie za chwilę.');
       return;
     }
 
@@ -395,10 +401,11 @@ export const CalendarView: React.FC = () => {
         await sendPriceChangesToHotres();
       }
 
-      // Update counter
+      // Update counter for this property
       const newCount = currentData.count + 1;
       const newData = { count: newCount, hourStart: currentData.hourStart };
-      localStorage.setItem('hotres_sync_count', JSON.stringify(newData));
+      const key = `hotres_sync_count_${property.id}`;
+      localStorage.setItem(key, JSON.stringify(newData));
       setHotresSyncCount(newData);
 
       // Remove read notifications from view
