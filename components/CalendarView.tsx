@@ -143,12 +143,12 @@ export const CalendarView: React.FC = () => {
   const fetchPricesData = async () => {
     if (units.length === 0) return;
 
-    // Calculate date range: 1 month before, 2 months after (~90 days total)
-    const startDate = new Date(selectedDate);
-    startDate.setDate(startDate.getDate() - 30);
+    // Calculate date range: full year from today
+    const today = new Date();
+    const startDate = new Date(today);
 
-    const endDate = new Date(selectedDate);
-    endDate.setDate(endDate.getDate() + 60);
+    const endDate = new Date(today);
+    endDate.setFullYear(today.getFullYear() + 1);
 
     const unitIds = units.map(u => u.id);
 
@@ -193,13 +193,23 @@ export const CalendarView: React.FC = () => {
     console.log('📊 Prices data fetched:', data?.length || 0, 'records');
     if (data && data.length > 0) {
       console.log('📊 Sample price records:', data.slice(0, 3));
+      console.log('📊 First record keys:', Object.keys(data[0]));
+      console.log('📊 First record cta/ctd/min:', {
+        cta: data[0].cta,
+        ctd: data[0].ctd,
+        min: data[0].min,
+        date: data[0].date
+      });
+    } else {
+      console.warn('⚠️ NO PRICES DATA RETURNED FROM DATABASE');
+      console.warn('⚠️ Check if data exists in prices table for these unit_ids and date range');
     }
 
     // Show sample with CTA/CTD/MIN values
     const withRestrictions = data?.filter(p => p.cta !== null || p.ctd !== null || p.min !== null) || [];
     console.log('📊 Records with CTA/CTD/MIN:', withRestrictions.length);
     if (withRestrictions.length > 0) {
-      console.log('📊 Sample:', withRestrictions.slice(0, 3));
+      console.log('📊 Sample with restrictions:', withRestrictions.slice(0, 3));
     }
 
     // Create map keyed by unit_id + date
