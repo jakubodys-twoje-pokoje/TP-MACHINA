@@ -744,76 +744,55 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     const targetRatePlanId = targetRatePlan.id
     const targetRateExternalId = targetRatePlan.external_id
 
-    const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&rate_id=${targetRateExternalId}&from=${fromDate}&till=${tillDate}`
-
     console.log(`  📅 Fetching prices from ${fromDate} to ${tillDate}`)
-    console.log(`  🔗 URL: ${pricesUrl.substring(0, 80)}...`)
-    console.log(`  📋 Using rate_id: ${targetRateExternalId}`)
+    console.log(`  🔄 Will fetch prices for ${units.length} units (rate_id: ${targetRateExternalId})`)
 
-    const rawResponse = await fetchFromHotres(pricesUrl)
-    console.log(`  ✓ Got response, length: ${rawResponse.length} chars`)
-
-    const pricesData = JSON.parse(rawResponse)
-    console.log(`  ✓ Parsed JSON, type: ${Array.isArray(pricesData) ? 'array' : typeof pricesData}`)
-
-    if (!Array.isArray(pricesData)) {
-      console.log(`  ❌ Invalid prices response for ${property.name} (not an array):`, typeof pricesData)
-      return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
-    }
-
-    console.log(`  ✓ Hotres API returned ${pricesData.length} rate plan entries`)
-
-    // Log sample of what Hotres returned
-    if (pricesData.length > 0) {
-      const sampleItem = pricesData[0]
-      console.log(`  📊 Sample Hotres entry:`, {
-        type_id: sampleItem.type_id,
-        rate_id: sampleItem.rate_id,
-        dates_count: sampleItem.dates?.length || 0,
-        sample_date: sampleItem.dates?.[0]
-      })
-    }
-
-    // Create mappings
-    const unitMap = new Map<string, string>() // type_id -> unit_id
-    units.forEach(u => {
-      if (u.external_type_id) {
-        unitMap.set(String(u.external_type_id).trim(), u.id)
-      }
-    })
-
-    // Process prices - group by unit+date and take first available values
-    // CTA/CTD/MIN are the same across all rate plans in Hotres, so we take from any rate_id
+    // Collect all price records
     const pricesByUnitDate = new Map<string, any>()
+    let successfulFetches = 0
+    let failedFetches = 0
 
-    console.log(`  🔄 Processing ${pricesData.length} entries from Hotres...`)
+    // Fetch prices for each unit separately (API requires type_id + rate_id)
+    for (const unit of units) {
+      const typeId = unit.external_type_id
 
-    for (const item of pricesData) {
-      const typeId = String(item.type_id).trim()
-      const unitId = unitMap.get(typeId)
+      try {
+        const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&type_id=${typeId}&rate_id=${targetRateExternalId}&from=${fromDate}&till=${tillDate}`
 
-      if (!unitId) continue
+        const rawResponse = await fetchFromHotres(pricesUrl)
+        const pricesData = JSON.parse(rawResponse)
 
-      if (item.dates && Array.isArray(item.dates)) {
-        for (const d of item.dates) {
-          const key = `${unitId}:${d.date}`
+        // Hotres returns single object with dates array (not array of objects)
+        if (pricesData && pricesData.dates && Array.isArray(pricesData.dates)) {
+          for (const d of pricesData.dates) {
+            const key = `${unit.id}:${d.date}`
 
-          // Take first available data for each unit+date combination
-          if (!pricesByUnitDate.has(key)) {
-            pricesByUnitDate.set(key, {
-              unit_id: unitId,
-              rate_id: targetRatePlanId,
-              date: d.date,
-              price: d.price ? parseFloat(d.price) : null,
-              min: d.min ? parseInt(d.min) : null,
-              max: d.max ? parseInt(d.max) : null,
-              cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
-              ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
-            })
+            // Store price data
+            if (!pricesByUnitDate.has(key)) {
+              pricesByUnitDate.set(key, {
+                unit_id: unit.id,
+                rate_id: targetRatePlanId,
+                date: d.date,
+                price: d.price ? parseFloat(d.price) : null,
+                min: d.min ? parseInt(d.min) : null,
+                max: d.max ? parseInt(d.max) : null,
+                cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
+                ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
+              })
+            }
           }
+
+          successfulFetches++
+        } else {
+          failedFetches++
         }
+      } catch (error: any) {
+        console.error(`  ❌ Failed to fetch prices for type_id ${typeId}:`, error.message)
+        failedFetches++
       }
     }
+
+    console.log(`  📊 Fetch summary: ✓${successfulFetches} success, ✗${failedFetches} failed`)
 
     const pricesToUpsert = Array.from(pricesByUnitDate.values())
     console.log(`  📦 Collected ${pricesToUpsert.length} unique price records (unit+date combinations)`)
