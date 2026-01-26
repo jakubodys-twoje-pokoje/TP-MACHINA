@@ -741,7 +741,12 @@ export const CalendarView: React.FC = () => {
   const triggerAvailabilitySync = async () => {
     if (syncing) return;
 
-    if (!confirm('Czy na pewno chcesz wymusić synchronizację dostępności? To zsynchronizuje wszystkie obiekty.')) {
+    if (!property) {
+      alert('Najpierw wybierz obiekt');
+      return;
+    }
+
+    if (!confirm(`Czy na pewno chcesz zsynchronizować obiekt "${property.name}"?\n\nZosataną zsynchronizowane:\n• Dostępność (availability)\n• Ceny i restrykcje (CTA/CTD/MIN)`)) {
       return;
     }
 
@@ -753,15 +758,17 @@ export const CalendarView: React.FC = () => {
         return;
       }
 
+      console.log(`🚀 Starting sync for property: ${property.name} (${property.id})`);
+
       const response = await fetch(
-        'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/sync-all-availability',
+        'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/sync-single-property',
         {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({})
+          body: JSON.stringify({ property_id: property.id })
         }
       );
 
@@ -773,7 +780,16 @@ export const CalendarView: React.FC = () => {
       const result = await response.json();
       console.log('Manual sync result:', result);
 
-      alert(`Synchronizacja zakończona!\n✓ Sukces: ${result.success_count}\n✗ Błędy: ${result.error_count}`);
+      // Format detailed result message
+      const availMsg = result.availability.success
+        ? `✓ Availability: ${result.availability.recordsCompared} rekordów`
+        : `✗ Availability: ${result.availability.error}`;
+
+      const pricesMsg = result.prices.success
+        ? `✓ Prices: ${result.prices.recordsCompared} rekordów`
+        : `✗ Prices: ${result.prices.error}`;
+
+      alert(`Synchronizacja zakończona dla: ${property.name}\n\n${availMsg}\n${pricesMsg}\n\nSprawdź konsolę przeglądarki (F12) aby zobaczyć szczegółowe logi.`);
 
       // Refresh availability and prices data after sync
       if (units.length > 0) {
@@ -923,19 +939,19 @@ export const CalendarView: React.FC = () => {
             {/* Manual Sync Button */}
             <button
               onClick={triggerAvailabilitySync}
-              disabled={syncing}
+              disabled={syncing || !property}
               className="flex items-center gap-2 px-3 py-2 text-xs bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium"
-              title="Wymuś synchronizację dostępności dla wszystkich obiektów"
+              title={property ? `Synchronizuj obiekt: ${property.name}` : 'Wybierz obiekt aby zsynchronizować'}
             >
               {syncing ? (
                 <>
                   <RefreshCw size={14} className="animate-spin" />
-                  Sync...
+                  Syncowanie...
                 </>
               ) : (
                 <>
                   <RefreshCw size={14} />
-                  Sync
+                  Sync obiekt
                 </>
               )}
             </button>
