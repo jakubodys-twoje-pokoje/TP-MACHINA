@@ -230,6 +230,8 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
           const rawResponse = await fetchFromHotres(pricesUrl)
           const pricesData = JSON.parse(rawResponse)
 
+          console.log(`  📥 Response for type_id ${typeId} (${range.label}):`, JSON.stringify(pricesData).substring(0, 200))
+
           // Hotres returns single object with dates array (not array of objects)
           if (pricesData && pricesData.dates && Array.isArray(pricesData.dates)) {
             for (const d of pricesData.dates) {
