@@ -698,7 +698,7 @@ async function syncPropertyAvailability(
 // Sync prices/restrictions for a single property
 async function syncPropertyPrices(property: Property, supabaseClient: any): Promise<{ recordsCompared: number; changesDetected: number; notificationsSent: number }> {
   try {
-    console.log(`💰 Syncing prices for ${property.name}...`)
+    console.log(`💰 Syncing prices for ${property.name} (${property.id})...`)
 
     const oid = property.hotres_id
     const apiUser = 'admin@twojepokoje.com.pl'
@@ -745,9 +745,13 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`
 
     console.log(`  📅 Fetching prices from ${fromDate} to ${tillDate}`)
+    console.log(`  🔗 URL: ${pricesUrl.substring(0, 80)}...`)
 
     const rawResponse = await fetchFromHotres(pricesUrl)
+    console.log(`  ✓ Got response, length: ${rawResponse.length} chars`)
+
     const pricesData = JSON.parse(rawResponse)
+    console.log(`  ✓ Parsed JSON, type: ${Array.isArray(pricesData) ? 'array' : typeof pricesData}`)
 
     if (!Array.isArray(pricesData)) {
       console.log(`  ❌ Invalid prices response for ${property.name} (not an array):`, typeof pricesData)
@@ -847,6 +851,8 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
   } catch (error: any) {
     console.error(`❌ Error syncing prices for ${property.name}:`, error.message)
+    console.error(`❌ Stack trace:`, error.stack)
+    console.error(`❌ Full error:`, JSON.stringify(error, null, 2))
     return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
   }
 }
