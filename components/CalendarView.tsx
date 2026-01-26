@@ -143,13 +143,9 @@ export const CalendarView: React.FC = () => {
   const fetchPricesData = async () => {
     if (units.length === 0) return;
 
-    // Calculate date range: ±12 months from today
-    const today = new Date();
-    const startDate = new Date(today);
-    startDate.setFullYear(today.getFullYear() - 1);
-
-    const endDate = new Date(today);
-    endDate.setFullYear(today.getFullYear() + 1);
+    // Fixed date range: 20.01.2026 to 31.12.2026
+    const startDate = new Date('2026-01-20');
+    const endDate = new Date('2026-12-31');
 
     const unitIds = units.map(u => u.id);
 
