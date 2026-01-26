@@ -586,7 +586,32 @@ export const CalendarView: React.FC = () => {
     console.log(`📦 FINAL PAYLOAD (${payloadArray.length} entries):`);
     console.log(JSON.stringify(payloadArray, null, 2));
 
-    // Send all changes in one request to Hotres
+    // FIRST: Save changes to database (before sending to Hotres)
+    console.log('💾 Saving changes to database first...');
+    for (const [typeId, group] of changesByTypeId) {
+      const unit = units.find(u => u.external_type_id === typeId);
+      if (!unit) continue;
+
+      for (const change of group) {
+        const priceKey = `${unit.id}_${change.date}`;
+        const existingPrice = pricesData.get(priceKey);
+
+        if (existingPrice) {
+          await supabase
+            .from('prices')
+            .update({
+              cta: change.cta !== undefined ? change.cta : existingPrice.cta,
+              ctd: change.ctd !== undefined ? change.ctd : existingPrice.ctd,
+              min: change.min !== undefined ? change.min : existingPrice.min
+            })
+            .eq('id', existingPrice.id);
+        }
+      }
+    }
+    console.log('✅ Database updated successfully');
+
+    // THEN: Send all changes to Hotres
+    console.log('📤 Sending changes to Hotres...');
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Musisz być zalogowany');
 
@@ -615,28 +640,6 @@ export const CalendarView: React.FC = () => {
 
     console.log('✅ Hotres API responded successfully');
     console.log('📥 Hotres raw response:', responseData.hotres_response);
-
-    // Update database with all changes
-    for (const [typeId, group] of changesByTypeId) {
-      const unit = units.find(u => u.external_type_id === typeId);
-      if (!unit) continue;
-
-      for (const change of group) {
-        const priceKey = `${unit.id}_${change.date}`;
-        const existingPrice = pricesData.get(priceKey);
-
-        if (existingPrice) {
-          await supabase
-            .from('prices')
-            .update({
-              cta: change.cta !== undefined ? change.cta : existingPrice.cta,
-              ctd: change.ctd !== undefined ? change.ctd : existingPrice.ctd,
-              min: change.min !== undefined ? change.min : existingPrice.min
-            })
-            .eq('id', existingPrice.id);
-        }
-      }
-    }
   };
 
   const handleCtaChange = (unitId: string, dateStr: string, checked: boolean) => {

@@ -738,13 +738,23 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       all: allRatePlans.map(rp => rp.name)
     })
 
-    // Fetch prices from Hotres - fixed date range: 20.01.2026 to 31.12.2026
-    const fromDate = '2026-01-20'
-    const tillDate = '2026-12-31'
+    // Fetch prices from Hotres - alternating ranges (180 day API limit)
+    // Auto sync alternates: even runs = first half, odd runs = second half
+    // Range 1: 2026-01-20 to 2026-07-18 (180 days)
+    // Range 2: 2026-07-19 to 2026-12-31 (165 days)
+
     const targetRatePlanId = targetRatePlan.id
     const targetRateExternalId = targetRatePlan.external_id
 
-    console.log(`  📅 Fetching prices from ${fromDate} to ${tillDate}`)
+    // Determine which range to sync based on current minute (alternates every 3 minutes)
+    const currentMinute = new Date().getMinutes()
+    const useFirstHalf = currentMinute % 6 < 3 // First half for minutes 0-2, 6-8, 12-14, etc.
+
+    const range = useFirstHalf
+      ? { from: '2026-01-20', till: '2026-07-18', label: 'first half' }
+      : { from: '2026-07-19', till: '2026-12-31', label: 'second half' }
+
+    console.log(`  📅 Fetching prices ${range.label}: ${range.from} to ${range.till}`)
     console.log(`  🔄 Will fetch prices for ${units.length} units (rate_id: ${targetRateExternalId})`)
 
     // Collect all price records
@@ -757,7 +767,7 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       const typeId = unit.external_type_id
 
       try {
-        const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&type_id=${typeId}&rate_id=${targetRateExternalId}&from=${fromDate}&till=${tillDate}`
+        const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&type_id=${typeId}&rate_id=${targetRateExternalId}&from=${range.from}&till=${range.till}`
 
         const rawResponse = await fetchFromHotres(pricesUrl)
         const pricesData = JSON.parse(rawResponse)
@@ -787,7 +797,7 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
           failedFetches++
         }
       } catch (error: any) {
-        console.error(`  ❌ Failed to fetch prices for type_id ${typeId}:`, error.message)
+        console.error(`  ❌ Failed to fetch ${range.label} for type_id ${typeId}:`, error.message)
         failedFetches++
       }
     }

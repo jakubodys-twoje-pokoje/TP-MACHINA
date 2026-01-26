@@ -197,15 +197,18 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       all: allRatePlans.map(rp => rp.name)
     })
 
-    // Fetch prices from Hotres - fixed date range: 20.01.2026 to 31.12.2026
-    const fromDate = '2026-01-20'
-    const tillDate = '2026-12-31'
+    // Fetch prices from Hotres - split into two ranges (180 day API limit)
+    // Range 1: 2026-01-20 to 2026-07-18 (180 days)
+    // Range 2: 2026-07-19 to 2026-12-31 (165 days)
+    const dateRanges = [
+      { from: '2026-01-20', till: '2026-07-18', label: 'first half' },
+      { from: '2026-07-19', till: '2026-12-31', label: 'second half' }
+    ]
+
     const targetRatePlanId = targetRatePlan.id
     const targetRateExternalId = targetRatePlan.external_id
 
-    const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&rate_id=${targetRateExternalId}&from=${fromDate}&till=${tillDate}`
-
-    console.log(`  📅 Fetching prices from ${fromDate} to ${tillDate}`)
+    console.log(`  📅 Fetching prices in 2 ranges (180 day API limit)`)
     console.log(`  🔄 Will fetch prices for ${units.length} units (rate_id: ${targetRateExternalId})`)
 
     // Collect all price records
@@ -213,48 +216,48 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     let successfulFetches = 0
     let failedFetches = 0
 
-    // Fetch prices for each unit separately (API requires type_id + rate_id)
-    for (const unit of units) {
-      const typeId = unit.external_type_id
+    // Fetch prices for each date range
+    for (const range of dateRanges) {
+      console.log(`  📆 Fetching ${range.label}: ${range.from} to ${range.till}`)
 
-      try {
-        const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&type_id=${typeId}&rate_id=${targetRateExternalId}&from=${fromDate}&till=${tillDate}`
+      // Fetch prices for each unit separately (API requires type_id + rate_id)
+      for (const unit of units) {
+        const typeId = unit.external_type_id
 
-        console.log(`  📡 Fetching unit type_id ${typeId}...`)
+        try {
+          const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&type_id=${typeId}&rate_id=${targetRateExternalId}&from=${range.from}&till=${range.till}`
 
-        const rawResponse = await fetchFromHotres(pricesUrl)
-        const pricesData = JSON.parse(rawResponse)
+          const rawResponse = await fetchFromHotres(pricesUrl)
+          const pricesData = JSON.parse(rawResponse)
 
-        // Hotres returns single object with dates array (not array of objects)
-        if (pricesData && pricesData.dates && Array.isArray(pricesData.dates)) {
-          console.log(`  ✓ Got ${pricesData.dates.length} dates for type_id ${typeId}`)
+          // Hotres returns single object with dates array (not array of objects)
+          if (pricesData && pricesData.dates && Array.isArray(pricesData.dates)) {
+            for (const d of pricesData.dates) {
+              const key = `${unit.id}:${d.date}`
 
-          for (const d of pricesData.dates) {
-            const key = `${unit.id}:${d.date}`
-
-            // Store price data
-            if (!pricesByUnitDate.has(key)) {
-              pricesByUnitDate.set(key, {
-                unit_id: unit.id,
-                rate_id: targetRatePlanId,
-                date: d.date,
-                price: d.price ? parseFloat(d.price) : null,
-                min: d.min ? parseInt(d.min) : null,
-                max: d.max ? parseInt(d.max) : null,
-                cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
-                ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
-              })
+              // Store price data
+              if (!pricesByUnitDate.has(key)) {
+                pricesByUnitDate.set(key, {
+                  unit_id: unit.id,
+                  rate_id: targetRatePlanId,
+                  date: d.date,
+                  price: d.price ? parseFloat(d.price) : null,
+                  min: d.min ? parseInt(d.min) : null,
+                  max: d.max ? parseInt(d.max) : null,
+                  cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
+                  ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
+                })
+              }
             }
-          }
 
-          successfulFetches++
-        } else {
-          console.log(`  ⚠️ Invalid response format for type_id ${typeId}`)
+            successfulFetches++
+          } else {
+            failedFetches++
+          }
+        } catch (error: any) {
+          console.error(`  ❌ Failed to fetch ${range.label} for type_id ${typeId}:`, error.message)
           failedFetches++
         }
-      } catch (error: any) {
-        console.error(`  ❌ Failed to fetch prices for type_id ${typeId}:`, error.message)
-        failedFetches++
       }
     }
 
