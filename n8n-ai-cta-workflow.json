@@ -1,5 +1,5 @@
 {
-  "name": "AI CTA/CTD Optimization v2",
+  "name": "AI CTA/CTD Optimization v3",
   "nodes": [
     {
       "parameters": {
@@ -17,34 +17,29 @@
     },
     {
       "parameters": {
-        "resource": "row",
-        "operation": "getAll",
-        "tableId": "notifications",
-        "returnAll": false,
-        "limit": 1000,
-        "filterType": "manual",
-        "matchMode": "all",
-        "filters": {
-          "conditions": [
+        "method": "GET",
+        "url": "=https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/notifications?id=in.({{ $json.body.notification_ids.join(',') }})&order=start_date.asc&select=id,property_id,unit_id,property_name,unit_name,change_type,start_date,end_date,created_at",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "keyName": "id",
-              "condition": "in",
-              "keyValue": "={{ $json.body.notification_ids }}"
+              "name": "apikey",
+              "value": "={{ $credentials.serviceRole }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $credentials.serviceRole }}"
             }
           ]
         },
-        "selectFields": "id, property_id, unit_id, property_name, unit_name, change_type, start_date, end_date, created_at",
-        "sort": [
-          {
-            "keyName": "start_date",
-            "order": "ascending"
-          }
-        ]
+        "options": {}
       },
       "id": "fetch-notifications",
       "name": "Fetch Notifications",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [460, 300],
       "credentials": {
         "supabaseApi": {
@@ -55,7 +50,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extract unique property and unit IDs\nconst notifications = $input.all();\nconst notifData = notifications.map(n => n.json);\n\nconst unitIds = [...new Set(notifData.map(n => n.unit_id))];\nconst propertyIds = [...new Set(notifData.map(n => n.property_id))];\n\n// Calculate dynamic date range: ±21 days from earliest/latest notification\nconst notifDates = notifData.map(n => new Date(n.start_date));\nconst notifEndDates = notifData.map(n => new Date(n.end_date));\n\nconst minDate = new Date(Math.min(...notifDates));\nminDate.setDate(minDate.getDate() - 21); // 3 weeks before\n\nconst maxDate = new Date(Math.max(...notifEndDates));\nmaxDate.setDate(maxDate.getDate() + 21); // 3 weeks after\n\nreturn [{\n  json: {\n    notifications: notifData,\n    unit_ids: unitIds,\n    property_ids: propertyIds,\n    date_range: {\n      from: minDate.toISOString().split('T')[0],\n      to: maxDate.toISOString().split('T')[0]\n    }\n  }\n}];"
+        "jsCode": "// Extract notifications and calculate date range\nconst notifications = $input.item.json;\n\nif (!Array.isArray(notifications) || notifications.length === 0) {\n  throw new Error('No notifications found');\n}\n\nconst unitIds = [...new Set(notifications.map(n => n.unit_id))];\nconst propertyIds = [...new Set(notifications.map(n => n.property_id))];\n\n// Calculate dynamic date range: ±21 days from earliest/latest notification\nconst notifDates = notifications.map(n => new Date(n.start_date));\nconst notifEndDates = notifications.map(n => new Date(n.end_date));\n\nconst minDate = new Date(Math.min(...notifDates));\nminDate.setDate(minDate.getDate() - 21); // 3 weeks before\n\nconst maxDate = new Date(Math.max(...notifEndDates));\nmaxDate.setDate(maxDate.getDate() + 21); // 3 weeks after\n\nreturn [{\n  json: {\n    notifications: notifications,\n    unit_ids: unitIds,\n    property_ids: propertyIds,\n    date_range: {\n      from: minDate.toISOString().split('T')[0],\n      to: maxDate.toISOString().split('T')[0]\n    }\n  }\n}];"
       },
       "id": "extract-ids",
       "name": "Extract IDs & Date Range",
@@ -65,81 +60,29 @@
     },
     {
       "parameters": {
-        "resource": "row",
-        "operation": "getAll",
-        "tableId": "reservations",
-        "returnAll": false,
-        "limit": 10000,
-        "filterType": "manual",
-        "matchMode": "all",
-        "filters": {
-          "conditions": [
+        "method": "GET",
+        "url": "=https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/availability?unit_id=in.({{ $json.unit_ids.join(',') }})&date=gte.{{ $json.date_range.from }}&date=lte.{{ $json.date_range.to }}&select=unit_id,date,status",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "keyName": "unit_id",
-              "condition": "in",
-              "keyValue": "={{ $json.unit_ids }}"
+              "name": "apikey",
+              "value": "={{ $credentials.serviceRole }}"
             },
             {
-              "keyName": "check_in",
-              "condition": "gte",
-              "keyValue": "={{ new Date(Date.now() - 180*24*60*60*1000).toISOString().split('T')[0] }}"
+              "name": "Authorization",
+              "value": "=Bearer {{ $credentials.serviceRole }}"
             }
           ]
         },
-        "selectFields": "unit_id, check_in, check_out, status, created_at, nights, total_price",
-        "sort": [
-          {
-            "keyName": "check_in",
-            "order": "descending"
-          }
-        ]
-      },
-      "id": "fetch-reservations",
-      "name": "Fetch Reservations",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
-      "position": [900, 180],
-      "credentials": {
-        "supabaseApi": {
-          "id": "YOUR_SUPABASE_CREDENTIAL_ID",
-          "name": "Supabase account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "resource": "row",
-        "operation": "getAll",
-        "tableId": "availability",
-        "returnAll": false,
-        "limit": 10000,
-        "filterType": "manual",
-        "matchMode": "all",
-        "filters": {
-          "conditions": [
-            {
-              "keyName": "unit_id",
-              "condition": "in",
-              "keyValue": "={{ $node[\"Extract IDs & Date Range\"].json.unit_ids }}"
-            },
-            {
-              "keyName": "date",
-              "condition": "gte",
-              "keyValue": "={{ $node[\"Extract IDs & Date Range\"].json.date_range.from }}"
-            },
-            {
-              "keyName": "date",
-              "condition": "lte",
-              "keyValue": "={{ $node[\"Extract IDs & Date Range\"].json.date_range.to }}"
-            }
-          ]
-        },
-        "selectFields": "unit_id, date, status"
+        "options": {}
       },
       "id": "fetch-availability",
       "name": "Fetch Availability",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [900, 300],
       "credentials": {
         "supabaseApi": {
@@ -150,38 +93,29 @@
     },
     {
       "parameters": {
-        "resource": "row",
-        "operation": "getAll",
-        "tableId": "prices",
-        "returnAll": false,
-        "limit": 10000,
-        "filterType": "manual",
-        "matchMode": "all",
-        "filters": {
-          "conditions": [
+        "method": "GET",
+        "url": "=https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/prices?unit_id=in.({{ $node[\"Extract IDs & Date Range\"].json.unit_ids.join(',') }})&date=gte.{{ $node[\"Extract IDs & Date Range\"].json.date_range.from }}&date=lte.{{ $node[\"Extract IDs & Date Range\"].json.date_range.to }}&select=unit_id,date,cta,ctd,min",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "keyName": "unit_id",
-              "condition": "in",
-              "keyValue": "={{ $node[\"Extract IDs & Date Range\"].json.unit_ids }}"
+              "name": "apikey",
+              "value": "={{ $credentials.serviceRole }}"
             },
             {
-              "keyName": "date",
-              "condition": "gte",
-              "keyValue": "={{ $node[\"Extract IDs & Date Range\"].json.date_range.from }}"
-            },
-            {
-              "keyName": "date",
-              "condition": "lte",
-              "keyValue": "={{ $node[\"Extract IDs & Date Range\"].json.date_range.to }}"
+              "name": "Authorization",
+              "value": "=Bearer {{ $credentials.serviceRole }}"
             }
           ]
         },
-        "selectFields": "unit_id, date, cta, ctd, min, price"
+        "options": {}
       },
       "id": "fetch-prices",
       "name": "Fetch Prices",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [900, 420],
       "credentials": {
         "supabaseApi": {
@@ -192,28 +126,29 @@
     },
     {
       "parameters": {
-        "resource": "row",
-        "operation": "getAll",
-        "tableId": "units",
-        "returnAll": false,
-        "limit": 1000,
-        "filterType": "manual",
-        "matchMode": "all",
-        "filters": {
-          "conditions": [
+        "method": "GET",
+        "url": "=https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/units?id=in.({{ $node[\"Extract IDs & Date Range\"].json.unit_ids.join(',') }})&select=id,name,property_id",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "keyName": "id",
-              "condition": "in",
-              "keyValue": "={{ $node[\"Extract IDs & Date Range\"].json.unit_ids }}"
+              "name": "apikey",
+              "value": "={{ $credentials.serviceRole }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $credentials.serviceRole }}"
             }
           ]
         },
-        "selectFields": "id, name, property_id, base_price"
+        "options": {}
       },
       "id": "fetch-units",
       "name": "Fetch Units",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [900, 540],
       "credentials": {
         "supabaseApi": {
@@ -224,7 +159,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Collect all data\nconst notifications = $node[\"Extract IDs & Date Range\"].json.notifications;\nconst reservations = $node[\"Fetch Reservations\"].all().map(n => n.json);\nconst availability = $node[\"Fetch Availability\"].all().map(n => n.json);\nconst prices = $node[\"Fetch Prices\"].all().map(n => n.json);\nconst units = $node[\"Fetch Units\"].all().map(n => n.json);\n\n// Calculate statistics per unit\nconst unitStats = {};\n\nunits.forEach(unit => {\n  const unitReservations = reservations.filter(r => r.unit_id === unit.id);\n  const unitAvailability = availability.filter(a => a.unit_id === unit.id);\n\n  // Lead time calculation\n  const leadTimes = unitReservations\n    .filter(r => r.created_at && r.check_in)\n    .map(r => {\n      const created = new Date(r.created_at);\n      const checkin = new Date(r.check_in);\n      return Math.floor((checkin - created) / (1000 * 60 * 60 * 24));\n    })\n    .filter(lt => lt >= 0 && lt < 365);\n\n  const avgLeadTime = leadTimes.length > 0\n    ? Math.round(leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length)\n    : null;\n\n  // Weekend vs weekday bookings\n  const weekendBookings = unitReservations.filter(r => {\n    const checkin = new Date(r.check_in);\n    const day = checkin.getDay();\n    return day === 5 || day === 6;\n  }).length;\n\n  const weekendPercentage = unitReservations.length > 0\n    ? Math.round((weekendBookings / unitReservations.length) * 100)\n    : null;\n\n  // Occupancy next 30 days\n  const next30Days = unitAvailability.filter(a => {\n    const date = new Date(a.date);\n    const diff = (date - new Date()) / (1000 * 60 * 60 * 24);\n    return diff >= 0 && diff <= 30;\n  });\n\n  const bookedDays = next30Days.filter(a => a.status === 'blocked').length;\n  const occupancyRate = next30Days.length > 0\n    ? Math.round((bookedDays / next30Days.length) * 100)\n    : null;\n\n  // Average stay length\n  const avgNights = unitReservations.length > 0\n    ? Math.round(unitReservations.reduce((sum, r) => sum + (r.nights || 0), 0) / unitReservations.length)\n    : null;\n\n  unitStats[unit.id] = {\n    unit_name: unit.name,\n    total_bookings_6m: unitReservations.length,\n    avg_lead_time_days: avgLeadTime,\n    weekend_booking_percentage: weekendPercentage,\n    current_occupancy_30d: occupancyRate,\n    avg_stay_nights: avgNights\n  };\n});\n\n// Enrich notifications with context\nconst enrichedNotifications = notifications.map(notif => {\n  const stats = unitStats[notif.unit_id] || {};\n\n  // Get surrounding availability (±21 days)\n  const notifDate = new Date(notif.start_date);\n  const before21 = new Date(notifDate);\n  before21.setDate(before21.getDate() - 21);\n  const after21 = new Date(notifDate);\n  after21.setDate(after21.getDate() + 21);\n\n  const surroundingAvail = availability\n    .filter(a => {\n      const aDate = new Date(a.date);\n      return a.unit_id === notif.unit_id && aDate >= before21 && aDate <= after21;\n    })\n    .sort((a, b) => a.date.localeCompare(b.date))\n    .map(a => `${a.date}: ${a.status}`);\n\n  // Find gap size (consecutive available days)\n  const gapStart = new Date(notif.start_date);\n  const gapEnd = new Date(notif.end_date);\n  const gapDays = Math.floor((gapEnd - gapStart) / (1000 * 60 * 60 * 24)) + 1;\n\n  // Current restrictions for this date\n  const currentRestrictions = prices\n    .filter(p =>\n      p.unit_id === notif.unit_id &&\n      p.date >= notif.start_date &&\n      p.date <= notif.end_date\n    );\n\n  return {\n    ...notif,\n    stats,\n    gap_days: gapDays,\n    surrounding_availability: surroundingAvail,\n    current_cta: currentRestrictions[0]?.cta || 'brak',\n    current_ctd: currentRestrictions[0]?.ctd || 'brak',\n    current_min: currentRestrictions[0]?.min || 'brak'\n  };\n});\n\n// Build Gemini prompt with new strategy\nconst prompt = `Jesteś ekspertem od revenue management dla wynajmu krótkoterminowego w Polsce.\n\nZADANIE: Zaproponuj optymalne ustawienia CTA (Close To Arrival), CTD (Close To Departure) i MIN dla ${notifications.length} powiadomień o lukach w dostępności.\n\nKLUCZOWA STRATEGIA - MIN > CTA/CTD:\nCelem NIE jest blokowanie, ale STRATEGICZNE pozwalanie na dłuższe pobyty:\n\n1. Jednodniowa luka między rezerwacjami:\n   → 1 dzień PUSTY (bez restrykcji)\n   → To pozwala przedłużyć poprzednią rezerwację o 1 dzień\n\n2. Dwudniowa luka:\n   → 1 dzień pusty + 1 dzień z MIN=3\n   → Nikt nie weźmie 2 dni (MIN=3), ale można przedłużyć lub wziąć 3+\n\n3. Trzeciodniowa+ luka:\n   → 1 dzień pusty\n   → 2-3 dni: CTA=7-14, CTD=0, MIN=3\n   → Reszta: bez restrykcji\n   → Pozwala na rezerwacje 3+ dni, blokuje 1-2 dniowe\n\n4. Przykład działania (ze screena):\n   [REZ] | 1 pusty | CTA✓CTD✓MIN=3 | CTA✓CTD✓MIN=3 | puste... | [REZ]\n   - Jednodniówka: NIE (MIN=3)\n   - Dwudniówka: NIE (MIN=3)\n   - Przedłużenie: TAK (1 pusty dzień)\n   - 3+ dni: TAK (1 pusty + 2 z restrykcjami + reszta)\n   - Tydzień: TAK (zabiera całą lukę)\n\nDEFINICJE:\n- CTA = ile dni przed przyjazdem przestajemy przyjmować rezerwacje\n- CTD = ile dni przed wyjazdem przestajemy przyjmować rezerwacje\n- MIN = minimalna długość pobytu (GŁÓWNY MECHANIZM)\n\nDANE O POWIADOMIENIACH:\n${enrichedNotifications.map((n, i) => `\n${i + 1}. ${n.property_name} - ${n.unit_name}\n   Luka: ${n.start_date} do ${n.end_date} (${n.gap_days} dni, ${n.change_type})\n   Obecne: CTA=${n.current_cta}, CTD=${n.current_ctd}, MIN=${n.current_min}\n\n   Statystyki:\n   - Średni lead time: ${n.stats.avg_lead_time_days || 'brak'} dni\n   - Weekend bookings: ${n.stats.weekend_booking_percentage || 'brak'}%\n   - Obłożenie 30d: ${n.stats.current_occupancy_30d || 'brak'}%\n   - Średnia długość: ${n.stats.avg_stay_nights || 'brak'} nocy\n   - Rezerwacji 6m: ${n.stats.total_bookings_6m || 0}\n\n   Otoczenie (±21 dni):\n${n.surrounding_availability.slice(0, 30).join('\\n')}\n`).join('\\n')}\n\nZASADY OPTYMALIZACJI:\n\n1. GAP 1 DZIEŃ:\n   → suggested_cta: 0, suggested_ctd: 0, suggested_min: 1\n   → reasoning: \"Pusty dzień pozwala przedłużyć poprzednią rezerwację\"\n\n2. GAP 2 DNI:\n   → Dzień 1: CTA=0, CTD=0, MIN=1 (pusty)\n   → Dzień 2: CTA=7-14, CTD=0, MIN=3\n   → reasoning: \"1 dzień pusty na przedłużenie, 2gi z MIN=3 blokuje dwudniówki\"\n\n3. GAP 3+ DNI:\n   → Dzień 1: pusty (CTA=0, CTD=0, MIN=1)\n   → Dni 2-3: CTA=7-14, CTD=0, MIN=3\n   → Reszta: CTA=0, CTD=0, MIN=2\n   → reasoning: \"Strategiczne MIN=3 wypełnia luki dłuższymi pobytami\"\n\n4. WEEKEND GAP (piątek-niedziela) + >70% weekend bookings:\n   → CTA=7-14, MIN=2-3 (na wszystkie dni)\n   → reasoning: \"Weekend premium, zachęcamy do weekendowych pobytów\"\n\n5. LOW SEASON (styczeń-marzec, listopad) + occupancy <40%:\n   → CTA=0-3, MIN=2 (łagodne restrykcje)\n   → reasoning: \"Sezon niski, nie blokuj zbyt mocno\"\n\n6. HIGH SEASON + długi lead time (>21 dni):\n   → CTA=14-21, MIN=3-5\n   → reasoning: \"Długi lead time pozwala czekać na dłuższe rezerwacje\"\n\nWAŻNE:\n- MIN jest GŁÓWNYM narzędziem (nie CTA/CTD!)\n- Zawsze pozostaw 1 pusty dzień po rezerwacji (przedłużenie)\n- Nie blokuj całej luki - pozwól na dłuższe pobyty\n- CTA/CTD wspierają MIN, ale MIN jest kluczowy\n\nOUTPUT: TYLKO VALID JSON, BEZ MARKDOWN\nDla każdego dnia w luce osobny suggestion:\n{\n  \"suggestions\": [\n    {\n      \"notification_id\": \"uuid\",\n      \"unit_id\": \"uuid\",\n      \"unit_name\": \"Domek 4D\",\n      \"property_name\": \"DW Maryla\",\n      \"date_start\": \"2026-06-15\",\n      \"date_end\": \"2026-06-15\",\n      \"suggested_cta\": 0,\n      \"suggested_ctd\": 0,\n      \"suggested_min\": 1,\n      \"confidence\": 95,\n      \"reasoning\": \"Dzień 1 luki: pusty na przedłużenie poprzedniej rezerwacji\",\n      \"expected_impact\": \"Możliwość przedłużenia lub start dłuższej rezerwacji\"\n    },\n    {\n      \"notification_id\": \"uuid\",\n      \"unit_id\": \"uuid\",\n      \"unit_name\": \"Domek 4D\",\n      \"property_name\": \"DW Maryla\",\n      \"date_start\": \"2026-06-16\",\n      \"date_end\": \"2026-06-16\",\n      \"suggested_cta\": 10,\n      \"suggested_ctd\": 0,\n      \"suggested_min\": 3,\n      \"confidence\": 90,\n      \"reasoning\": \"Dzień 2 luki: MIN=3 blokuje dwudniówki, CTA=10 daje czas na booking\",\n      \"expected_impact\": \"Wypełnienie luki rezerwacją 3+ dni zamiast 1-2 dniowej\"\n    }\n  ]\n}`;\n\nreturn [{\n  json: {\n    prompt,\n    notifications: enrichedNotifications\n  }\n}];"
+        "jsCode": "// Collect all data\nconst notifications = $node[\"Extract IDs & Date Range\"].json.notifications;\nconst availability = $node[\"Fetch Availability\"].json;\nconst prices = $node[\"Fetch Prices\"].json;\nconst units = $node[\"Fetch Units\"].json;\n\n// Enrich notifications with context\nconst enrichedNotifications = notifications.map(notif => {\n  // Calculate gap size\n  const gapStart = new Date(notif.start_date);\n  const gapEnd = new Date(notif.end_date);\n  const gapDays = Math.floor((gapEnd - gapStart) / (1000 * 60 * 60 * 24)) + 1;\n\n  // Get surrounding availability (±21 days)\n  const notifDate = new Date(notif.start_date);\n  const before21 = new Date(notifDate);\n  before21.setDate(before21.getDate() - 21);\n  const after21 = new Date(notifDate);\n  after21.setDate(after21.getDate() + 21);\n\n  const surroundingAvail = availability\n    .filter(a => {\n      const aDate = new Date(a.date);\n      return a.unit_id === notif.unit_id && aDate >= before21 && aDate <= after21;\n    })\n    .sort((a, b) => a.date.localeCompare(b.date))\n    .map(a => `${a.date}: ${a.status}`);\n\n  // Current restrictions for this date range\n  const currentRestrictions = prices\n    .filter(p =>\n      p.unit_id === notif.unit_id &&\n      p.date >= notif.start_date &&\n      p.date <= notif.end_date\n    );\n\n  return {\n    ...notif,\n    gap_days: gapDays,\n    surrounding_availability: surroundingAvail,\n    current_cta: currentRestrictions[0]?.cta || 'brak',\n    current_ctd: currentRestrictions[0]?.ctd || 'brak',\n    current_min: currentRestrictions[0]?.min || 'brak'\n  };\n});\n\n// Build Gemini prompt - SIMPLE strategy\nconst prompt = `Jesteś ekspertem od revenue management dla wynajmu krótkoterminowego w Polsce.\n\nZADANIE: Zaproponuj ustawienia CTA/CTD/MIN dla ${notifications.length} luk w dostępności.\n\nSTRATEGIA MIN-FIRST:\nCelem jest wypełnienie luk DŁUŻSZYMI pobytami, nie blokowanie krótkich.\n\nZASADA:\n1. Dzień 1 po rezerwacji → pusty (MIN=1, CTA=0, CTD=0)\n   Pozwala przedłużyć poprzednią rezerwację\n\n2. Dni 2-3 → restrykcje (MIN=3, CTA=7-14, CTD=0)\n   Blokuje 1-2 dniowe bookings, wymusza minimum 3 noce\n\n3. Reszta dni → flexible (MIN=2, CTA=0, CTD=0)\n   Pozwala na długie pobyty\n\nPRZYKŁAD (luka 5 dni):\n[REZ] | Dzień 1: pusty | Dzień 2-3: MIN=3 | Dzień 4-5: MIN=2 | [REZ]\n\nEFEKT:\n❌ 1-2 dni: NIE (MIN=3 na dniach 2-3)\n✅ Przedłużenie: TAK (dzień 1 pusty)\n✅ 3+ dni: TAK (wypełnia lukę)\n✅ Tydzień: TAK (zabiera całą lukę)\n\nDANE O LUKACH:\n${enrichedNotifications.map((n, i) => `\n${i + 1}. ${n.property_name} - ${n.unit_name}\n   Luka: ${n.start_date} do ${n.end_date} (${n.gap_days} dni)\n   Obecne: CTA=${n.current_cta}, CTD=${n.current_ctd}, MIN=${n.current_min}\n   \n   Dostępność wokół (±21 dni):\n   ${n.surrounding_availability.slice(0, 42).join('\\n   ')}\n`).join('\\n')}\n\nINSTRUKCJE:\n\nDLA LUKI 1 DZIEŃ:\n→ 1 suggestion: MIN=1, CTA=0, CTD=0\n→ reasoning: \"Pusty dzień pozwala przedłużyć poprzednią rezerwację o 1 dzień\"\n\nDLA LUKI 2 DNI:\n→ Dzień 1: MIN=1, CTA=0, CTD=0 (pusty)\n→ Dzień 2: MIN=3, CTA=10, CTD=0\n→ reasoning: \"Dzień 1 pusty na przedłużenie. Dzień 2 z MIN=3 blokuje dwudniówki ale pozwala na 3+\"\n\nDLA LUKI 3+ DNI:\n→ Dzień 1: MIN=1, CTA=0, CTD=0 (pusty)\n→ Dni 2-3: MIN=3, CTA=10, CTD=0 (restrykcje)\n→ Reszta (jeśli jest): MIN=2, CTA=0, CTD=0 (flexible)\n→ reasoning: \"Strategiczne MIN wypełnia lukę dłuższymi pobytami, nie blokuje całkowicie\"\n\nWAŻNE:\n- Zawsze 1 pusty dzień po rezerwacji\n- MIN=3 na dniach 2-3 (główny mechanizm)\n- Reszta flexible (MIN=2)\n- CTA wspiera MIN (7-14 dni)\n- Generuj OSOBNY suggestion dla KAŻDEGO dnia w luce\n\nOUTPUT: TYLKO VALID JSON, BEZ MARKDOWN\n{\n  \"suggestions\": [\n    {\n      \"notification_id\": \"uuid\",\n      \"unit_id\": \"uuid\",\n      \"unit_name\": \"Domek 4D\",\n      \"property_name\": \"DW Maryla\",\n      \"date_start\": \"2026-06-15\",\n      \"date_end\": \"2026-06-15\",\n      \"suggested_cta\": 0,\n      \"suggested_ctd\": 0,\n      \"suggested_min\": 1,\n      \"confidence\": 95,\n      \"reasoning\": \"Dzień 1 luki: pusty na przedłużenie poprzedniej rezerwacji\",\n      \"expected_impact\": \"Możliwość przedłużenia lub start dłuższej rezerwacji\"\n    },\n    {\n      \"notification_id\": \"uuid\",\n      \"unit_id\": \"uuid\",\n      \"unit_name\": \"Domek 4D\",\n      \"property_name\": \"DW Maryla\",\n      \"date_start\": \"2026-06-16\",\n      \"date_end\": \"2026-06-16\",\n      \"suggested_cta\": 10,\n      \"suggested_ctd\": 0,\n      \"suggested_min\": 3,\n      \"confidence\": 90,\n      \"reasoning\": \"Dzień 2 luki: MIN=3 blokuje 1-2 dniówki, CTA=10 daje czas na booking\",\n      \"expected_impact\": \"Wypełnienie luki rezerwacją 3+ dni\"\n    }\n  ]\n}`;\n\nreturn [{\n  json: {\n    prompt,\n    notifications: enrichedNotifications\n  }\n}];"
       },
       "id": "build-prompt",
       "name": "Build Context & Prompt",
@@ -236,9 +171,8 @@
       "parameters": {
         "method": "POST",
         "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={{ $env.GEMINI_API_KEY }}",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
+        "contentType": "json",
         "bodyParameters": {
           "parameters": [
             {
@@ -261,7 +195,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const geminiResponse = $input.item.json;\nconst notifications = $node[\"Build Context & Prompt\"].json.notifications;\n\n// Extract JSON from Gemini response\nconst text = geminiResponse.candidates[0].content.parts[0].text;\nlet parsed;\n\ntry {\n  parsed = JSON.parse(text);\n} catch (e) {\n  // Fallback: extract JSON from markdown\n  const jsonMatch = text.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    parsed = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('Failed to parse Gemini response');\n  }\n}\n\n// Enrich suggestions with full notification data\nconst enrichedSuggestions = parsed.suggestions.map(s => {\n  const notif = notifications.find(n => n.id === s.notification_id);\n  return {\n    notification_id: s.notification_id,\n    property_id: notif?.property_id,\n    unit_id: s.unit_id,\n    property_name: s.property_name,\n    unit_name: s.unit_name,\n    date_start: s.date_start,\n    date_end: s.date_end,\n    suggested_cta: s.suggested_cta,\n    suggested_ctd: s.suggested_ctd,\n    suggested_min: s.suggested_min,\n    confidence: s.confidence,\n    reasoning: s.reasoning,\n    expected_impact: s.expected_impact,\n    status: 'pending'\n  };\n});\n\nreturn [{\n  json: {\n    suggestions: enrichedSuggestions\n  }\n}];"
+        "jsCode": "const geminiResponse = $input.item.json;\nconst notifications = $node[\"Build Context & Prompt\"].json.notifications;\n\n// Extract JSON from Gemini response\nconst text = geminiResponse.candidates[0].content.parts[0].text;\nlet parsed;\n\ntry {\n  parsed = JSON.parse(text);\n} catch (e) {\n  // Fallback: extract JSON from markdown\n  const jsonMatch = text.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    parsed = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('Failed to parse Gemini response');\n  }\n}\n\n// Enrich suggestions with full notification data\nconst enrichedSuggestions = parsed.suggestions.map(s => {\n  const notif = notifications.find(n => n.id === s.notification_id);\n  return {\n    notification_id: s.notification_id,\n    property_id: notif?.property_id,\n    unit_id: s.unit_id,\n    property_name: s.property_name,\n    unit_name: s.unit_name,\n    date_start: s.date_start,\n    date_end: s.date_end,\n    suggested_cta: s.suggested_cta,\n    suggested_ctd: s.suggested_ctd,\n    suggested_min: s.suggested_min,\n    confidence: s.confidence,\n    reasoning: s.reasoning,\n    expected_impact: s.expected_impact,\n    status: 'pending'\n  };\n});\n\nreturn enrichedSuggestions.map(s => ({ json: s }));"
       },
       "id": "parse-response",
       "name": "Parse Gemini Response",
@@ -271,14 +205,31 @@
     },
     {
       "parameters": {
-        "resource": "row",
-        "operation": "create",
-        "tableId": "ai_suggestions",
-        "dataMode": "defineBelow",
-        "fieldsUi": {
-          "fieldValues": [
+        "method": "POST",
+        "url": "https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/ai_suggestions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "fieldId": "={{ $json.suggestions }}"
+              "name": "apikey",
+              "value": "={{ $credentials.serviceRole }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $credentials.serviceRole }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
             }
           ]
         },
@@ -286,8 +237,8 @@
       },
       "id": "insert-suggestions",
       "name": "Insert to Supabase",
-      "type": "n8n-nodes-base.supabase",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [1780, 300],
       "credentials": {
         "supabaseApi": {
@@ -299,7 +250,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": true, \"suggestions\": $json, \"count\": $json.length, \"generated_at\": new Date().toISOString() } }}",
+        "responseBody": "={{ { \"success\": true, \"count\": $input.all().length, \"generated_at\": new Date().toISOString() } }}",
         "options": {}
       },
       "id": "webhook-response",
@@ -336,11 +287,6 @@
       "main": [
         [
           {
-            "node": "Fetch Reservations",
-            "type": "main",
-            "index": 0
-          },
-          {
             "node": "Fetch Availability",
             "type": "main",
             "index": 0
@@ -352,17 +298,6 @@
           },
           {
             "node": "Fetch Units",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Fetch Reservations": {
-      "main": [
-        [
-          {
-            "node": "Build Context & Prompt",
             "type": "main",
             "index": 0
           }
@@ -454,6 +389,6 @@
   "staticData": null,
   "tags": [],
   "triggerCount": 0,
-  "updatedAt": "2026-01-27T01:00:00.000Z",
-  "versionId": "2"
+  "updatedAt": "2026-01-27T02:00:00.000Z",
+  "versionId": "3"
 }
