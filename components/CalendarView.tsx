@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { Property, Availability, Unit, Notification, Price } from '../types';
+import { Property, Availability, Unit, Notification, Price, AISuggestion } from '../types';
 import { Loader2, ChevronLeft, ChevronRight, RefreshCw, Sparkles } from 'lucide-react';
 
 export const CalendarView: React.FC = () => {
@@ -20,6 +20,8 @@ export const CalendarView: React.FC = () => {
   const [pricesData, setPricesData] = useState<Map<string, Price>>(new Map());
   const [priceChanges, setPriceChanges] = useState<Map<string, Partial<Price>>>(new Map());
   const [isLoadingAI, setIsLoadingAI] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState<Map<string, AISuggestion>>(new Map());
+  const [selectedSuggestion, setSelectedSuggestion] = useState<AISuggestion | null>(null);
 
   // Hotres sync counter - separate for each property
   const getHotresSyncCount = (propertyId: string | null): { count: number; hourStart: number } => {

@@ -129,3 +129,24 @@ export interface Price {
   ctd: 0 | 1 | null;
   synced_at?: string;
 }
+
+export interface AISuggestion {
+  id: string;
+  notification_id: string;
+  property_id: string;
+  unit_id: string;
+  property_name: string | null;
+  unit_name: string | null;
+  date_start: string;
+  date_end: string;
+  suggested_cta: number;
+  suggested_ctd: number;
+  suggested_min: number;
+  confidence: number;
+  reasoning: string;
+  expected_impact: string;
+  status: 'pending' | 'applied' | 'rejected';
+  applied_at: string | null;
+  applied_by: string | null;
+  created_at: string;
+}
