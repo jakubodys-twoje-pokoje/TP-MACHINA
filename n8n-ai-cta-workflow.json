@@ -1,5 +1,5 @@
 {
-  "name": "AI CTA/CTD Optimization",
+  "name": "AI CTA/CTD Optimization v2",
   "nodes": [
     {
       "parameters": {
@@ -55,10 +55,10 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extract unique property and unit IDs\nconst notifications = $input.all();\nconst notifData = notifications.map(n => n.json);\n\nconst unitIds = [...new Set(notifData.map(n => n.unit_id))];\nconst propertyIds = [...new Set(notifData.map(n => n.property_id))];\n\nreturn [{\n  json: {\n    notifications: notifData,\n    unit_ids: unitIds,\n    property_ids: propertyIds\n  }\n}];"
+        "jsCode": "// Extract unique property and unit IDs\nconst notifications = $input.all();\nconst notifData = notifications.map(n => n.json);\n\nconst unitIds = [...new Set(notifData.map(n => n.unit_id))];\nconst propertyIds = [...new Set(notifData.map(n => n.property_id))];\n\n// Calculate dynamic date range: ±21 days from earliest/latest notification\nconst notifDates = notifData.map(n => new Date(n.start_date));\nconst notifEndDates = notifData.map(n => new Date(n.end_date));\n\nconst minDate = new Date(Math.min(...notifDates));\nminDate.setDate(minDate.getDate() - 21); // 3 weeks before\n\nconst maxDate = new Date(Math.max(...notifEndDates));\nmaxDate.setDate(maxDate.getDate() + 21); // 3 weeks after\n\nreturn [{\n  json: {\n    notifications: notifData,\n    unit_ids: unitIds,\n    property_ids: propertyIds,\n    date_range: {\n      from: minDate.toISOString().split('T')[0],\n      to: maxDate.toISOString().split('T')[0]\n    }\n  }\n}];"
       },
       "id": "extract-ids",
-      "name": "Extract IDs",
+      "name": "Extract IDs & Date Range",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [680, 300]
@@ -120,17 +120,17 @@
             {
               "keyName": "unit_id",
               "condition": "in",
-              "keyValue": "={{ $node[\"Extract IDs\"].json.unit_ids }}"
+              "keyValue": "={{ $node[\"Extract IDs & Date Range\"].json.unit_ids }}"
             },
             {
               "keyName": "date",
               "condition": "gte",
-              "keyValue": "={{ new Date().toISOString().split('T')[0] }}"
+              "keyValue": "={{ $node[\"Extract IDs & Date Range\"].json.date_range.from }}"
             },
             {
               "keyName": "date",
               "condition": "lte",
-              "keyValue": "={{ new Date(Date.now() + 90*24*60*60*1000).toISOString().split('T')[0] }}"
+              "keyValue": "={{ $node[\"Extract IDs & Date Range\"].json.date_range.to }}"
             }
           ]
         },
@@ -162,17 +162,17 @@
             {
               "keyName": "unit_id",
               "condition": "in",
-              "keyValue": "={{ $node[\"Extract IDs\"].json.unit_ids }}"
+              "keyValue": "={{ $node[\"Extract IDs & Date Range\"].json.unit_ids }}"
             },
             {
               "keyName": "date",
               "condition": "gte",
-              "keyValue": "={{ new Date().toISOString().split('T')[0] }}"
+              "keyValue": "={{ $node[\"Extract IDs & Date Range\"].json.date_range.from }}"
             },
             {
               "keyName": "date",
               "condition": "lte",
-              "keyValue": "={{ new Date(Date.now() + 90*24*60*60*1000).toISOString().split('T')[0] }}"
+              "keyValue": "={{ $node[\"Extract IDs & Date Range\"].json.date_range.to }}"
             }
           ]
         },
@@ -204,7 +204,7 @@
             {
               "keyName": "id",
               "condition": "in",
-              "keyValue": "={{ $node[\"Extract IDs\"].json.unit_ids }}"
+              "keyValue": "={{ $node[\"Extract IDs & Date Range\"].json.unit_ids }}"
             }
           ]
         },
@@ -224,7 +224,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Collect all data\nconst notifications = $node[\"Extract IDs\"].json.notifications;\nconst reservations = $node[\"Fetch Reservations\"].all().map(n => n.json);\nconst availability = $node[\"Fetch Availability\"].all().map(n => n.json);\nconst prices = $node[\"Fetch Prices\"].all().map(n => n.json);\nconst units = $node[\"Fetch Units\"].all().map(n => n.json);\n\n// Calculate statistics per unit\nconst unitStats = {};\n\nunits.forEach(unit => {\n  const unitReservations = reservations.filter(r => r.unit_id === unit.id);\n  const unitAvailability = availability.filter(a => a.unit_id === unit.id);\n\n  // Lead time calculation\n  const leadTimes = unitReservations\n    .filter(r => r.created_at && r.check_in)\n    .map(r => {\n      const created = new Date(r.created_at);\n      const checkin = new Date(r.check_in);\n      return Math.floor((checkin - created) / (1000 * 60 * 60 * 24));\n    })\n    .filter(lt => lt >= 0 && lt < 365);\n\n  const avgLeadTime = leadTimes.length > 0\n    ? Math.round(leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length)\n    : null;\n\n  // Weekend vs weekday bookings\n  const weekendBookings = unitReservations.filter(r => {\n    const checkin = new Date(r.check_in);\n    const day = checkin.getDay();\n    return day === 5 || day === 6;\n  }).length;\n\n  const weekendPercentage = unitReservations.length > 0\n    ? Math.round((weekendBookings / unitReservations.length) * 100)\n    : null;\n\n  // Occupancy next 30 days\n  const next30Days = unitAvailability.filter(a => {\n    const date = new Date(a.date);\n    const diff = (date - new Date()) / (1000 * 60 * 60 * 24);\n    return diff >= 0 && diff <= 30;\n  });\n\n  const bookedDays = next30Days.filter(a => a.status === 'blocked').length;\n  const occupancyRate = next30Days.length > 0\n    ? Math.round((bookedDays / next30Days.length) * 100)\n    : null;\n\n  // Average stay length\n  const avgNights = unitReservations.length > 0\n    ? Math.round(unitReservations.reduce((sum, r) => sum + (r.nights || 0), 0) / unitReservations.length)\n    : null;\n\n  unitStats[unit.id] = {\n    unit_name: unit.name,\n    total_bookings_6m: unitReservations.length,\n    avg_lead_time_days: avgLeadTime,\n    weekend_booking_percentage: weekendPercentage,\n    current_occupancy_30d: occupancyRate,\n    avg_stay_nights: avgNights\n  };\n});\n\n// Enrich notifications with context\nconst enrichedNotifications = notifications.map(notif => {\n  const stats = unitStats[notif.unit_id] || {};\n\n  // Get surrounding availability (±7 days)\n  const notifDate = new Date(notif.start_date);\n  const before7 = new Date(notifDate);\n  before7.setDate(before7.getDate() - 7);\n  const after7 = new Date(notifDate);\n  after7.setDate(after7.getDate() + 7);\n\n  const surroundingAvail = availability\n    .filter(a => {\n      const aDate = new Date(a.date);\n      return a.unit_id === notif.unit_id && aDate >= before7 && aDate <= after7;\n    })\n    .sort((a, b) => a.date.localeCompare(b.date))\n    .map(a => `${a.date}: ${a.status}`);\n\n  // Current restrictions for this date\n  const currentRestrictions = prices\n    .filter(p =>\n      p.unit_id === notif.unit_id &&\n      p.date >= notif.start_date &&\n      p.date <= notif.end_date\n    );\n\n  return {\n    ...notif,\n    stats,\n    surrounding_availability: surroundingAvail.slice(0, 15),\n    current_cta: currentRestrictions[0]?.cta || 'brak',\n    current_ctd: currentRestrictions[0]?.ctd || 'brak',\n    current_min: currentRestrictions[0]?.min || 'brak'\n  };\n});\n\n// Build Gemini prompt\nconst prompt = `Jesteś ekspertem od revenue management dla wynajmu krótkoterminowego w Polsce.\n\nZADANIE: Zaproponuj optymalne ustawienia CTA (Close To Arrival) i CTD (Close To Departure) dla ${notifications.length} powiadomień o lukach w dostępności.\n\nDEFINICJE:\n- CTA = ile dni przed przyjazdem przestajemy przyjmować rezerwacje (0 = można bookować do ostatniej chwili)\n- CTD = ile dni przed wyjazdem przestajemy przyjmować rezerwacje\n- MIN = minimalna długość pobytu w dniach\n\nCELE:\n1. Wypełnić jednodniowe luki między rezerwacjami (NAJWYŻSZY PRIORYTET)\n2. Zoptymalizować wykorzystanie kalendarza\n3. Nie blokować długich, wartościowych rezerwacji\n4. Uwzględnić wzorce bookingów i sezonowość\n\nDANE O POWIADOMIENIACH:\n${enrichedNotifications.map((n, i) => `\n${i + 1}. ${n.property_name} - ${n.unit_name}\n   Luka: ${n.start_date} do ${n.end_date} (${n.change_type})\n   Obecne: CTA=${n.current_cta}, CTD=${n.current_ctd}, MIN=${n.current_min}\n\n   Statystyki:\n   - Średni lead time: ${n.stats.avg_lead_time_days || 'brak'} dni\n   - Weekend bookings: ${n.stats.weekend_booking_percentage || 'brak'}%\n   - Obłożenie 30d: ${n.stats.current_occupancy_30d || 'brak'}%\n   - Średnia długość: ${n.stats.avg_stay_nights || 'brak'} nocy\n   - Rezerwacji 6m: ${n.stats.total_bookings_6m || 0}\n\n   Otoczenie:\n${n.surrounding_availability.join('\\n')}\n`).join('\\n')}\n\nZASADY OPTYMALIZACJI:\n1. Jednodniowa luka między rezerwacjami:\n   → CTA=7-14, CTD=0, MIN=2 (wypełni lukę + longer stays)\n\n2. Luka 2-3 dni w sezonie:\n   → CTA=3-7, CTD=0, MIN=2-3 (szansa na short break)\n\n3. Luka 4+ dni z niskim lead time (<10):\n   → CTA=0-3, CTD=0, MIN=2 (last-minute)\n\n4. Luka w low season z długim lead time:\n   → CTA=14-21, CTD=0, MIN=3-5 (dłuższe pobyty)\n\n5. Weekend gap + >70% weekend bookings:\n   → CTA=7-14, MIN=2-3\n\n6. NIE ustawiaj agresywnych restrykcji jeśli:\n   - Occupancy <40%\n   - Lead time >30 dni\n   - Sezon niski (styczeń-marzec, listopad)\n\nOUTPUT: TYLKO VALID JSON, BEZ MARKDOWN\n{\n  \"suggestions\": [\n    {\n      \"notification_id\": \"uuid\",\n      \"unit_id\": \"uuid\",\n      \"unit_name\": \"...\",\n      \"property_name\": \"...\",\n      \"date_start\": \"2026-06-15\",\n      \"date_end\": \"2026-06-16\",\n      \"suggested_cta\": 7,\n      \"suggested_ctd\": 0,\n      \"suggested_min\": 2,\n      \"confidence\": 85,\n      \"reasoning\": \"Jednodniowa luka. CTA=7 da czas na wypełnienie, CTD=0 flexibility, MIN=2 wypełni lukę.\",\n      \"expected_impact\": \"Wysoka szansa na wypełnienie, zachowanie flexibility\"\n    }\n  ]\n}`;\n\nreturn [{\n  json: {\n    prompt,\n    notifications: enrichedNotifications\n  }\n}];"
+        "jsCode": "// Collect all data\nconst notifications = $node[\"Extract IDs & Date Range\"].json.notifications;\nconst reservations = $node[\"Fetch Reservations\"].all().map(n => n.json);\nconst availability = $node[\"Fetch Availability\"].all().map(n => n.json);\nconst prices = $node[\"Fetch Prices\"].all().map(n => n.json);\nconst units = $node[\"Fetch Units\"].all().map(n => n.json);\n\n// Calculate statistics per unit\nconst unitStats = {};\n\nunits.forEach(unit => {\n  const unitReservations = reservations.filter(r => r.unit_id === unit.id);\n  const unitAvailability = availability.filter(a => a.unit_id === unit.id);\n\n  // Lead time calculation\n  const leadTimes = unitReservations\n    .filter(r => r.created_at && r.check_in)\n    .map(r => {\n      const created = new Date(r.created_at);\n      const checkin = new Date(r.check_in);\n      return Math.floor((checkin - created) / (1000 * 60 * 60 * 24));\n    })\n    .filter(lt => lt >= 0 && lt < 365);\n\n  const avgLeadTime = leadTimes.length > 0\n    ? Math.round(leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length)\n    : null;\n\n  // Weekend vs weekday bookings\n  const weekendBookings = unitReservations.filter(r => {\n    const checkin = new Date(r.check_in);\n    const day = checkin.getDay();\n    return day === 5 || day === 6;\n  }).length;\n\n  const weekendPercentage = unitReservations.length > 0\n    ? Math.round((weekendBookings / unitReservations.length) * 100)\n    : null;\n\n  // Occupancy next 30 days\n  const next30Days = unitAvailability.filter(a => {\n    const date = new Date(a.date);\n    const diff = (date - new Date()) / (1000 * 60 * 60 * 24);\n    return diff >= 0 && diff <= 30;\n  });\n\n  const bookedDays = next30Days.filter(a => a.status === 'blocked').length;\n  const occupancyRate = next30Days.length > 0\n    ? Math.round((bookedDays / next30Days.length) * 100)\n    : null;\n\n  // Average stay length\n  const avgNights = unitReservations.length > 0\n    ? Math.round(unitReservations.reduce((sum, r) => sum + (r.nights || 0), 0) / unitReservations.length)\n    : null;\n\n  unitStats[unit.id] = {\n    unit_name: unit.name,\n    total_bookings_6m: unitReservations.length,\n    avg_lead_time_days: avgLeadTime,\n    weekend_booking_percentage: weekendPercentage,\n    current_occupancy_30d: occupancyRate,\n    avg_stay_nights: avgNights\n  };\n});\n\n// Enrich notifications with context\nconst enrichedNotifications = notifications.map(notif => {\n  const stats = unitStats[notif.unit_id] || {};\n\n  // Get surrounding availability (±21 days)\n  const notifDate = new Date(notif.start_date);\n  const before21 = new Date(notifDate);\n  before21.setDate(before21.getDate() - 21);\n  const after21 = new Date(notifDate);\n  after21.setDate(after21.getDate() + 21);\n\n  const surroundingAvail = availability\n    .filter(a => {\n      const aDate = new Date(a.date);\n      return a.unit_id === notif.unit_id && aDate >= before21 && aDate <= after21;\n    })\n    .sort((a, b) => a.date.localeCompare(b.date))\n    .map(a => `${a.date}: ${a.status}`);\n\n  // Find gap size (consecutive available days)\n  const gapStart = new Date(notif.start_date);\n  const gapEnd = new Date(notif.end_date);\n  const gapDays = Math.floor((gapEnd - gapStart) / (1000 * 60 * 60 * 24)) + 1;\n\n  // Current restrictions for this date\n  const currentRestrictions = prices\n    .filter(p =>\n      p.unit_id === notif.unit_id &&\n      p.date >= notif.start_date &&\n      p.date <= notif.end_date\n    );\n\n  return {\n    ...notif,\n    stats,\n    gap_days: gapDays,\n    surrounding_availability: surroundingAvail,\n    current_cta: currentRestrictions[0]?.cta || 'brak',\n    current_ctd: currentRestrictions[0]?.ctd || 'brak',\n    current_min: currentRestrictions[0]?.min || 'brak'\n  };\n});\n\n// Build Gemini prompt with new strategy\nconst prompt = `Jesteś ekspertem od revenue management dla wynajmu krótkoterminowego w Polsce.\n\nZADANIE: Zaproponuj optymalne ustawienia CTA (Close To Arrival), CTD (Close To Departure) i MIN dla ${notifications.length} powiadomień o lukach w dostępności.\n\nKLUCZOWA STRATEGIA - MIN > CTA/CTD:\nCelem NIE jest blokowanie, ale STRATEGICZNE pozwalanie na dłuższe pobyty:\n\n1. Jednodniowa luka między rezerwacjami:\n   → 1 dzień PUSTY (bez restrykcji)\n   → To pozwala przedłużyć poprzednią rezerwację o 1 dzień\n\n2. Dwudniowa luka:\n   → 1 dzień pusty + 1 dzień z MIN=3\n   → Nikt nie weźmie 2 dni (MIN=3), ale można przedłużyć lub wziąć 3+\n\n3. Trzeciodniowa+ luka:\n   → 1 dzień pusty\n   → 2-3 dni: CTA=7-14, CTD=0, MIN=3\n   → Reszta: bez restrykcji\n   → Pozwala na rezerwacje 3+ dni, blokuje 1-2 dniowe\n\n4. Przykład działania (ze screena):\n   [REZ] | 1 pusty | CTA✓CTD✓MIN=3 | CTA✓CTD✓MIN=3 | puste... | [REZ]\n   - Jednodniówka: NIE (MIN=3)\n   - Dwudniówka: NIE (MIN=3)\n   - Przedłużenie: TAK (1 pusty dzień)\n   - 3+ dni: TAK (1 pusty + 2 z restrykcjami + reszta)\n   - Tydzień: TAK (zabiera całą lukę)\n\nDEFINICJE:\n- CTA = ile dni przed przyjazdem przestajemy przyjmować rezerwacje\n- CTD = ile dni przed wyjazdem przestajemy przyjmować rezerwacje\n- MIN = minimalna długość pobytu (GŁÓWNY MECHANIZM)\n\nDANE O POWIADOMIENIACH:\n${enrichedNotifications.map((n, i) => `\n${i + 1}. ${n.property_name} - ${n.unit_name}\n   Luka: ${n.start_date} do ${n.end_date} (${n.gap_days} dni, ${n.change_type})\n   Obecne: CTA=${n.current_cta}, CTD=${n.current_ctd}, MIN=${n.current_min}\n\n   Statystyki:\n   - Średni lead time: ${n.stats.avg_lead_time_days || 'brak'} dni\n   - Weekend bookings: ${n.stats.weekend_booking_percentage || 'brak'}%\n   - Obłożenie 30d: ${n.stats.current_occupancy_30d || 'brak'}%\n   - Średnia długość: ${n.stats.avg_stay_nights || 'brak'} nocy\n   - Rezerwacji 6m: ${n.stats.total_bookings_6m || 0}\n\n   Otoczenie (±21 dni):\n${n.surrounding_availability.slice(0, 30).join('\\n')}\n`).join('\\n')}\n\nZASADY OPTYMALIZACJI:\n\n1. GAP 1 DZIEŃ:\n   → suggested_cta: 0, suggested_ctd: 0, suggested_min: 1\n   → reasoning: \"Pusty dzień pozwala przedłużyć poprzednią rezerwację\"\n\n2. GAP 2 DNI:\n   → Dzień 1: CTA=0, CTD=0, MIN=1 (pusty)\n   → Dzień 2: CTA=7-14, CTD=0, MIN=3\n   → reasoning: \"1 dzień pusty na przedłużenie, 2gi z MIN=3 blokuje dwudniówki\"\n\n3. GAP 3+ DNI:\n   → Dzień 1: pusty (CTA=0, CTD=0, MIN=1)\n   → Dni 2-3: CTA=7-14, CTD=0, MIN=3\n   → Reszta: CTA=0, CTD=0, MIN=2\n   → reasoning: \"Strategiczne MIN=3 wypełnia luki dłuższymi pobytami\"\n\n4. WEEKEND GAP (piątek-niedziela) + >70% weekend bookings:\n   → CTA=7-14, MIN=2-3 (na wszystkie dni)\n   → reasoning: \"Weekend premium, zachęcamy do weekendowych pobytów\"\n\n5. LOW SEASON (styczeń-marzec, listopad) + occupancy <40%:\n   → CTA=0-3, MIN=2 (łagodne restrykcje)\n   → reasoning: \"Sezon niski, nie blokuj zbyt mocno\"\n\n6. HIGH SEASON + długi lead time (>21 dni):\n   → CTA=14-21, MIN=3-5\n   → reasoning: \"Długi lead time pozwala czekać na dłuższe rezerwacje\"\n\nWAŻNE:\n- MIN jest GŁÓWNYM narzędziem (nie CTA/CTD!)\n- Zawsze pozostaw 1 pusty dzień po rezerwacji (przedłużenie)\n- Nie blokuj całej luki - pozwól na dłuższe pobyty\n- CTA/CTD wspierają MIN, ale MIN jest kluczowy\n\nOUTPUT: TYLKO VALID JSON, BEZ MARKDOWN\nDla każdego dnia w luce osobny suggestion:\n{\n  \"suggestions\": [\n    {\n      \"notification_id\": \"uuid\",\n      \"unit_id\": \"uuid\",\n      \"unit_name\": \"Domek 4D\",\n      \"property_name\": \"DW Maryla\",\n      \"date_start\": \"2026-06-15\",\n      \"date_end\": \"2026-06-15\",\n      \"suggested_cta\": 0,\n      \"suggested_ctd\": 0,\n      \"suggested_min\": 1,\n      \"confidence\": 95,\n      \"reasoning\": \"Dzień 1 luki: pusty na przedłużenie poprzedniej rezerwacji\",\n      \"expected_impact\": \"Możliwość przedłużenia lub start dłuższej rezerwacji\"\n    },\n    {\n      \"notification_id\": \"uuid\",\n      \"unit_id\": \"uuid\",\n      \"unit_name\": \"Domek 4D\",\n      \"property_name\": \"DW Maryla\",\n      \"date_start\": \"2026-06-16\",\n      \"date_end\": \"2026-06-16\",\n      \"suggested_cta\": 10,\n      \"suggested_ctd\": 0,\n      \"suggested_min\": 3,\n      \"confidence\": 90,\n      \"reasoning\": \"Dzień 2 luki: MIN=3 blokuje dwudniówki, CTA=10 daje czas na booking\",\n      \"expected_impact\": \"Wypełnienie luki rezerwacją 3+ dni zamiast 1-2 dniowej\"\n    }\n  ]\n}`;\n\nreturn [{\n  json: {\n    prompt,\n    notifications: enrichedNotifications\n  }\n}];"
       },
       "id": "build-prompt",
       "name": "Build Context & Prompt",
@@ -325,14 +325,14 @@
       "main": [
         [
           {
-            "node": "Extract IDs",
+            "node": "Extract IDs & Date Range",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Extract IDs": {
+    "Extract IDs & Date Range": {
       "main": [
         [
           {
@@ -454,6 +454,6 @@
   "staticData": null,
   "tags": [],
   "triggerCount": 0,
-  "updatedAt": "2026-01-27T00:00:00.000Z",
-  "versionId": "1"
+  "updatedAt": "2026-01-27T01:00:00.000Z",
+  "versionId": "2"
 }
