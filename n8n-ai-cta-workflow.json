@@ -1,5 +1,5 @@
 {
-  "name": "AI CTA/CTD Optimization v3",
+  "name": "AI CTA/CTD Optimization v4",
   "nodes": [
     {
       "parameters": {
@@ -249,15 +249,25 @@
     },
     {
       "parameters": {
+        "jsCode": "const allSuggestions = $input.all();\n\nreturn [{\n  json: {\n    success: true,\n    count: allSuggestions.length,\n    generated_at: new Date().toISOString(),\n    suggestions: allSuggestions.map(s => s.json)\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"success\": true, \"count\": $input.all().length, \"generated_at\": new Date().toISOString() } }}",
+        "responseBody": "={{ $json }}",
         "options": {}
       },
       "id": "webhook-response",
       "name": "Respond to Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [2000, 300]
+      "position": [2220, 300]
     }
   ],
   "connections": {
@@ -374,6 +384,17 @@
       "main": [
         [
           {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
             "node": "Respond to Webhook",
             "type": "main",
             "index": 0
@@ -389,6 +410,6 @@
   "staticData": null,
   "tags": [],
   "triggerCount": 0,
-  "updatedAt": "2026-01-27T02:00:00.000Z",
-  "versionId": "3"
+  "updatedAt": "2026-01-27T03:00:00.000Z",
+  "versionId": "4"
 }

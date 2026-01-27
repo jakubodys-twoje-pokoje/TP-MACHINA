@@ -825,6 +825,8 @@ export const CalendarView: React.FC = () => {
     try {
       const notificationIds = unreadNotifications.map(n => n.id);
 
+      console.log('🤖 Sending to AI:', { notification_ids: notificationIds });
+
       const response = await fetch('https://n8n.twojepokoje.com.pl/webhook/181df836-8c89-47d2-b611-07cd556473f8', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -833,13 +835,28 @@ export const CalendarView: React.FC = () => {
         })
       });
 
-      const result = await response.json();
-      console.log('AI suggestions:', result);
-      alert(`AI wygenerował sugestie!\n\nSprawdź konsolę przeglądarki (F12) aby zobaczyć szczegóły.`);
+      console.log('🤖 Response status:', response.status, response.statusText);
+
+      const responseText = await response.text();
+      console.log('🤖 Response text:', responseText);
+
+      if (!response.ok) {
+        throw new Error(`Webhook error: ${response.status} ${response.statusText}\n${responseText}`);
+      }
+
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (e) {
+        throw new Error(`Invalid JSON response: ${responseText}`);
+      }
+
+      console.log('🤖 AI suggestions:', result);
+      alert(`AI wygenerował sugestie!\n\nLiczba sugestii: ${result.count || 'nieznana'}\n\nSprawdź konsolę przeglądarki (F12) aby zobaczyć szczegóły.`);
 
     } catch (error: any) {
-      console.error('AI optimization failed:', error);
-      alert(`Błąd generowania sugestii AI: ${error.message}`);
+      console.error('❌ AI optimization failed:', error);
+      alert(`Błąd generowania sugestii AI:\n\n${error.message}`);
     } finally {
       setIsLoadingAI(false);
     }
