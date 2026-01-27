@@ -1,4 +1,4 @@
-# AI Automation dla CTA/CTD - Dokumentacja
+# AI Automation dla CTA/CTD - Pure n8n Workflow
 
 ## Przegląd
 System automatycznie proponuje optymalne ustawienia CTA (Close To Arrival) i CTD (Close To Departure) na podstawie:
@@ -7,26 +7,89 @@ System automatycznie proponuje optymalne ustawienia CTA (Close To Arrival) i CTD
 - Obecnej dostępności i luk w kalendarzu
 - Obecnych restrykcji
 
+**Koszt:** ~$0.003 (0.3 centa) per 35 powiadomień
+**Czas:** 2-5 sekund
+
 ## Architektura
 
 ```
-[Frontend Button]
-    ↓ (notification_ids[])
+[Frontend Button "🤖 Zatrudnij AI"]
+    ↓ POST notification_ids[]
 [n8n Webhook]
     ↓
-[Supabase Edge Function: get-ai-context]
-    ↓ (enriched context)
+[Supabase: Query notifications, reservations, availability, prices]
+    ↓
+[Function: Build context & Gemini prompt]
+    ↓
 [Gemini Flash API]
-    ↓ (AI suggestions)
-[Frontend: Review & Apply]
+    ↓
+[Supabase: Insert to ai_suggestions table]
+    ↓
+[Frontend: Show suggestions modal]
 ```
 
-## n8n Workflow Setup
+## 1. Supabase Setup
+
+### Tabela `ai_suggestions`
+
+```sql
+CREATE TABLE ai_suggestions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  notification_id UUID REFERENCES notifications(id),
+  property_id UUID REFERENCES properties(id),
+  unit_id UUID REFERENCES units(id),
+  property_name TEXT,
+  unit_name TEXT,
+  date_start DATE,
+  date_end DATE,
+  suggested_cta INT,
+  suggested_ctd INT,
+  suggested_min INT,
+  confidence INT CHECK (confidence >= 0 AND confidence <= 100),
+  reasoning TEXT,
+  expected_impact TEXT,
+  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'applied', 'rejected')),
+  applied_at TIMESTAMPTZ,
+  applied_by UUID REFERENCES auth.users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+
+  INDEX idx_ai_suggestions_status (status),
+  INDEX idx_ai_suggestions_created_at (created_at DESC)
+);
+
+-- Enable RLS
+ALTER TABLE ai_suggestions ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Users can read their suggestions
+CREATE POLICY "Users can read ai_suggestions" ON ai_suggestions
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+-- Policy: Service role can insert
+CREATE POLICY "Service can insert ai_suggestions" ON ai_suggestions
+  FOR INSERT WITH CHECK (true);
+```
+
+### Tabela `ai_suggestion_feedback` (opcjonalna - do uczenia)
+
+```sql
+CREATE TABLE ai_suggestion_feedback (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  suggestion_id UUID REFERENCES ai_suggestions(id),
+  worked BOOLEAN, -- czy faktycznie wypełniło lukę
+  gap_filled_at TIMESTAMPTZ, -- kiedy luka została wypełniona
+  user_feedback TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+## 2. n8n Workflow Setup
 
 ### Node 1: Webhook Trigger
-- Method: POST
-- Path: `/webhook/ai-cta-suggestions`
-- Body:
+**Type:** Webhook
+**Method:** POST
+**Path:** `/webhook/ai-cta-suggestions`
+
+**Expected Body:**
 ```json
 {
   "notification_ids": ["uuid1", "uuid2", "..."],
@@ -34,30 +97,226 @@ System automatycznie proponuje optymalne ustawienia CTA (Close To Arrival) i CTD
 }
 ```
 
-### Node 2: Fetch Context from Supabase
-- **HTTP Request Node**
-- Method: POST
-- URL: `https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/get-ai-context`
-- Headers:
-  - `Authorization: Bearer [SUPABASE_ANON_KEY]`
-  - `Content-Type: application/json`
-- Body:
-```json
-{
-  "notification_ids": {{ $json.body.notification_ids }}
-}
+---
+
+### Node 2: Fetch Notifications
+**Type:** Supabase Node
+**Operation:** Get rows
+**Table:** `notifications`
+
+**Filters:**
+- `id` → `in` → `{{ $json.body.notification_ids }}`
+
+**Select fields:**
+```
+id, property_id, unit_id, property_name, unit_name,
+change_type, start_date, end_date, created_at
 ```
 
-### Node 3: Build Gemini Prompt
-- **Function Node**
-- Code:
-```javascript
-const context = $input.item.json;
+**Sort:** `start_date` ASC
 
-// Build structured prompt
+---
+
+### Node 3: Extract IDs
+**Type:** Function Node
+
+```javascript
+// Extract unique property and unit IDs
+const notifications = $input.all();
+const notifData = notifications.map(n => n.json);
+
+const unitIds = [...new Set(notifData.map(n => n.unit_id))];
+const propertyIds = [...new Set(notifData.map(n => n.property_id))];
+
+return [{
+  json: {
+    notifications: notifData,
+    unit_ids: unitIds,
+    property_ids: propertyIds
+  }
+}];
+```
+
+---
+
+### Node 4: Fetch Reservation History (last 6 months)
+**Type:** Supabase Node
+**Operation:** Get rows
+**Table:** `reservations`
+
+**Filters:**
+- `unit_id` → `in` → `{{ $json.unit_ids }}`
+- `check_in` → `gte` → `{{ new Date(Date.now() - 180*24*60*60*1000).toISOString().split('T')[0] }}`
+
+**Select fields:**
+```
+unit_id, check_in, check_out, status, created_at, nights, total_price
+```
+
+**Sort:** `check_in` DESC
+
+---
+
+### Node 5: Fetch Current Availability (next 90 days)
+**Type:** Supabase Node
+**Operation:** Get rows
+**Table:** `availability`
+
+**Filters:**
+- `unit_id` → `in` → `{{ $node["Extract IDs"].json.unit_ids }}`
+- `date` → `gte` → `{{ new Date().toISOString().split('T')[0] }}`
+- `date` → `lte` → `{{ new Date(Date.now() + 90*24*60*60*1000).toISOString().split('T')[0] }}`
+
+**Select fields:**
+```
+unit_id, date, status
+```
+
+---
+
+### Node 6: Fetch Current Prices/Restrictions (next 90 days)
+**Type:** Supabase Node
+**Operation:** Get rows
+**Table:** `prices`
+
+**Filters:**
+- `unit_id` → `in` → `{{ $node["Extract IDs"].json.unit_ids }}`
+- `date` → `gte` → `{{ new Date().toISOString().split('T')[0] }}`
+- `date` → `lte` → `{{ new Date(Date.now() + 90*24*60*60*1000).toISOString().split('T')[0] }}`
+
+**Select fields:**
+```
+unit_id, date, cta, ctd, min, price
+```
+
+---
+
+### Node 7: Fetch Units
+**Type:** Supabase Node
+**Operation:** Get rows
+**Table:** `units`
+
+**Filters:**
+- `id` → `in` → `{{ $node["Extract IDs"].json.unit_ids }}`
+
+**Select fields:**
+```
+id, name, property_id, base_price
+```
+
+---
+
+### Node 8: Build Context & Prompt
+**Type:** Function Node
+
+```javascript
+// Collect all data
+const notifications = $node["Extract IDs"].json.notifications;
+const reservations = $node["Fetch Reservation History"].all().map(n => n.json);
+const availability = $node["Fetch Current Availability"].all().map(n => n.json);
+const prices = $node["Fetch Current Prices/Restrictions"].all().map(n => n.json);
+const units = $node["Fetch Units"].all().map(n => n.json);
+
+// Calculate statistics per unit
+const unitStats = {};
+
+units.forEach(unit => {
+  const unitReservations = reservations.filter(r => r.unit_id === unit.id);
+  const unitAvailability = availability.filter(a => a.unit_id === unit.id);
+
+  // Lead time calculation
+  const leadTimes = unitReservations
+    .filter(r => r.created_at && r.check_in)
+    .map(r => {
+      const created = new Date(r.created_at);
+      const checkin = new Date(r.check_in);
+      return Math.floor((checkin - created) / (1000 * 60 * 60 * 24));
+    })
+    .filter(lt => lt >= 0 && lt < 365);
+
+  const avgLeadTime = leadTimes.length > 0
+    ? Math.round(leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length)
+    : null;
+
+  // Weekend vs weekday bookings
+  const weekendBookings = unitReservations.filter(r => {
+    const checkin = new Date(r.check_in);
+    const day = checkin.getDay();
+    return day === 5 || day === 6; // Friday or Saturday
+  }).length;
+
+  const weekendPercentage = unitReservations.length > 0
+    ? Math.round((weekendBookings / unitReservations.length) * 100)
+    : null;
+
+  // Occupancy next 30 days
+  const next30Days = unitAvailability.filter(a => {
+    const date = new Date(a.date);
+    const diff = (date - new Date()) / (1000 * 60 * 60 * 24);
+    return diff >= 0 && diff <= 30;
+  });
+
+  const bookedDays = next30Days.filter(a => a.status === 'blocked').length;
+  const occupancyRate = next30Days.length > 0
+    ? Math.round((bookedDays / next30Days.length) * 100)
+    : null;
+
+  // Average stay length
+  const avgNights = unitReservations.length > 0
+    ? Math.round(unitReservations.reduce((sum, r) => sum + (r.nights || 0), 0) / unitReservations.length)
+    : null;
+
+  unitStats[unit.id] = {
+    unit_name: unit.name,
+    total_bookings_6m: unitReservations.length,
+    avg_lead_time_days: avgLeadTime,
+    weekend_booking_percentage: weekendPercentage,
+    current_occupancy_30d: occupancyRate,
+    avg_stay_nights: avgNights
+  };
+});
+
+// Enrich notifications with context
+const enrichedNotifications = notifications.map(notif => {
+  const stats = unitStats[notif.unit_id] || {};
+
+  // Get surrounding availability (±7 days)
+  const notifDate = new Date(notif.start_date);
+  const before7 = new Date(notifDate);
+  before7.setDate(before7.getDate() - 7);
+  const after7 = new Date(notifDate);
+  after7.setDate(after7.getDate() + 7);
+
+  const surroundingAvail = availability
+    .filter(a => {
+      const aDate = new Date(a.date);
+      return a.unit_id === notif.unit_id && aDate >= before7 && aDate <= after7;
+    })
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map(a => `${a.date}: ${a.status}`);
+
+  // Current restrictions for this date
+  const currentRestrictions = prices
+    .filter(p =>
+      p.unit_id === notif.unit_id &&
+      p.date >= notif.start_date &&
+      p.date <= notif.end_date
+    );
+
+  return {
+    ...notif,
+    stats,
+    surrounding_availability: surroundingAvail.slice(0, 15),
+    current_cta: currentRestrictions[0]?.cta || 'brak',
+    current_ctd: currentRestrictions[0]?.ctd || 'brak',
+    current_min: currentRestrictions[0]?.min || 'brak'
+  };
+});
+
+// Build Gemini prompt
 const prompt = `Jesteś ekspertem od revenue management dla wynajmu krótkoterminowego w Polsce.
 
-ZADANIE: Zaproponuj optymalne ustawienia CTA (Close To Arrival) i CTD (Close To Departure) dla ${context.summary.total_notifications} powiadomień o lukach w dostępności.
+ZADANIE: Zaproponuj optymalne ustawienia CTA (Close To Arrival) i CTD (Close To Departure) dla ${notifications.length} powiadomień o lukach w dostępności.
 
 DEFINICJE:
 - CTA = ile dni przed przyjazdem przestajemy przyjmować rezerwacje (0 = można bookować do ostatniej chwili)
@@ -65,89 +324,92 @@ DEFINICJE:
 - MIN = minimalna długość pobytu w dniach
 
 CELE:
-1. Wypełnić jednodniowe luki między rezerwacjami (najwyższy priorytet)
+1. Wypełnić jednodniowe luki między rezerwacjami (NAJWYŻSZY PRIORYTET)
 2. Zoptymalizować wykorzystanie kalendarza
 3. Nie blokować długich, wartościowych rezerwacji
 4. Uwzględnić wzorce bookingów i sezonowość
 
 DANE O POWIADOMIENIACH:
-${context.notifications.map((n, i) => `
+${enrichedNotifications.map((n, i) => `
 ${i + 1}. ${n.property_name} - ${n.unit_name}
-   - Luka: ${n.start_date} do ${n.end_date} (${n.change_type})
-   - Obecne ustawienia: CTA=${n.current_restrictions[0]?.cta || 'brak'}, CTD=${n.current_restrictions[0]?.ctd || 'brak'}
+   Luka: ${n.start_date} do ${n.end_date} (${n.change_type})
+   Obecne: CTA=${n.current_cta}, CTD=${n.current_ctd}, MIN=${n.current_min}
 
-   Statystyki jednostki:
-   - Średni lead time: ${n.unit_stats?.avg_lead_time_days || 'brak danych'} dni
-   - Rezerwacje weekend vs weekday: ${n.unit_stats?.weekend_booking_percentage || 'brak'}% weekendy
-   - Obecne obłożenie (30 dni): ${n.unit_stats?.current_occupancy_30d || 'brak'}%
-   - Średnia długość pobytu: ${n.unit_stats?.avg_stay_nights || 'brak'} nocy
-   - Rezerwacje ostatnie 6 mies: ${n.unit_stats?.total_bookings_6m || 0}
+   Statystyki:
+   - Średni lead time: ${n.stats.avg_lead_time_days || 'brak'} dni
+   - Weekend bookings: ${n.stats.weekend_booking_percentage || 'brak'}%
+   - Obłożenie 30d: ${n.stats.current_occupancy_30d || 'brak'}%
+   - Średnia długość: ${n.stats.avg_stay_nights || 'brak'} nocy
+   - Rezerwacji 6m: ${n.stats.total_bookings_6m || 0}
 
-   Otoczenie (±7 dni):
-   ${n.surrounding_availability.slice(0, 15).map(a => `   ${a.date}: ${a.status}`).join('\n')}
+   Otoczenie:
+${n.surrounding_availability.join('\n')}
 `).join('\n')}
 
 ZASADY OPTYMALIZACJI:
 1. Jednodniowa luka między rezerwacjami:
-   → CTA=7-14, CTD=0, MIN=2 (wypełni lukę, pozwoli na longer stays)
+   → CTA=7-14, CTD=0, MIN=2 (wypełni lukę + longer stays)
 
-2. Luka 2-3 dni w sezonie wysokim:
+2. Luka 2-3 dni w sezonie:
    → CTA=3-7, CTD=0, MIN=2-3 (szansa na short break)
 
-3. Luka 4+ dni z niskim lead time (<10 dni):
-   → CTA=0-3, CTD=0, MIN=2 (zachęć do last-minute)
+3. Luka 4+ dni z niskim lead time (<10):
+   → CTA=0-3, CTD=0, MIN=2 (last-minute)
 
 4. Luka w low season z długim lead time:
-   → CTA=14-21, CTD=0, MIN=3-5 (promuj dłuższe pobyty)
+   → CTA=14-21, CTD=0, MIN=3-5 (dłuższe pobyty)
 
-5. Weekend gap (Pt-Nd):
-   → Jeśli unit ma >70% weekend bookings: CTA=7-14, MIN=2-3
+5. Weekend gap + >70% weekend bookings:
+   → CTA=7-14, MIN=2-3
 
-6. Nie ustawiaj agresywnych restrykcji jeśli:
+6. NIE ustawiaj agresywnych restrykcji jeśli:
    - Occupancy <40%
    - Lead time >30 dni
    - Sezon niski (styczeń-marzec, listopad)
 
-OUTPUT FORMAT (JSON):
+OUTPUT: TYLKO VALID JSON, BEZ MARKDOWN
 {
   "suggestions": [
     {
       "notification_id": "uuid",
       "unit_id": "uuid",
-      "unit_name": "Domek 4D",
-      "property_name": "DW Maryla",
-      "date_range": {
-        "start": "2026-06-15",
-        "end": "2026-06-16"
-      },
+      "unit_name": "...",
+      "property_name": "...",
+      "date_start": "2026-06-15",
+      "date_end": "2026-06-16",
       "suggested_cta": 7,
       "suggested_ctd": 0,
       "suggested_min": 2,
       "confidence": 85,
-      "reasoning": "Jednodniowa luka między rezerwacjami. CTA=7 da czas na wypełnienie, CTD=0 pozwala na check-out tego samego dnia. MIN=2 wypełni lukę i może przedłużyć wcześniejszy pobyt.",
-      "expected_impact": "Wysoka szansa na wypełnienie luki, zachowanie flexibility dla longer stays"
+      "reasoning": "Jednodniowa luka. CTA=7 da czas na wypełnienie, CTD=0 flexibility, MIN=2 wypełni lukę.",
+      "expected_impact": "Wysoka szansa na wypełnienie, zachowanie flexibility"
     }
-  ],
-  "summary": {
-    "total_suggestions": 35,
-    "high_confidence": 28,
-    "medium_confidence": 7,
-    "avg_confidence": 82
+  ]
+}`;
+
+return [{
+  json: {
+    prompt,
+    notifications: enrichedNotifications
   }
-}
-
-GENERUJ TYLKO VALID JSON, BEZ MARKDOWN.`;
-
-return { json: { prompt } };
+}];
 ```
 
-### Node 4: Call Gemini API
-- **HTTP Request Node**
-- Method: POST
-- URL: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=[YOUR_API_KEY]`
-- Headers:
-  - `Content-Type: application/json`
-- Body:
+---
+
+### Node 9: Call Gemini API
+**Type:** HTTP Request
+**Method:** POST
+**URL:** `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={{ $env.GEMINI_API_KEY }}`
+
+**Headers:**
+```json
+{
+  "Content-Type": "application/json"
+}
+```
+
+**Body:**
 ```json
 {
   "contents": [{
@@ -165,92 +427,184 @@ return { json: { prompt } };
 }
 ```
 
-### Node 5: Parse Gemini Response
-- **Function Node**
+---
+
+### Node 10: Parse Gemini Response
+**Type:** Function Node
+
 ```javascript
 const geminiResponse = $input.item.json;
+const notifications = $node["Build Context & Prompt"].json.notifications;
 
 // Extract JSON from Gemini response
 const text = geminiResponse.candidates[0].content.parts[0].text;
-let suggestions;
+let parsed;
 
 try {
-  suggestions = JSON.parse(text);
+  parsed = JSON.parse(text);
 } catch (e) {
-  // Fallback: try to extract JSON from markdown
+  // Fallback: extract JSON from markdown
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
-    suggestions = JSON.parse(jsonMatch[0]);
+    parsed = JSON.parse(jsonMatch[0]);
   } else {
     throw new Error('Failed to parse Gemini response');
   }
 }
 
-return {
+// Enrich suggestions with full notification data
+const enrichedSuggestions = parsed.suggestions.map(s => {
+  const notif = notifications.find(n => n.id === s.notification_id);
+  return {
+    notification_id: s.notification_id,
+    property_id: notif?.property_id,
+    unit_id: s.unit_id,
+    property_name: s.property_name,
+    unit_name: s.unit_name,
+    date_start: s.date_start,
+    date_end: s.date_end,
+    suggested_cta: s.suggested_cta,
+    suggested_ctd: s.suggested_ctd,
+    suggested_min: s.suggested_min,
+    confidence: s.confidence,
+    reasoning: s.reasoning,
+    expected_impact: s.expected_impact,
+    status: 'pending'
+  };
+});
+
+return [{
   json: {
-    success: true,
-    suggestions: suggestions.suggestions,
-    summary: suggestions.summary,
-    generated_at: new Date().toISOString()
+    suggestions: enrichedSuggestions
   }
-};
+}];
 ```
 
-### Node 6: Response
-- **Respond to Webhook Node**
-- Return parsed suggestions to frontend
+---
 
-## Frontend Integration
+### Node 11: Insert to Supabase
+**Type:** Supabase Node
+**Operation:** Insert rows
+**Table:** `ai_suggestions`
 
-### Button w notifications list
+**Rows:** `{{ $json.suggestions }}`
+
+**Options:**
+- Return inserted rows: ✓
+
+---
+
+### Node 12: Response to Webhook
+**Type:** Respond to Webhook
+
+**Response Body:**
+```json
+{
+  "success": true,
+  "suggestions": "{{ $json }}",
+  "count": "{{ $json.length }}",
+  "generated_at": "{{ new Date().toISOString() }}"
+}
+```
+
+---
+
+## 3. Frontend Integration
+
+### Button w Notifications List
+
 ```typescript
 // components/NotificationsList.tsx
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { AISuggestionsModal } from './AISuggestionsModal';
 
-const handleAIOptimization = async (selectedNotificationIds: string[]) => {
-  setIsLoadingAI(true);
+export function NotificationsList() {
+  const [selectedNotifications, setSelectedNotifications] = useState<string[]>([]);
+  const [isLoadingAI, setIsLoadingAI] = useState(false);
+  const [aiSuggestions, setAISuggestions] = useState(null);
+  const [showModal, setShowModal] = useState(false);
 
-  try {
-    const response = await fetch('https://your-n8n-instance.com/webhook/ai-cta-suggestions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        notification_ids: selectedNotificationIds,
-        user_id: user.id
-      })
-    });
+  const handleAIOptimization = async () => {
+    if (selectedNotifications.length === 0) return;
 
-    const aiSuggestions = await response.json();
+    setIsLoadingAI(true);
 
-    // Show modal with suggestions
-    setShowAISuggestionsModal(true);
-    setAISuggestions(aiSuggestions.suggestions);
+    try {
+      const response = await fetch('https://YOUR_N8N_INSTANCE.app.n8n.cloud/webhook/ai-cta-suggestions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notification_ids: selectedNotifications,
+          user_id: user.id
+        })
+      });
 
-  } catch (error) {
-    toast.error('AI suggestions failed');
-  } finally {
-    setIsLoadingAI(false);
-  }
-};
+      const result = await response.json();
 
-// Render button
-<Button
-  onClick={() => handleAIOptimization(selectedNotifications)}
-  disabled={selectedNotifications.length === 0 || isLoadingAI}
-  className="border-yellow-400 text-yellow-600"
->
-  {isLoadingAI ? 'AI pracuje...' : '🤖 Zatrudnij AI'}
-</Button>
+      if (result.success) {
+        setAISuggestions(result.suggestions);
+        setShowModal(true);
+      }
+    } catch (error) {
+      console.error('AI optimization failed:', error);
+      toast.error('Nie udało się wygenerować sugestii AI');
+    } finally {
+      setIsLoadingAI(false);
+    }
+  };
+
+  return (
+    <div>
+      {/* Notifications list with checkboxes */}
+
+      <div className="flex gap-2 mt-4">
+        <Button
+          onClick={handleAIOptimization}
+          disabled={selectedNotifications.length === 0 || isLoadingAI}
+          className="border-yellow-400 text-yellow-600 hover:bg-yellow-50"
+        >
+          {isLoadingAI ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              AI pracuje...
+            </>
+          ) : (
+            <>🤖 Zatrudnij AI ({selectedNotifications.length})</>
+          )}
+        </Button>
+      </div>
+
+      {showModal && (
+        <AISuggestionsModal
+          suggestions={aiSuggestions}
+          onClose={() => setShowModal(false)}
+          onApply={handleApplySuggestions}
+        />
+      )}
+    </div>
+  );
+}
 ```
 
-### Modal z sugestiami
+### AI Suggestions Modal
+
 ```typescript
 // components/AISuggestionsModal.tsx
+import { useState } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 
 interface AISuggestion {
+  id: string;
   notification_id: string;
   unit_name: string;
   property_name: string;
-  date_range: { start: string; end: string };
+  date_start: string;
+  date_end: string;
   suggested_cta: number;
   suggested_ctd: number;
   suggested_min: number;
@@ -259,160 +613,318 @@ interface AISuggestion {
   expected_impact: string;
 }
 
-const AISuggestionsModal = ({ suggestions, onApply, onClose }) => {
-  const [selectedSuggestions, setSelectedSuggestions] = useState<string[]>([]);
-
-  const handleApplyAll = async () => {
-    // Apply all high confidence (>80%) suggestions
-    const highConfidence = suggestions.filter(s => s.confidence > 80);
-    await applyAISuggestions(highConfidence);
-  };
+export function AISuggestionsModal({
+  suggestions,
+  onClose,
+  onApply
+}: {
+  suggestions: AISuggestion[];
+  onClose: () => void;
+  onApply: (suggestions: AISuggestion[]) => Promise<void>;
+}) {
+  const [selected, setSelected] = useState<string[]>(
+    // Pre-select high confidence suggestions
+    suggestions.filter(s => s.confidence > 80).map(s => s.id)
+  );
+  const [isApplying, setIsApplying] = useState(false);
 
   const handleApplySelected = async () => {
-    const toApply = suggestions.filter(s =>
-      selectedSuggestions.includes(s.notification_id)
-    );
-    await applyAISuggestions(toApply);
+    const toApply = suggestions.filter(s => selected.includes(s.id));
+    setIsApplying(true);
+
+    try {
+      await onApply(toApply);
+      onClose();
+    } catch (error) {
+      console.error('Failed to apply suggestions:', error);
+    } finally {
+      setIsApplying(false);
+    }
   };
+
+  const highConfidence = suggestions.filter(s => s.confidence > 80).length;
+  const mediumConfidence = suggestions.filter(s => s.confidence >= 60 && s.confidence <= 80).length;
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-w-5xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>🤖 Sugestie AI - CTA/CTD Optimization</DialogTitle>
-          <DialogDescription>
-            AI przeanalizowało {suggestions.length} powiadomień i wygenerowało sugestie
-          </DialogDescription>
+          <DialogTitle className="text-2xl">
+            🤖 Sugestie AI - Optymalizacja CTA/CTD
+          </DialogTitle>
+          <div className="flex gap-3 mt-2">
+            <Badge variant="success">{highConfidence} wysokiej pewności</Badge>
+            <Badge variant="warning">{mediumConfidence} średniej pewności</Badge>
+            <Badge variant="secondary">{suggestions.length} total</Badge>
+          </div>
         </DialogHeader>
 
-        <div className="space-y-4">
-          {suggestions.map(suggestion => (
-            <Card key={suggestion.notification_id} className={
-              suggestion.confidence > 80 ? 'border-green-400' : 'border-yellow-400'
-            }>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-lg">
-                      {suggestion.property_name} - {suggestion.unit_name}
-                    </CardTitle>
-                    <p className="text-sm text-gray-500">
-                      {suggestion.date_range.start} do {suggestion.date_range.end}
-                    </p>
+        <div className="space-y-3 mt-4">
+          {suggestions
+            .sort((a, b) => b.confidence - a.confidence)
+            .map(suggestion => (
+              <Card
+                key={suggestion.id}
+                className={`${
+                  suggestion.confidence > 80
+                    ? 'border-green-300 bg-green-50/50'
+                    : 'border-yellow-300 bg-yellow-50/50'
+                } transition-all hover:shadow-md`}
+              >
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1">
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <Checkbox
+                          checked={selected.includes(suggestion.id)}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setSelected([...selected, suggestion.id]);
+                            } else {
+                              setSelected(selected.filter(id => id !== suggestion.id));
+                            }
+                          }}
+                        />
+                        <span>{suggestion.property_name} - {suggestion.unit_name}</span>
+                      </CardTitle>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        {suggestion.date_start} {suggestion.date_start !== suggestion.date_end && `→ ${suggestion.date_end}`}
+                      </p>
+                    </div>
+                    <Badge
+                      variant={suggestion.confidence > 80 ? 'success' : 'warning'}
+                      className="text-base px-3 py-1"
+                    >
+                      {suggestion.confidence}%
+                    </Badge>
                   </div>
-                  <Badge variant={suggestion.confidence > 80 ? 'success' : 'warning'}>
-                    {suggestion.confidence}% pewności
-                  </Badge>
-                </div>
-              </CardHeader>
+                </CardHeader>
 
-              <CardContent>
-                <div className="grid grid-cols-3 gap-4 mb-4">
-                  <div className="bg-blue-50 p-3 rounded">
-                    <p className="text-xs text-gray-600">CTA</p>
-                    <p className="text-2xl font-bold text-blue-600">
-                      {suggestion.suggested_cta}
-                    </p>
+                <CardContent className="space-y-3">
+                  {/* CTA/CTD/MIN Display */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-blue-100 p-3 rounded-lg text-center">
+                      <p className="text-xs text-blue-700 font-medium">CTA</p>
+                      <p className="text-3xl font-bold text-blue-900">
+                        {suggestion.suggested_cta}
+                      </p>
+                      <p className="text-xs text-blue-600">dni przed</p>
+                    </div>
+                    <div className="bg-purple-100 p-3 rounded-lg text-center">
+                      <p className="text-xs text-purple-700 font-medium">CTD</p>
+                      <p className="text-3xl font-bold text-purple-900">
+                        {suggestion.suggested_ctd}
+                      </p>
+                      <p className="text-xs text-purple-600">dni przed</p>
+                    </div>
+                    <div className="bg-green-100 p-3 rounded-lg text-center">
+                      <p className="text-xs text-green-700 font-medium">MIN</p>
+                      <p className="text-3xl font-bold text-green-900">
+                        {suggestion.suggested_min}
+                      </p>
+                      <p className="text-xs text-green-600">nocy min</p>
+                    </div>
                   </div>
-                  <div className="bg-purple-50 p-3 rounded">
-                    <p className="text-xs text-gray-600">CTD</p>
-                    <p className="text-2xl font-bold text-purple-600">
-                      {suggestion.suggested_ctd}
-                    </p>
-                  </div>
-                  <div className="bg-green-50 p-3 rounded">
-                    <p className="text-xs text-gray-600">MIN</p>
-                    <p className="text-2xl font-bold text-green-600">
-                      {suggestion.suggested_min}
-                    </p>
-                  </div>
-                </div>
 
-                <div className="space-y-2">
-                  <div>
-                    <p className="text-sm font-semibold">Uzasadnienie:</p>
-                    <p className="text-sm text-gray-700">{suggestion.reasoning}</p>
+                  {/* Reasoning */}
+                  <div className="bg-white p-3 rounded-lg border">
+                    <p className="text-sm font-semibold text-gray-700 mb-1">
+                      💡 Uzasadnienie:
+                    </p>
+                    <p className="text-sm text-gray-600 leading-relaxed">
+                      {suggestion.reasoning}
+                    </p>
                   </div>
-                  <div>
-                    <p className="text-sm font-semibold">Oczekiwany efekt:</p>
-                    <p className="text-sm text-gray-700">{suggestion.expected_impact}</p>
-                  </div>
-                </div>
 
-                <Checkbox
-                  checked={selectedSuggestions.includes(suggestion.notification_id)}
-                  onCheckedChange={(checked) => {
-                    if (checked) {
-                      setSelectedSuggestions([...selectedSuggestions, suggestion.notification_id]);
-                    } else {
-                      setSelectedSuggestions(selectedSuggestions.filter(id => id !== suggestion.notification_id));
-                    }
-                  }}
-                  className="mt-3"
-                >
-                  Zastosuj tę sugestię
-                </Checkbox>
-              </CardContent>
-            </Card>
-          ))}
+                  {/* Expected Impact */}
+                  <div className="bg-white p-3 rounded-lg border">
+                    <p className="text-sm font-semibold text-gray-700 mb-1">
+                      📊 Oczekiwany efekt:
+                    </p>
+                    <p className="text-sm text-gray-600 leading-relaxed">
+                      {suggestion.expected_impact}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Anuluj</Button>
-          <Button
-            variant="secondary"
-            onClick={handleApplySelected}
-            disabled={selectedSuggestions.length === 0}
-          >
-            Zastosuj zaznaczone ({selectedSuggestions.length})
+        <DialogFooter className="gap-2 mt-6">
+          <Button variant="outline" onClick={onClose} disabled={isApplying}>
+            Anuluj
           </Button>
-          <Button onClick={handleApplyAll}>
-            Zastosuj wszystkie wysokie pewności
+          <Button
+            onClick={handleApplySelected}
+            disabled={selected.length === 0 || isApplying}
+          >
+            {isApplying ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Aplikuję...
+              </>
+            ) : (
+              `Zastosuj zaznaczone (${selected.length})`
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
-};
+}
 ```
 
-## Koszt Operacji
+### Apply Suggestions Function
+
+```typescript
+// lib/ai-suggestions.ts
+import { createClient } from '@/lib/supabase/client';
+
+export async function applyAISuggestions(suggestions: AISuggestion[]) {
+  const supabase = createClient();
+
+  // Group by unit for batch updates
+  const updatesByUnit = new Map<string, Array<{date: string, cta: number, ctd: number, min: number}>>();
+
+  for (const suggestion of suggestions) {
+    const dateStart = new Date(suggestion.date_start);
+    const dateEnd = new Date(suggestion.date_end);
+
+    // Generate all dates in range
+    const dates: string[] = [];
+    for (let d = new Date(dateStart); d <= dateEnd; d.setDate(d.getDate() + 1)) {
+      dates.push(d.toISOString().split('T')[0]);
+    }
+
+    if (!updatesByUnit.has(suggestion.unit_id)) {
+      updatesByUnit.set(suggestion.unit_id, []);
+    }
+
+    dates.forEach(date => {
+      updatesByUnit.get(suggestion.unit_id)!.push({
+        date,
+        cta: suggestion.suggested_cta,
+        ctd: suggestion.suggested_ctd,
+        min: suggestion.suggested_min
+      });
+    });
+  }
+
+  // Apply updates to prices table
+  for (const [unitId, updates] of updatesByUnit) {
+    for (const update of updates) {
+      await supabase
+        .from('prices')
+        .update({
+          cta: update.cta,
+          ctd: update.ctd,
+          min: update.min
+        })
+        .eq('unit_id', unitId)
+        .eq('date', update.date);
+    }
+  }
+
+  // Mark suggestions as applied
+  const suggestionIds = suggestions.map(s => s.id);
+  await supabase
+    .from('ai_suggestions')
+    .update({
+      status: 'applied',
+      applied_at: new Date().toISOString()
+    })
+    .in('id', suggestionIds);
+
+  // Send to Hotres API (if needed)
+  // ... your existing Hotres sync logic
+}
+```
+
+## 4. Koszty & Performance
 
 **Dla 35 powiadomień:**
-- Context: ~25K input tokens
-- Gemini response: ~5K output tokens
+- Input tokens: ~25-30K
+- Output tokens: ~3-5K
 - **Koszt: $0.003 (0.3 centa)**
 - Czas: 2-5 sekund
 
-**Miesięcznie (5x dziennie × 30 dni):**
-- ~150 wywołań
+**Miesięczne (5x/dzień × 30 dni):**
+- 150 wywołań
 - **~$0.45/miesiąc**
 
-## Deployment
+**ROI:** Jeśli zespół spędza 90% czasu na CTA/CTD (~10h/dzień):
+- Koszt AI: $0.45/miesiąc
+- Oszczędność czasu: ~80% z 10h = 8h dziennie
+- Zwrot: natychmiastowy
 
-```bash
-# 1. Deploy Edge Function
-supabase functions deploy get-ai-context
+## 5. Monitoring & Improvement
 
-# 2. Setup n8n workflow (import JSON)
-# 3. Get n8n webhook URL
-# 4. Update frontend with webhook URL
-# 5. Test with 2-3 notifications first
+### Track effectiveness
+
+```typescript
+// Po wypełnieniu luki, zapisz feedback
+async function trackSuggestionSuccess(suggestionId: string, gapFilled: boolean) {
+  await supabase
+    .from('ai_suggestion_feedback')
+    .insert({
+      suggestion_id: suggestionId,
+      worked: gapFilled,
+      gap_filled_at: gapFilled ? new Date().toISOString() : null
+    });
+}
 ```
 
-## Monitorowanie
+### Dostosuj prompt based on results
 
-Dodaj tabelę do śledzenia effectiveness:
-```sql
-CREATE TABLE ai_suggestion_feedback (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  suggestion_id UUID,
-  notification_id UUID,
-  applied BOOLEAN,
-  worked BOOLEAN, -- czy faktycznie wypełniło lukę
-  user_feedback TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
+Co miesiąc sprawdzaj:
+- Ile sugestii było applied
+- Ile faktycznie wypełniło luki
+- Adjust prompt zasady dla lepszych wyników
+
+## 6. Opcjonalne Ulepszenia
+
+### Auto-apply dla bardzo wysokiej pewności
+```javascript
+// W Node 11 (przed insertem do DB)
+const autoApply = parsed.suggestions.filter(s => s.confidence >= 95);
+const needsReview = parsed.suggestions.filter(s => s.confidence < 95);
+
+// Auto-apply immediately
+if (autoApply.length > 0) {
+  await applyToHotres(autoApply);
+}
 ```
 
-To pozwoli fine-tunować prompty based on real results.
+### Slack/Email notification
+```javascript
+// Po wygenerowaniu sugestii
+if (suggestions.length > 0) {
+  await fetch(SLACK_WEBHOOK, {
+    method: 'POST',
+    body: JSON.stringify({
+      text: `🤖 AI wygenerował ${suggestions.length} sugestii CTA/CTD. ${highConfidence} z wysoką pewnością.`
+    })
+  });
+}
+```
+
+### A/B Testing
+- 50% jednostek: AI suggestions
+- 50% jednostek: manual
+- Compare occupancy & revenue po 30 dniach
+
+---
+
+## FAQ
+
+**Q: Czy AI może coś zepsuć?**
+A: Nie, sugestie wymagają manual approval (chyba że włączysz auto-apply dla >95% confidence).
+
+**Q: Czy AI uczy się z moich decyzji?**
+A: Nie automatycznie, ale możesz periodycznie adjust prompt na podstawie `ai_suggestion_feedback`.
+
+**Q: Co jeśli Gemini zwróci złe dane?**
+A: Parse function ma fallback handling. W najgorszym wypadku: error message, żadne dane nie zostaną zmienione.
+
+**Q: Czy mogę to uruchomić automatycznie co noc?**
+A: Tak! W n8n dodaj Schedule Trigger zamiast Webhook. Fetch wszystkie pending notifications i generuj sugestie.
