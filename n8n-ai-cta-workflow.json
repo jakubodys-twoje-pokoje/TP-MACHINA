@@ -1,5 +1,5 @@
 {
-  "name": "AI CTA/CTD Optimization v5",
+  "name": "AI CTA/CTD Optimization v6",
   "nodes": [
     {
       "parameters": {
@@ -35,19 +35,6 @@
         "url": "=https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/notifications?id=in.({{ $json.notification_ids.join(',') }})&order=start_date.asc&select=id,property_id,unit_id,property_name,unit_name,change_type,start_date,end_date,created_at",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "supabaseApi",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "apikey",
-              "value": "={{ $credentials.serviceRole }}"
-            },
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $credentials.serviceRole }}"
-            }
-          ]
-        },
         "options": {}
       },
       "id": "fetch-notifications",
@@ -79,19 +66,6 @@
         "url": "=https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/availability?unit_id=in.({{ $json.unit_ids.join(',') }})&date=gte.{{ $json.date_range.from }}&date=lte.{{ $json.date_range.to }}&select=unit_id,date,status",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "supabaseApi",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "apikey",
-              "value": "={{ $credentials.serviceRole }}"
-            },
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $credentials.serviceRole }}"
-            }
-          ]
-        },
         "options": {}
       },
       "id": "fetch-availability",
@@ -112,19 +86,6 @@
         "url": "=https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/prices?unit_id=in.({{ $node[\"Extract IDs & Date Range\"].json.unit_ids.join(',') }})&date=gte.{{ $node[\"Extract IDs & Date Range\"].json.date_range.from }}&date=lte.{{ $node[\"Extract IDs & Date Range\"].json.date_range.to }}&select=unit_id,date,cta,ctd,min",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "supabaseApi",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "apikey",
-              "value": "={{ $credentials.serviceRole }}"
-            },
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $credentials.serviceRole }}"
-            }
-          ]
-        },
         "options": {}
       },
       "id": "fetch-prices",
@@ -145,19 +106,6 @@
         "url": "=https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/units?id=in.({{ $node[\"Extract IDs & Date Range\"].json.unit_ids.join(',') }})&select=id,name,property_id",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "supabaseApi",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "apikey",
-              "value": "={{ $credentials.serviceRole }}"
-            },
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $credentials.serviceRole }}"
-            }
-          ]
-        },
         "options": {}
       },
       "id": "fetch-units",
@@ -230,18 +178,6 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            {
-              "name": "apikey",
-              "value": "={{ $credentials.serviceRole }}"
-            },
-            {
-              "name": "Authorization",
-              "value": "=Bearer {{ $credentials.serviceRole }}"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            },
             {
               "name": "Prefer",
               "value": "return=representation"
@@ -458,6 +394,6 @@
   "staticData": null,
   "tags": [],
   "triggerCount": 0,
-  "updatedAt": "2026-01-27T04:00:00.000Z",
-  "versionId": "5"
+  "updatedAt": "2026-01-27T05:00:00.000Z",
+  "versionId": "6"
 }
