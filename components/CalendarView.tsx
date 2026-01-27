@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { Property, Availability, Unit, Notification, Price } from '../types';
-import { Loader2, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { Loader2, ChevronLeft, ChevronRight, RefreshCw, Sparkles } from 'lucide-react';
 
 export const CalendarView: React.FC = () => {
   const { id: propertyId } = useParams<{ id: string }>();
@@ -19,6 +19,7 @@ export const CalendarView: React.FC = () => {
   const [syncing, setSyncing] = useState(false);
   const [pricesData, setPricesData] = useState<Map<string, Price>>(new Map());
   const [priceChanges, setPriceChanges] = useState<Map<string, Partial<Price>>>(new Map());
+  const [isLoadingAI, setIsLoadingAI] = useState(false);
 
   // Hotres sync counter - separate for each property
   const getHotresSyncCount = (propertyId: string | null): { count: number; hourStart: number } => {
@@ -807,6 +808,43 @@ export const CalendarView: React.FC = () => {
     }
   };
 
+  const handleAIOptimization = async () => {
+    if (isLoadingAI) return;
+
+    if (unreadNotifications.length === 0) {
+      alert('Brak powiadomień do optymalizacji');
+      return;
+    }
+
+    if (!confirm(`Czy chcesz zatrudnić AI do optymalizacji ${unreadNotifications.length} powiadomień?\n\nAI zaproponuje ustawienia CTA/CTD/MIN na podstawie historii rezerwacji.`)) {
+      return;
+    }
+
+    setIsLoadingAI(true);
+
+    try {
+      const notificationIds = unreadNotifications.map(n => n.id);
+
+      const response = await fetch('https://n8n.twojepokoje.com.pl/webhook-test/181df836-8c89-47d2-b611-07cd556473f8', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notification_ids: notificationIds
+        })
+      });
+
+      const result = await response.json();
+      console.log('AI suggestions:', result);
+      alert(`AI wygenerował sugestie!\n\nSprawdź konsolę przeglądarki (F12) aby zobaczyć szczegóły.`);
+
+    } catch (error: any) {
+      console.error('AI optimization failed:', error);
+      alert(`Błąd generowania sugestii AI: ${error.message}`);
+    } finally {
+      setIsLoadingAI(false);
+    }
+  };
+
   const getStatusColor = (status?: Availability['status']) => {
     if (!status || status === 'available') return 'bg-green-600/50 hover:bg-green-600/70';
     return 'bg-red-600/50 hover:bg-red-600/70';
@@ -958,6 +996,28 @@ export const CalendarView: React.FC = () => {
                 </>
               )}
             </button>
+
+            {/* AI Optimization Button - only in notifications view */}
+            {viewMode === 'notifications' && unreadNotifications.length > 0 && (
+              <button
+                onClick={handleAIOptimization}
+                disabled={isLoadingAI}
+                className="flex items-center gap-2 px-3 py-2 text-xs bg-yellow-600 hover:bg-yellow-500 disabled:bg-yellow-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium"
+                title={`Zatrudnij AI do optymalizacji ${unreadNotifications.length} powiadomień`}
+              >
+                {isLoadingAI ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    AI pracuje...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={14} />
+                    🤖 Zatrudnij AI ({unreadNotifications.length})
+                  </>
+                )}
+              </button>
+            )}
 
             <input
               type="date"
