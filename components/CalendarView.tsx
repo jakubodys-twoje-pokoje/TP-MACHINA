@@ -901,38 +901,25 @@ export const CalendarView: React.FC = () => {
     }
   };
 
-  // Apply AI suggestion to prices
+  // Apply AI suggestion to staging (priceChanges) - does NOT send to Hotres yet
   const handleApplySuggestion = async (suggestion: AISuggestion) => {
     try {
-      // 1. Find the price record for this unit/date
-      const { data: priceData, error: fetchError } = await supabase
-        .from('prices')
-        .select('*')
-        .eq('unit_id', suggestion.unit_id)
-        .eq('date', suggestion.date_start)
-        .single();
+      const priceKey = `${suggestion.unit_id}_${suggestion.date_start}`;
 
-      if (fetchError) {
-        throw new Error(`Failed to fetch price record: ${fetchError.message}`);
-      }
-
-      // 2. Update price with AI suggestions
-      const { error: updateError } = await supabase
-        .from('prices')
-        .update({
+      // Add to staging area (priceChanges)
+      setPriceChanges(prev => {
+        const updated = new Map(prev);
+        updated.set(priceKey, {
           cta: suggestion.suggested_cta,
           ctd: suggestion.suggested_ctd,
           min: suggestion.suggested_min
-        })
-        .eq('id', priceData.id);
+        });
+        return updated;
+      });
 
-      if (updateError) {
-        throw new Error(`Failed to update price: ${updateError.message}`);
-      }
-
-      // 3. Mark suggestion as applied
+      // Mark suggestion as applied in database
       const { data: { user } } = await supabase.auth.getUser();
-      const { error: suggestionError } = await supabase
+      const { error } = await supabase
         .from('ai_suggestions')
         .update({
           status: 'applied',
@@ -941,40 +928,105 @@ export const CalendarView: React.FC = () => {
         })
         .eq('id', suggestion.id);
 
-      if (suggestionError) {
-        throw new Error(`Failed to update suggestion status: ${suggestionError.message}`);
+      if (error) {
+        throw new Error(`Failed to mark suggestion as applied: ${error.message}`);
       }
 
-      // 4. Refresh data
-      await fetchPricesData();
-      await fetchAISuggestions();
-      setSelectedSuggestion(null);
+      // Remove from aiSuggestions map (yellow cell disappears)
+      setAiSuggestions(prev => {
+        const updated = new Map(prev);
+        const key = `${suggestion.unit_id}-${suggestion.date_start}`;
+        updated.delete(key);
+        return updated;
+      });
 
-      alert('✅ Sugestia AI została zastosowana!');
+      setSelectedSuggestion(null);
+      // No alert - silent operation, user will send to Hotres later
     } catch (error: any) {
       console.error('Error applying suggestion:', error);
-      alert(`Błąd podczas aplikowania sugestii:\n\n${error.message}`);
+      alert(`Błąd podczas akceptowania sugestii:\n\n${error.message}`);
     }
   };
 
-  // Reject AI suggestion
+  // Reject AI suggestion - DELETE completely from database
   const handleRejectSuggestion = async (suggestion: AISuggestion) => {
     try {
       const { error } = await supabase
         .from('ai_suggestions')
-        .update({ status: 'rejected' })
+        .delete()
         .eq('id', suggestion.id);
 
       if (error) {
         throw new Error(error.message);
       }
 
-      await fetchAISuggestions();
+      // Remove from aiSuggestions map
+      setAiSuggestions(prev => {
+        const updated = new Map(prev);
+        const key = `${suggestion.unit_id}-${suggestion.date_start}`;
+        updated.delete(key);
+        return updated;
+      });
+
       setSelectedSuggestion(null);
-      alert('❌ Sugestia AI została odrzucona');
     } catch (error: any) {
       console.error('Error rejecting suggestion:', error);
       alert(`Błąd podczas odrzucania sugestii:\n\n${error.message}`);
+    }
+  };
+
+  // Accept all pending AI suggestions at once
+  const handleAcceptAll = async () => {
+    if (aiSuggestions.size === 0) {
+      alert('Brak sugestii AI do zaakceptowania');
+      return;
+    }
+
+    if (!confirm(`Czy chcesz zaakceptować wszystkie ${aiSuggestions.size} sugestii AI?\n\nZmiany zostaną dodane do staging i będą czekać na wysłanie do Hotres.`)) {
+      return;
+    }
+
+    try {
+      const suggestions = Array.from(aiSuggestions.values());
+
+      // Add all to priceChanges
+      setPriceChanges(prev => {
+        const updated = new Map(prev);
+        suggestions.forEach(suggestion => {
+          const priceKey = `${suggestion.unit_id}_${suggestion.date_start}`;
+          updated.set(priceKey, {
+            cta: suggestion.suggested_cta,
+            ctd: suggestion.suggested_ctd,
+            min: suggestion.suggested_min
+          });
+        });
+        return updated;
+      });
+
+      // Mark all as applied
+      const { data: { user } } = await supabase.auth.getUser();
+      const suggestionIds = suggestions.map(s => s.id);
+
+      const { error } = await supabase
+        .from('ai_suggestions')
+        .update({
+          status: 'applied',
+          applied_at: new Date().toISOString(),
+          applied_by: user?.email || null
+        })
+        .in('id', suggestionIds);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      // Clear all from view
+      setAiSuggestions(new Map());
+
+      alert(`✅ Zaakceptowano ${suggestions.length} sugestii AI!\n\nZmiany są w staging - kliknij "Wyślij do Hotres" aby je wysłać.`);
+    } catch (error: any) {
+      console.error('Error accepting all suggestions:', error);
+      alert(`Błąd podczas akceptowania sugestii:\n\n${error.message}`);
     }
   };
 
@@ -1181,6 +1233,17 @@ export const CalendarView: React.FC = () => {
                     🤖 Zatrudnij AI ({unreadNotifications.length})
                   </>
                 )}
+              </button>
+            )}
+
+            {aiSuggestions.size > 0 && (
+              <button
+                onClick={handleAcceptAll}
+                className="flex items-center gap-2 px-3 py-2 text-xs bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium"
+                title={`Zaakceptuj wszystkie ${aiSuggestions.size} sugestie AI`}
+              >
+                <Sparkles size={14} />
+                ✓ Akceptuj wszystkie ({aiSuggestions.size})
               </button>
             )}
 
@@ -1634,10 +1697,10 @@ export const CalendarView: React.FC = () => {
               {/* Action Buttons */}
               <div className="flex gap-3 pt-4 border-t border-slate-700">
                 <button
-                  onClick={() => handleApplySuggestion(selectedSuggestion)}
-                  className="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded transition-colors"
+                  onClick={() => setSelectedSuggestion(null)}
+                  className="flex-1 bg-slate-600 hover:bg-slate-700 text-white font-semibold py-3 px-4 rounded transition-colors"
                 >
-                  ✓ Zaakceptuj i zastosuj
+                  Zamknij
                 </button>
                 <button
                   onClick={() => handleRejectSuggestion(selectedSuggestion)}
@@ -1645,24 +1708,11 @@ export const CalendarView: React.FC = () => {
                 >
                   ✕ Odrzuć
                 </button>
-              </div>
-
-              {/* Feedback */}
-              <div className="flex gap-3 items-center justify-center pt-2">
-                <span className="text-slate-400 text-sm">Oceń sugestię:</span>
                 <button
-                  onClick={() => handleFeedback(selectedSuggestion, true)}
-                  className="text-2xl hover:scale-125 transition-transform"
-                  title="Dobra sugestia"
+                  onClick={() => handleApplySuggestion(selectedSuggestion)}
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded transition-colors"
                 >
-                  👍
-                </button>
-                <button
-                  onClick={() => handleFeedback(selectedSuggestion, false)}
-                  className="text-2xl hover:scale-125 transition-transform"
-                  title="Zła sugestia"
-                >
-                  👎
+                  ✓ Akceptuj
                 </button>
               </div>
             </div>
