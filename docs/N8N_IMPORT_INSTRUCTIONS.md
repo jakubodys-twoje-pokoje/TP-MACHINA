@@ -42,7 +42,7 @@ Musisz dodać credentials Supabase **TYLKO RAZ**, potem wszystkie node'y będą 
 2. Webhook będzie aktywny - wyślij test request:
 
 ```bash
-curl -X POST https://n8n.twojepokoje.com.pl/webhook-test/181df836-8c89-47d2-b611-07cd556473f8 \
+curl -X POST https://n8n.twojepokoje.com.pl/webhook/181df836-8c89-47d2-b611-07cd556473f8 \
   -H "Content-Type: application/json" \
   -d '{
     "notification_ids": ["jakiś-prawdziwy-uuid-z-bazy"]
@@ -56,14 +56,10 @@ curl -X POST https://n8n.twojepokoje.com.pl/webhook-test/181df836-8c89-47d2-b611
 
 1. Kliknij **"Active"** (toggle w prawym górnym rogu)
 2. Webhook będzie działał non-stop
-3. Zmień URL webhooka w frontendzie z `/webhook-test/` na `/webhook/`
+3. URL webhooka produkcyjnego: `https://n8n.twojepokoje.com.pl/webhook/181df836-8c89-47d2-b611-07cd556473f8`
 
-W `components/CalendarView.tsx` linia ~825, zmień:
+W `components/CalendarView.tsx` linia ~825:
 ```typescript
-// PRZED:
-const response = await fetch('https://n8n.twojepokoje.com.pl/webhook-test/181df836-8c89-47d2-b611-07cd556473f8', {
-
-// PO:
 const response = await fetch('https://n8n.twojepokoje.com.pl/webhook/181df836-8c89-47d2-b611-07cd556473f8', {
 ```
 

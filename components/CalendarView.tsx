@@ -825,7 +825,7 @@ export const CalendarView: React.FC = () => {
     try {
       const notificationIds = unreadNotifications.map(n => n.id);
 
-      const response = await fetch('https://n8n.twojepokoje.com.pl/webhook-test/181df836-8c89-47d2-b611-07cd556473f8', {
+      const response = await fetch('https://n8n.twojepokoje.com.pl/webhook/181df836-8c89-47d2-b611-07cd556473f8', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
