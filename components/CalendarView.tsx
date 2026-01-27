@@ -59,6 +59,7 @@ export const CalendarView: React.FC = () => {
     if (units.length > 0) {
       fetchQuarterAvailability();
       fetchPricesData();
+      fetchAISuggestions();
     }
   }, [selectedDate, units]);
 
@@ -854,7 +855,11 @@ export const CalendarView: React.FC = () => {
       }
 
       console.log('🤖 AI suggestions:', result);
-      alert(`AI wygenerował sugestie!\n\nLiczba sugestii: ${result.count || 'nieznana'}\n\nSprawdź konsolę przeglądarki (F12) aby zobaczyć szczegóły.`);
+
+      // Refresh AI suggestions to show them in calendar
+      await fetchAISuggestions();
+
+      alert(`✅ AI wygenerował ${result.count || 0} sugestii!\n\nZostały oznaczone ŻÓŁTYMI komórkami 🤖 w kalendarzu.\n\nKliknij na żółtą komórkę aby zobaczyć szczegóły i zaakceptować/odrzucić sugestię.`);
 
     } catch (error: any) {
       console.error('❌ AI optimization failed:', error);
@@ -862,6 +867,147 @@ export const CalendarView: React.FC = () => {
     } finally {
       setIsLoadingAI(false);
     }
+  };
+
+  // Fetch AI suggestions for current view
+  const fetchAISuggestions = async () => {
+    if (!propertyId || units.length === 0) return;
+
+    const startDate = new Date(selectedDate);
+    startDate.setDate(1);
+    const endDate = new Date(selectedDate);
+    endDate.setMonth(endDate.getMonth() + 3);
+
+    const { data, error } = await supabase
+      .from('ai_suggestions')
+      .select('*')
+      .eq('property_id', propertyId)
+      .eq('status', 'pending')
+      .gte('date_start', startDate.toISOString().split('T')[0])
+      .lte('date_end', endDate.toISOString().split('T')[0]);
+
+    if (error) {
+      console.error('Error fetching AI suggestions:', error);
+      return;
+    }
+
+    if (data) {
+      const suggestionsMap = new Map<string, AISuggestion>();
+      data.forEach((suggestion: AISuggestion) => {
+        const key = `${suggestion.unit_id}-${suggestion.date_start}`;
+        suggestionsMap.set(key, suggestion);
+      });
+      setAiSuggestions(suggestionsMap);
+    }
+  };
+
+  // Apply AI suggestion to prices
+  const handleApplySuggestion = async (suggestion: AISuggestion) => {
+    try {
+      // 1. Find the price record for this unit/date
+      const { data: priceData, error: fetchError } = await supabase
+        .from('prices')
+        .select('*')
+        .eq('unit_id', suggestion.unit_id)
+        .eq('date', suggestion.date_start)
+        .single();
+
+      if (fetchError) {
+        throw new Error(`Failed to fetch price record: ${fetchError.message}`);
+      }
+
+      // 2. Update price with AI suggestions
+      const { error: updateError } = await supabase
+        .from('prices')
+        .update({
+          cta: suggestion.suggested_cta,
+          ctd: suggestion.suggested_ctd,
+          min: suggestion.suggested_min
+        })
+        .eq('id', priceData.id);
+
+      if (updateError) {
+        throw new Error(`Failed to update price: ${updateError.message}`);
+      }
+
+      // 3. Mark suggestion as applied
+      const { data: { user } } = await supabase.auth.getUser();
+      const { error: suggestionError } = await supabase
+        .from('ai_suggestions')
+        .update({
+          status: 'applied',
+          applied_at: new Date().toISOString(),
+          applied_by: user?.email || null
+        })
+        .eq('id', suggestion.id);
+
+      if (suggestionError) {
+        throw new Error(`Failed to update suggestion status: ${suggestionError.message}`);
+      }
+
+      // 4. Refresh data
+      await fetchPricesData();
+      await fetchAISuggestions();
+      setSelectedSuggestion(null);
+
+      alert('✅ Sugestia AI została zastosowana!');
+    } catch (error: any) {
+      console.error('Error applying suggestion:', error);
+      alert(`Błąd podczas aplikowania sugestii:\n\n${error.message}`);
+    }
+  };
+
+  // Reject AI suggestion
+  const handleRejectSuggestion = async (suggestion: AISuggestion) => {
+    try {
+      const { error } = await supabase
+        .from('ai_suggestions')
+        .update({ status: 'rejected' })
+        .eq('id', suggestion.id);
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      await fetchAISuggestions();
+      setSelectedSuggestion(null);
+      alert('❌ Sugestia AI została odrzucona');
+    } catch (error: any) {
+      console.error('Error rejecting suggestion:', error);
+      alert(`Błąd podczas odrzucania sugestii:\n\n${error.message}`);
+    }
+  };
+
+  // Submit feedback (thumbs up/down)
+  const handleFeedback = async (suggestion: AISuggestion, isPositive: boolean) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+
+      const { error } = await supabase
+        .from('ai_suggestion_feedback')
+        .insert({
+          suggestion_id: suggestion.id,
+          user_email: user?.email || 'anonymous',
+          is_positive: isPositive,
+          comment: null
+        });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      alert(isPositive ? '👍 Dziękujemy za pozytywną opinię!' : '👎 Dziękujemy za feedback!');
+      setSelectedSuggestion(null);
+    } catch (error: any) {
+      console.error('Error submitting feedback:', error);
+      alert(`Błąd podczas zapisywania feedbacku:\n\n${error.message}`);
+    }
+  };
+
+  // Check if date has AI suggestion
+  const hasAISuggestion = (unitId: string, dateStr: string): AISuggestion | null => {
+    const key = `${unitId}-${dateStr}`;
+    return aiSuggestions.get(key) || null;
   };
 
   const getStatusColor = (status?: Availability['status']) => {
@@ -1257,8 +1403,13 @@ export const CalendarView: React.FC = () => {
                       const isSelected = dateStr === selectedDateStr;
                       const notifPosition = getNotificationPosition(unit.id, dateStr, idx);
 
+                      const aiSuggestion = hasAISuggestion(unit.id, dateStr);
                       const isBooked = status === 'booked';
-                      const cellClass = isBooked
+
+                      // Yellow cell for AI suggestion, otherwise green/red
+                      const cellClass = aiSuggestion
+                        ? 'h-7 rounded-sm transition-colors cursor-pointer bg-yellow-500/80 hover:bg-yellow-500/100 flex items-center justify-center text-black font-bold text-sm ring-2 ring-yellow-400'
+                        : isBooked
                         ? 'h-7 rounded-sm transition-colors cursor-pointer bg-red-600/60 hover:bg-red-600/80 flex items-center justify-center text-white font-bold text-sm'
                         : 'h-7 rounded-sm transition-colors cursor-pointer bg-green-600/60 hover:bg-green-600/80 flex items-center justify-center text-white font-bold text-sm';
 
@@ -1296,9 +1447,10 @@ export const CalendarView: React.FC = () => {
                                 {/* Colored cell with 0/1 */}
                                 <div
                                   className={cellClass}
-                                  title={`${unit.name} - ${dateStr}: ${status || 'available'}`}
+                                  title={aiSuggestion ? `🤖 AI Sugestia: CTA=${aiSuggestion.suggested_cta}, CTD=${aiSuggestion.suggested_ctd}, MIN=${aiSuggestion.suggested_min}` : `${unit.name} - ${dateStr}: ${status || 'available'}`}
+                                  onClick={() => aiSuggestion && setSelectedSuggestion(aiSuggestion)}
                                 >
-                                  {isBooked ? '0' : '1'}
+                                  {aiSuggestion ? '🤖' : (isBooked ? '0' : '1')}
                                 </div>
 
                                 {/* Checkboxes in one line - vertical labels */}
@@ -1375,6 +1527,11 @@ export const CalendarView: React.FC = () => {
                   <div className="w-6 h-6 rounded bg-slate-800/50 border border-slate-700/50"></div>
                   <span className="text-slate-400">Odczytane (powiadomienie)</span>
                 </div>
+                <div className="w-px h-4 bg-slate-700"></div>
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded bg-yellow-500/80 ring-2 ring-yellow-400 flex items-center justify-center">🤖</div>
+                  <span className="text-slate-400">Sugestia AI (kliknij aby zobaczyć)</span>
+                </div>
               </div>
               <div className="flex items-center justify-center gap-6 text-[11px] text-slate-500">
                 <div className="flex items-center gap-1.5">
@@ -1390,6 +1547,128 @@ export const CalendarView: React.FC = () => {
           </>
         )}
       </div>
+
+      {/* AI Suggestion Modal */}
+      {selectedSuggestion && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setSelectedSuggestion(null)}>
+          <div className="bg-slate-800 rounded-lg p-6 max-w-2xl w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-yellow-400 flex items-center gap-2">
+                <Sparkles size={24} />
+                Sugestia AI
+              </h3>
+              <button
+                onClick={() => setSelectedSuggestion(null)}
+                className="text-slate-400 hover:text-white transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Property & Unit Info */}
+              <div className="bg-slate-900 rounded p-4">
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <span className="text-slate-400">Obiekt:</span>
+                    <span className="ml-2 text-white font-medium">{selectedSuggestion.property_name || 'N/A'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Pokój:</span>
+                    <span className="ml-2 text-white font-medium">{selectedSuggestion.unit_name || 'N/A'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Data:</span>
+                    <span className="ml-2 text-white font-medium">{selectedSuggestion.date_start}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Pewność:</span>
+                    <span className="ml-2 text-green-400 font-bold">{selectedSuggestion.confidence}%</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Current vs Suggested */}
+              <div className="bg-slate-900 rounded p-4">
+                <h4 className="text-sm font-semibold text-slate-300 mb-3">Porównanie wartości</h4>
+                <div className="space-y-2">
+                  {(() => {
+                    const priceKey = `${selectedSuggestion.unit_id}_${selectedSuggestion.date_start}`;
+                    const currentPrice = pricesData.get(priceKey);
+
+                    return (
+                      <div className="grid grid-cols-3 gap-4 text-sm">
+                        <div className="text-slate-400 font-medium">Parametr</div>
+                        <div className="text-slate-400 font-medium">Obecne</div>
+                        <div className="text-yellow-400 font-medium">AI sugeruje</div>
+
+                        <div className="text-white">CTA</div>
+                        <div className="text-white">{currentPrice?.cta ?? 'brak'}</div>
+                        <div className="text-yellow-300 font-bold">{selectedSuggestion.suggested_cta}</div>
+
+                        <div className="text-white">CTD</div>
+                        <div className="text-white">{currentPrice?.ctd ?? 'brak'}</div>
+                        <div className="text-yellow-300 font-bold">{selectedSuggestion.suggested_ctd}</div>
+
+                        <div className="text-white">MIN</div>
+                        <div className="text-white">{currentPrice?.min ?? 'brak'}</div>
+                        <div className="text-yellow-300 font-bold">{selectedSuggestion.suggested_min}</div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Reasoning */}
+              <div className="bg-slate-900 rounded p-4">
+                <h4 className="text-sm font-semibold text-slate-300 mb-2">Uzasadnienie</h4>
+                <p className="text-slate-200 text-sm">{selectedSuggestion.reasoning}</p>
+              </div>
+
+              {/* Expected Impact */}
+              <div className="bg-slate-900 rounded p-4">
+                <h4 className="text-sm font-semibold text-slate-300 mb-2">Oczekiwany efekt</h4>
+                <p className="text-slate-200 text-sm">{selectedSuggestion.expected_impact}</p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 pt-4 border-t border-slate-700">
+                <button
+                  onClick={() => handleApplySuggestion(selectedSuggestion)}
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded transition-colors"
+                >
+                  ✓ Zaakceptuj i zastosuj
+                </button>
+                <button
+                  onClick={() => handleRejectSuggestion(selectedSuggestion)}
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-4 rounded transition-colors"
+                >
+                  ✕ Odrzuć
+                </button>
+              </div>
+
+              {/* Feedback */}
+              <div className="flex gap-3 items-center justify-center pt-2">
+                <span className="text-slate-400 text-sm">Oceń sugestię:</span>
+                <button
+                  onClick={() => handleFeedback(selectedSuggestion, true)}
+                  className="text-2xl hover:scale-125 transition-transform"
+                  title="Dobra sugestia"
+                >
+                  👍
+                </button>
+                <button
+                  onClick={() => handleFeedback(selectedSuggestion, false)}
+                  className="text-2xl hover:scale-125 transition-transform"
+                  title="Zła sugestia"
+                >
+                  👎
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
