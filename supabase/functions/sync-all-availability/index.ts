@@ -762,61 +762,71 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
 
     // Collect all price records
     const pricesByUnitDate = new Map<string, any>()
-    let successfulFetches = 0
-    let failedFetches = 0
 
-    // Fetch prices for each unit separately (API requires type_id + rate_id)
-    for (const unit of units) {
-      const typeId = unit.external_type_id
+    // Create mapping of type_id to unit for lookup
+    const unitMapByTypeId = new Map<string, any>()
+    units.forEach(u => {
+      if (u.external_type_id) {
+        unitMapByTypeId.set(String(u.external_type_id), u)
+      }
+    })
 
-      try {
-        const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&type_id=${typeId}&rate_id=${targetRateExternalId}&from=${range.from}&till=${range.till}`
+    try {
+      // Fetch prices for entire property (ONE request instead of one per unit)
+      const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&rate_id=${targetRateExternalId}&from=${range.from}&till=${range.till}`
 
-        const rawResponse = await fetchFromHotres(pricesUrl)
-        let pricesData = JSON.parse(rawResponse)
+      const rawResponse = await fetchFromHotres(pricesUrl)
+      let pricesData = JSON.parse(rawResponse)
 
-        // Hotres returns array: [{rate_id, type_id, dates: [...]}, ...]
-        if (!Array.isArray(pricesData)) {
-          pricesData = [pricesData]
+      // Hotres returns array: [{rate_id, type_id, dates: [...]}, ...]
+      if (!Array.isArray(pricesData)) {
+        pricesData = [pricesData]
+      }
+
+      console.log(`  📦 Received ${pricesData.length} items from Hotres API`)
+
+      let processedUnits = 0
+      let totalDates = 0
+
+      // Process all items in array (one per unit type)
+      for (const item of pricesData) {
+        if (!item || !item.type_id) continue
+
+        const typeId = String(item.type_id)
+        const unit = unitMapByTypeId.get(typeId)
+
+        if (!unit) {
+          console.warn(`  ⚠️  No unit found for type_id ${typeId}`)
+          continue
         }
 
-        let processedDates = 0
-        // Process all items in array (usually just one, but could be multiple rate plans)
-        for (const item of pricesData) {
-          if (item && item.dates && Array.isArray(item.dates)) {
-            for (const d of item.dates) {
-              const key = `${unit.id}:${d.date}`
+        if (item.dates && Array.isArray(item.dates)) {
+          for (const d of item.dates) {
+            const key = `${unit.id}:${d.date}`
 
-              // Store price data (keep first occurrence only)
-              if (!pricesByUnitDate.has(key)) {
-                pricesByUnitDate.set(key, {
-                  unit_id: unit.id,
-                  rate_id: targetRatePlanId,
-                  date: d.date,
-                  price: d.price ? parseFloat(d.price) : null,
-                  min: d.min ? parseInt(d.min) : null,
-                  max: d.max ? parseInt(d.max) : null,
-                  cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
-                  ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
-                })
-                processedDates++
-              }
+            // Store price data (keep first occurrence only)
+            if (!pricesByUnitDate.has(key)) {
+              pricesByUnitDate.set(key, {
+                unit_id: unit.id,
+                rate_id: targetRatePlanId,
+                date: d.date,
+                price: d.price ? parseFloat(d.price) : null,
+                min: d.min ? parseInt(d.min) : null,
+                max: d.max ? parseInt(d.max) : null,
+                cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
+                ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
+              })
+              totalDates++
             }
           }
+          processedUnits++
         }
-
-        if (processedDates > 0) {
-          successfulFetches++
-        } else {
-          failedFetches++
-        }
-      } catch (error: any) {
-        console.error(`  ❌ Failed to fetch ${range.label} for type_id ${typeId}:`, error.message)
-        failedFetches++
       }
-    }
 
-    console.log(`  📊 Fetch summary: ✓${successfulFetches} success, ✗${failedFetches} failed`)
+      console.log(`  ✓ Processed ${processedUnits} units with ${totalDates} total date records`)
+    } catch (error: any) {
+      console.error(`  ❌ Failed to fetch prices for ${property.name}:`, error.message)
+    }
 
     const pricesToUpsert = Array.from(pricesByUnitDate.values())
     console.log(`  📦 Collected ${pricesToUpsert.length} unique price records (unit+date combinations)`)
