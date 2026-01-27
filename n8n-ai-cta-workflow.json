@@ -1,19 +1,33 @@
 {
-  "name": "AI CTA/CTD Optimization v4",
+  "name": "AI CTA/CTD Optimization v5",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
         "path": "181df836-8c89-47d2-b611-07cd556473f8",
         "responseMode": "responseNode",
-        "options": {}
+        "options": {
+          "responseData": "allEntries"
+        }
       },
       "id": "webhook-trigger",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1.1,
       "position": [240, 300],
-      "webhookId": "181df836-8c89-47d2-b611-07cd556473f8"
+      "webhookId": "181df836-8c89-47d2-b611-07cd556473f8",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Debug webhook input\nconst webhookData = $input.first().json;\nconsole.log('=== WEBHOOK RECEIVED ===');\nconsole.log('notification_ids:', webhookData.notification_ids);\nconsole.log('count:', webhookData.notification_ids?.length);\n\nif (!webhookData.notification_ids || !Array.isArray(webhookData.notification_ids)) {\n  throw new Error('Missing or invalid notification_ids in webhook payload');\n}\n\nif (webhookData.notification_ids.length === 0) {\n  throw new Error('Empty notification_ids array');\n}\n\nreturn [$input.first()];"
+      },
+      "id": "validate-webhook",
+      "name": "Validate Webhook Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [360, 300],
+      "continueOnFail": true
     },
     {
       "parameters": {
@@ -40,7 +54,8 @@
       "name": "Fetch Notifications",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [460, 300],
+      "position": [560, 300],
+      "continueOnFail": true,
       "credentials": {
         "supabaseApi": {
           "id": "YOUR_SUPABASE_CREDENTIAL_ID",
@@ -50,7 +65,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extract notifications and calculate date range\nconst notifications = $input.first().json;\n\nif (!Array.isArray(notifications) || notifications.length === 0) {\n  throw new Error('No notifications found');\n}\n\nconst unitIds = [...new Set(notifications.map(n => n.unit_id))];\nconst propertyIds = [...new Set(notifications.map(n => n.property_id))];\n\n// Calculate dynamic date range: ±21 days from earliest/latest notification\nconst notifDates = notifications.map(n => new Date(n.start_date));\nconst notifEndDates = notifications.map(n => new Date(n.end_date));\n\nconst minDate = new Date(Math.min(...notifDates));\nminDate.setDate(minDate.getDate() - 21); // 3 weeks before\n\nconst maxDate = new Date(Math.max(...notifEndDates));\nmaxDate.setDate(maxDate.getDate() + 21); // 3 weeks after\n\nreturn [{\n  json: {\n    notifications: notifications,\n    unit_ids: unitIds,\n    property_ids: propertyIds,\n    date_range: {\n      from: minDate.toISOString().split('T')[0],\n      to: maxDate.toISOString().split('T')[0]\n    }\n  }\n}];"
+        "jsCode": "// Extract notifications and calculate date range\nconst input = $input.first().json;\n\nconsole.log('DEBUG: Input from Fetch Notifications:', JSON.stringify(input).substring(0, 500));\n\nlet notifications = input;\n\n// Handle case where Supabase returns single object instead of array\nif (!Array.isArray(notifications)) {\n  if (notifications && typeof notifications === 'object') {\n    notifications = [notifications];\n  } else {\n    throw new Error(`Invalid notifications format. Expected array or object, got: ${typeof notifications}`);\n  }\n}\n\nif (notifications.length === 0) {\n  throw new Error('No notifications found in database for provided IDs');\n}\n\nconst unitIds = [...new Set(notifications.map(n => n.unit_id))];\nconst propertyIds = [...new Set(notifications.map(n => n.property_id))];\n\n// Calculate dynamic date range: ±21 days from earliest/latest notification\nconst notifDates = notifications.map(n => new Date(n.start_date));\nconst notifEndDates = notifications.map(n => new Date(n.end_date));\n\nconst minDate = new Date(Math.min(...notifDates));\nminDate.setDate(minDate.getDate() - 21); // 3 weeks before\n\nconst maxDate = new Date(Math.max(...notifEndDates));\nmaxDate.setDate(maxDate.getDate() + 21); // 3 weeks after\n\nreturn [{\n  json: {\n    notifications: notifications,\n    unit_ids: unitIds,\n    property_ids: propertyIds,\n    date_range: {\n      from: minDate.toISOString().split('T')[0],\n      to: maxDate.toISOString().split('T')[0]\n    }\n  }\n}];"
       },
       "id": "extract-ids",
       "name": "Extract IDs & Date Range",
@@ -268,10 +283,43 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
       "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const error = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: error.message || 'Unknown error',\n    error_details: error,\n    generated_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "format-error",
+      "name": "Format Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "webhook-error-response",
+      "name": "Respond with Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1560, 500]
     }
   ],
   "connections": {
     "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Webhook Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Webhook Input": {
       "main": [
         [
           {
@@ -410,6 +458,6 @@
   "staticData": null,
   "tags": [],
   "triggerCount": 0,
-  "updatedAt": "2026-01-27T03:00:00.000Z",
-  "versionId": "4"
+  "updatedAt": "2026-01-27T04:00:00.000Z",
+  "versionId": "5"
 }
