@@ -18,7 +18,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/notifications?id=in.({{ $json.body.notification_ids.join(',') }})&order=start_date.asc&select=id,property_id,unit_id,property_name,unit_name,change_type,start_date,end_date,created_at",
+        "url": "=https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/notifications?id=in.({{ $json.notification_ids.join(',') }})&order=start_date.asc&select=id,property_id,unit_id,property_name,unit_name,change_type,start_date,end_date,created_at",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "supabaseApi",
         "sendHeaders": true,
@@ -50,7 +50,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extract notifications and calculate date range\nconst notifications = $input.item.json;\n\nif (!Array.isArray(notifications) || notifications.length === 0) {\n  throw new Error('No notifications found');\n}\n\nconst unitIds = [...new Set(notifications.map(n => n.unit_id))];\nconst propertyIds = [...new Set(notifications.map(n => n.property_id))];\n\n// Calculate dynamic date range: ±21 days from earliest/latest notification\nconst notifDates = notifications.map(n => new Date(n.start_date));\nconst notifEndDates = notifications.map(n => new Date(n.end_date));\n\nconst minDate = new Date(Math.min(...notifDates));\nminDate.setDate(minDate.getDate() - 21); // 3 weeks before\n\nconst maxDate = new Date(Math.max(...notifEndDates));\nmaxDate.setDate(maxDate.getDate() + 21); // 3 weeks after\n\nreturn [{\n  json: {\n    notifications: notifications,\n    unit_ids: unitIds,\n    property_ids: propertyIds,\n    date_range: {\n      from: minDate.toISOString().split('T')[0],\n      to: maxDate.toISOString().split('T')[0]\n    }\n  }\n}];"
+        "jsCode": "// Extract notifications and calculate date range\nconst notifications = $input.first().json;\n\nif (!Array.isArray(notifications) || notifications.length === 0) {\n  throw new Error('No notifications found');\n}\n\nconst unitIds = [...new Set(notifications.map(n => n.unit_id))];\nconst propertyIds = [...new Set(notifications.map(n => n.property_id))];\n\n// Calculate dynamic date range: ±21 days from earliest/latest notification\nconst notifDates = notifications.map(n => new Date(n.start_date));\nconst notifEndDates = notifications.map(n => new Date(n.end_date));\n\nconst minDate = new Date(Math.min(...notifDates));\nminDate.setDate(minDate.getDate() - 21); // 3 weeks before\n\nconst maxDate = new Date(Math.max(...notifEndDates));\nmaxDate.setDate(maxDate.getDate() + 21); // 3 weeks after\n\nreturn [{\n  json: {\n    notifications: notifications,\n    unit_ids: unitIds,\n    property_ids: propertyIds,\n    date_range: {\n      from: minDate.toISOString().split('T')[0],\n      to: maxDate.toISOString().split('T')[0]\n    }\n  }\n}];"
       },
       "id": "extract-ids",
       "name": "Extract IDs & Date Range",
