@@ -317,12 +317,18 @@ async function syncPropertyAvailability(
     console.log(`📋 ${property.name}: ${units.length} units in database`)
     console.log(`📋 Unit mapping keys:`, Array.from(unitMap.keys()).join(', '))
 
-    // Fetch availability from Hotres API
-    const year = 2026
-    const fromDate = `${year}-01-01`
-    const tillDate = `${year}-12-31`
+    // Determine which range to sync based on current minute (alternates every 3 minutes)
+    const currentMinute = new Date().getMinutes()
+    const useFirstHalf = currentMinute % 6 < 3 // First half for minutes 0-2, 6-8, 12-14, etc.
 
-    const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`
+    const range = useFirstHalf
+      ? { from: '2026-01-20', till: '2026-07-18', label: 'first half' }
+      : { from: '2026-07-19', till: '2026-12-31', label: 'second half' }
+
+    console.log(`  📅 Fetching availability ${range.label}: ${range.from} to ${range.till}`)
+
+    // Fetch availability from Hotres API
+    const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${range.from}&till=${range.till}`
     const rawResponse = await fetchFromHotres(targetUrl)
 
     // Parse response
@@ -355,8 +361,8 @@ async function syncPropertyAvailability(
       .from('availability')
       .select('id, unit_id, date, status, reservation_id')
       .in('unit_id', unitIds)
-      .gte('date', fromDate)
-      .lte('date', tillDate)
+      .gte('date', range.from)
+      .lte('date', range.till)
 
     const dbMap = new Map<string, any>()
     const beforePropertySnapshot = new Map<string, { status: string }>()
