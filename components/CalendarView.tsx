@@ -1194,26 +1194,6 @@ export const CalendarView: React.FC = () => {
               </button>
             </div>
 
-            {/* Manual Sync Button */}
-            <button
-              onClick={triggerAvailabilitySync}
-              disabled={syncing || !property}
-              className="flex items-center gap-2 px-3 py-2 text-xs bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium"
-              title={property ? `Synchronizuj obiekt: ${property.name}` : 'Wybierz obiekt aby zsynchronizować'}
-            >
-              {syncing ? (
-                <>
-                  <RefreshCw size={14} className="animate-spin" />
-                  Syncowanie...
-                </>
-              ) : (
-                <>
-                  <RefreshCw size={14} />
-                  Sync obiekt
-                </>
-              )}
-            </button>
-
             {/* AI Optimization Button - only in notifications view */}
             {viewMode === 'notifications' && unreadNotifications.length > 0 && (
               <button
