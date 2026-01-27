@@ -1408,7 +1408,7 @@ export const CalendarView: React.FC = () => {
 
                       // Yellow cell for AI suggestion, otherwise green/red
                       const cellClass = aiSuggestion
-                        ? 'h-7 rounded-sm transition-colors cursor-pointer bg-yellow-500/80 hover:bg-yellow-500/100 flex items-center justify-center text-black font-bold text-sm ring-2 ring-yellow-400'
+                        ? 'h-7 rounded-sm transition-colors cursor-pointer bg-yellow-500/80 hover:bg-yellow-500/100 flex items-center justify-center text-black font-bold text-sm ring-2 ring-green-400'
                         : isBooked
                         ? 'h-7 rounded-sm transition-colors cursor-pointer bg-red-600/60 hover:bg-red-600/80 flex items-center justify-center text-white font-bold text-sm'
                         : 'h-7 rounded-sm transition-colors cursor-pointer bg-green-600/60 hover:bg-green-600/80 flex items-center justify-center text-white font-bold text-sm';
@@ -1529,7 +1529,7 @@ export const CalendarView: React.FC = () => {
                 </div>
                 <div className="w-px h-4 bg-slate-700"></div>
                 <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded bg-yellow-500/80 ring-2 ring-yellow-400 flex items-center justify-center">🤖</div>
+                  <div className="w-6 h-6 rounded bg-yellow-500/80 ring-2 ring-green-400 flex items-center justify-center">🤖</div>
                   <span className="text-slate-400">Sugestia AI (kliknij aby zobaczyć)</span>
                 </div>
               </div>
