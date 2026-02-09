@@ -66,8 +66,11 @@ export const CalendarView: React.FC = () => {
   // Auto-scroll to position selected date at 1/3 of viewport
   useEffect(() => {
     if (scrollContainerRef.current && !loadingAvailability) {
-      // Each day cell is ~90px wide (min-w-[90px])
-      const dayWidth = 90;
+      // Cell width varies by screen: 60px mobile, 75px tablet, 90px desktop
+      const isMobile = window.innerWidth < 640;
+      const isTablet = window.innerWidth >= 640 && window.innerWidth < 1024;
+      const dayWidth = isMobile ? 60 : isTablet ? 75 : 90;
+
       // Selected date is 30 days from start (1 month before)
       const daysBeforeSelected = 30;
       // Scroll so selected date appears at 1/3 of container width
@@ -1144,15 +1147,15 @@ export const CalendarView: React.FC = () => {
   const endDateStr = dates[dates.length - 1].toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' });
 
   return (
-    <div className="space-y-4 w-full max-w-full">
+    <div className="space-y-2 sm:space-y-4 w-full max-w-full px-2 sm:px-0">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-white">{property?.name}</h2>
-          <p className="text-slate-400 text-sm mt-1">Widok kwartalny dostępności</p>
+          <h2 className="text-lg sm:text-xl lg:text-2xl font-bold text-white">{property?.name}</h2>
+          <p className="text-slate-400 text-xs sm:text-sm mt-1">Widok kwartalny dostępności</p>
         </div>
       </div>
 
-      <div className="bg-surface rounded-xl border border-border p-3 shadow-lg relative w-full">
+      <div className="bg-surface rounded-lg sm:rounded-xl border border-border p-2 sm:p-3 shadow-lg relative w-full">
         {loadingAvailability && (
           <div className="absolute inset-0 bg-surface/50 backdrop-blur-sm flex items-center justify-center z-10 rounded-xl">
             <Loader2 className="animate-spin text-indigo-400" size={32} />
@@ -1160,21 +1163,21 @@ export const CalendarView: React.FC = () => {
         )}
 
         {/* Navigation and Date Picker */}
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex flex-col sm:flex-row items-center justify-between mb-2 sm:mb-3 gap-2">
           <button
             onClick={handlePrevMonth}
-            className="p-2 rounded-md hover:bg-slate-700 transition-colors"
+            className="p-1.5 sm:p-2 rounded-md hover:bg-slate-700 transition-colors"
             title="Poprzedni miesiąc"
           >
-            <ChevronLeft />
+            <ChevronLeft size={20} className="sm:w-6 sm:h-6" />
           </button>
 
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-4">
             {/* View Mode Toggle */}
-            <div className="flex gap-1 bg-slate-800 rounded-lg p-1">
+            <div className="flex gap-0.5 sm:gap-1 bg-slate-800 rounded-lg p-0.5 sm:p-1">
               <button
                 onClick={() => setViewMode('full')}
-                className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                className={`px-2 py-0.5 sm:px-3 sm:py-1 text-[10px] sm:text-xs rounded-md transition-colors ${
                   viewMode === 'full'
                     ? 'bg-indigo-600 text-white'
                     : 'text-slate-400 hover:text-white'
@@ -1184,7 +1187,7 @@ export const CalendarView: React.FC = () => {
               </button>
               <button
                 onClick={() => setViewMode('notifications')}
-                className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                className={`px-2 py-0.5 sm:px-3 sm:py-1 text-[10px] sm:text-xs rounded-md transition-colors ${
                   viewMode === 'notifications'
                     ? 'bg-yellow-600 text-white'
                     : 'text-slate-400 hover:text-white'
@@ -1199,18 +1202,19 @@ export const CalendarView: React.FC = () => {
               <button
                 onClick={handleAIOptimization}
                 disabled={isLoadingAI}
-                className="flex items-center gap-2 px-3 py-2 text-xs bg-yellow-600 hover:bg-yellow-500 disabled:bg-yellow-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium"
+                className="flex items-center gap-1 sm:gap-2 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs bg-yellow-600 hover:bg-yellow-500 disabled:bg-yellow-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium whitespace-nowrap"
                 title={`Zatrudnij AI do optymalizacji ${unreadNotifications.length} powiadomień`}
               >
                 {isLoadingAI ? (
                   <>
-                    <Loader2 size={14} className="animate-spin" />
-                    AI pracuje...
+                    <Loader2 size={12} className="sm:w-3.5 sm:h-3.5 animate-spin" />
+                    <span className="hidden sm:inline">AI pracuje...</span>
                   </>
                 ) : (
                   <>
-                    <Sparkles size={14} />
-                    🤖 Zatrudnij AI ({unreadNotifications.length})
+                    <Sparkles size={12} className="sm:w-3.5 sm:h-3.5" />
+                    <span className="hidden sm:inline">🤖 Zatrudnij AI ({unreadNotifications.length})</span>
+                    <span className="sm:hidden">🤖 AI ({unreadNotifications.length})</span>
                   </>
                 )}
               </button>
@@ -1219,11 +1223,12 @@ export const CalendarView: React.FC = () => {
             {aiSuggestions.size > 0 && (
               <button
                 onClick={handleAcceptAll}
-                className="flex items-center gap-2 px-3 py-2 text-xs bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium"
+                className="flex items-center gap-1 sm:gap-2 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium whitespace-nowrap"
                 title={`Zaakceptuj wszystkie ${aiSuggestions.size} sugestie AI`}
               >
-                <Sparkles size={14} />
-                ✓ Akceptuj wszystkie ({aiSuggestions.size})
+                <Sparkles size={12} className="sm:w-3.5 sm:h-3.5" />
+                <span className="hidden sm:inline">✓ Akceptuj wszystkie ({aiSuggestions.size})</span>
+                <span className="sm:hidden">✓ ({aiSuggestions.size})</span>
               </button>
             )}
 
@@ -1231,19 +1236,19 @@ export const CalendarView: React.FC = () => {
               type="date"
               value={selectedDateStr}
               onChange={(e) => handleDateChange(e.target.value)}
-              className="bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+              className="bg-slate-800 border border-slate-700 rounded-md px-2 py-1 sm:px-3 sm:py-2 text-white text-[11px] sm:text-sm outline-none focus:ring-2 focus:ring-indigo-500"
             />
-            <span className="text-slate-400 text-sm">
+            <span className="hidden md:inline text-slate-400 text-xs sm:text-sm whitespace-nowrap">
               {startDateStr} - {endDateStr}
             </span>
           </div>
 
           <button
             onClick={handleNextMonth}
-            className="p-2 rounded-md hover:bg-slate-700 transition-colors"
+            className="p-1.5 sm:p-2 rounded-md hover:bg-slate-700 transition-colors"
             title="Następny miesiąc"
           >
-            <ChevronRight />
+            <ChevronRight size={20} className="sm:w-6 sm:h-6" />
           </button>
         </div>
 
@@ -1288,13 +1293,13 @@ export const CalendarView: React.FC = () => {
 
             {/* Sync to Hotres Button */}
             {(readNotificationIds.size > 0 || priceChanges.size > 0) && (
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 sm:gap-3">
                 <button
                   onClick={handleSyncToHotres}
-                  className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-2.5 px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+                  className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-1 sm:gap-2"
                 >
-                  <span className="text-sm">Wyślij na Hotres</span>
-                  <div className="flex gap-1">
+                  <span className="text-xs sm:text-sm">Wyślij na Hotres</span>
+                  <div className="flex gap-0.5 sm:gap-1">
                     {readNotificationIds.size > 0 && (
                       <span className="text-[10px] bg-yellow-800 px-2 py-0.5 rounded-full">
                         {readNotificationIds.size} powiad.
@@ -1307,8 +1312,8 @@ export const CalendarView: React.FC = () => {
                     )}
                   </div>
                 </button>
-                <div className="text-xs text-slate-400 whitespace-nowrap">
-                  Pozostało: <span className="font-bold text-yellow-400">{10 - hotresSyncCount.count}</span>/10
+                <div className="text-[10px] sm:text-xs text-slate-400 whitespace-nowrap">
+                  <span className="hidden sm:inline">Pozostało: </span><span className="font-bold text-yellow-400">{10 - hotresSyncCount.count}</span>/10
                 </div>
               </div>
             )}
@@ -1324,13 +1329,13 @@ export const CalendarView: React.FC = () => {
 
         {/* Sync to Hotres Button for Full View */}
         {viewMode === 'full' && priceChanges.size > 0 && (
-          <div className="mb-3 flex items-center gap-3">
+          <div className="mb-2 sm:mb-3 flex items-center gap-2 sm:gap-3">
             <button
               onClick={handleSyncToHotres}
-              className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-2.5 px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+              className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-1 sm:gap-2"
             >
-              <span className="text-sm">Wyślij na Hotres</span>
-              <div className="flex gap-1">
+              <span className="text-xs sm:text-sm">Wyślij na Hotres</span>
+              <div className="flex gap-0.5 sm:gap-1">
                 {priceChanges.size > 0 && (
                   <span className="text-[10px] bg-yellow-800 px-2 py-0.5 rounded-full">
                     {priceChanges.size} zmian
@@ -1347,22 +1352,22 @@ export const CalendarView: React.FC = () => {
         {/* Show table only if there are units to display */}
         {filteredUnits.length > 0 && (
           <>
-            {/* Top Scrollbar */}
+            {/* Top Scrollbar - hidden on mobile for cleaner UI */}
             <div
-              className="overflow-x-auto overflow-y-hidden mb-2"
+              className="hidden sm:block overflow-x-auto overflow-y-hidden mb-2"
               ref={topScrollRef}
               onScroll={handleTopScroll}
             >
-              <div style={{ width: `${120 + (dates.length * 90)}px`, height: '1px' }}></div>
+              <div className="sm:w-[calc(80px+75*var(--dates-count))] lg:w-[calc(120px+90*var(--dates-count))]" style={{ height: '1px' }}></div>
             </div>
 
             {/* Scrollable Table */}
-            <div className="overflow-x-auto max-h-[calc(100vh-300px)] overflow-y-auto" ref={scrollContainerRef} onScroll={handleMainScroll}>
+            <div className="overflow-x-auto max-h-[calc(100vh-200px)] sm:max-h-[calc(100vh-250px)] lg:max-h-[calc(100vh-300px)] overflow-y-auto" ref={scrollContainerRef} onScroll={handleMainScroll}>
           <table className="w-full border-collapse">
             <thead className="sticky top-0 z-30 border-b-2 border-border">
               {/* Month headers row */}
               <tr className="bg-surface border-b border-border">
-                <th className="sticky left-0 z-40 bg-surface border-r border-border min-w-[120px]"></th>
+                <th className="sticky left-0 z-40 bg-surface border-r border-border min-w-[70px] sm:min-w-[80px] lg:min-w-[120px]"></th>
                 {(() => {
                   const monthGroups: Array<{ month: string; year: string; count: number; startIdx: number }> = [];
                   let currentMonth = '';
@@ -1407,7 +1412,7 @@ export const CalendarView: React.FC = () => {
               </tr>
               {/* Day headers row */}
               <tr className="bg-surface">
-                <th className="sticky left-0 z-40 bg-surface p-2 text-left text-[10px] font-bold text-slate-400 border-r border-border min-w-[120px]">
+                <th className="sticky left-0 z-40 bg-surface p-1 sm:p-2 text-left text-[8px] sm:text-[9px] lg:text-[10px] font-bold text-slate-400 border-r border-border min-w-[70px] sm:min-w-[80px] lg:min-w-[120px]">
                   Pokój
                 </th>
                 {dates.map((date, idx) => {
@@ -1416,14 +1421,14 @@ export const CalendarView: React.FC = () => {
                   return (
                     <th
                       key={idx}
-                      className={`p-2 text-center text-xs font-medium border-r border-border min-w-[90px] ${
+                      className={`p-1 sm:p-2 text-center text-[10px] sm:text-xs font-medium border-r border-border min-w-[60px] sm:min-w-[75px] lg:min-w-[90px] ${
                         isSelected ? 'bg-indigo-900/50' : isToday ? 'bg-indigo-900/30' : 'bg-surface'
                       }`}
                     >
-                      <div className="text-slate-300 font-bold">
+                      <div className="text-slate-300 font-bold text-[10px] sm:text-xs">
                         {date.getDate()}
                       </div>
-                      <div className="text-slate-500 text-[10px]">
+                      <div className="text-slate-500 text-[8px] sm:text-[10px]">
                         {date.toLocaleDateString('pl-PL', { weekday: 'short' })}
                       </div>
                     </th>
@@ -1436,7 +1441,7 @@ export const CalendarView: React.FC = () => {
                 const unitAvailability = allUnitsAvailability.get(unit.id);
                 return (
                   <tr key={unit.id} className="border-t border-border hover:bg-slate-800/30">
-                    <td className="sticky left-0 z-20 bg-surface p-2 text-[11px] font-medium text-white border-r border-border">
+                    <td className="sticky left-0 z-20 bg-surface p-1 sm:p-2 text-[9px] sm:text-[10px] lg:text-[11px] font-medium text-white border-r border-border">
                       {unit.name}
                     </td>
                     {dates.map((date, idx) => {
@@ -1451,10 +1456,10 @@ export const CalendarView: React.FC = () => {
 
                       // Yellow cell for AI suggestion, otherwise green/red
                       const cellClass = aiSuggestion
-                        ? 'h-7 rounded-sm transition-colors cursor-pointer bg-yellow-500/80 hover:bg-yellow-500/100 flex items-center justify-center text-black font-bold text-sm ring-2 ring-yellow-400'
+                        ? 'h-5 sm:h-6 lg:h-7 rounded-sm transition-colors cursor-pointer bg-yellow-500/80 hover:bg-yellow-500/100 flex items-center justify-center text-black font-bold text-xs sm:text-sm ring-2 ring-yellow-400'
                         : isBooked
-                        ? 'h-7 rounded-sm transition-colors cursor-pointer bg-red-600/60 hover:bg-red-600/80 flex items-center justify-center text-white font-bold text-sm'
-                        : 'h-7 rounded-sm transition-colors cursor-pointer bg-green-600/60 hover:bg-green-600/80 flex items-center justify-center text-white font-bold text-sm';
+                        ? 'h-5 sm:h-6 lg:h-7 rounded-sm transition-colors cursor-pointer bg-red-600/60 hover:bg-red-600/80 flex items-center justify-center text-white font-bold text-xs sm:text-sm'
+                        : 'h-5 sm:h-6 lg:h-7 rounded-sm transition-colors cursor-pointer bg-green-600/60 hover:bg-green-600/80 flex items-center justify-center text-white font-bold text-xs sm:text-sm';
 
                       // Continuous yellow box styling
                       let notifBoxClass = '';
@@ -1497,24 +1502,24 @@ export const CalendarView: React.FC = () => {
                                 </div>
 
                                 {/* Checkboxes in one line - vertical labels */}
-                                <div className="flex items-center justify-center gap-2">
+                                <div className="flex items-center justify-center gap-1 sm:gap-1.5 lg:gap-2">
                                   <label className="flex flex-col items-center gap-0.5 cursor-pointer">
                                     <input
                                       type="checkbox"
-                                      className="w-5 h-5 cursor-pointer"
+                                      className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5 cursor-pointer"
                                       checked={ctaValue}
                                       onChange={(e) => handleCtaChange(unit.id, dateStr, e.target.checked)}
                                     />
-                                    <span className="text-slate-400 text-[8px] font-semibold">CTA</span>
+                                    <span className="text-slate-400 text-[7px] sm:text-[8px] font-semibold">CTA</span>
                                   </label>
                                   <label className="flex flex-col items-center gap-0.5 cursor-pointer">
                                     <input
                                       type="checkbox"
-                                      className="w-5 h-5 cursor-pointer"
+                                      className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5 cursor-pointer"
                                       checked={ctdValue}
                                       onChange={(e) => handleCtdChange(unit.id, dateStr, e.target.checked)}
                                     />
-                                    <span className="text-slate-400 text-[8px] font-semibold">CTD</span>
+                                    <span className="text-slate-400 text-[7px] sm:text-[8px] font-semibold">CTD</span>
                                   </label>
                                 </div>
 
@@ -1522,12 +1527,12 @@ export const CalendarView: React.FC = () => {
                                 <div className="flex flex-col gap-0.5 items-center">
                                   <input
                                     type="text"
-                                    className="w-full px-1.5 py-1 text-center text-[11px] bg-slate-800 border border-slate-700 rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                    className="w-full px-0.5 py-0.5 sm:px-1 sm:py-1 lg:px-1.5 lg:py-1 text-center text-[9px] sm:text-[10px] lg:text-[11px] bg-slate-800 border border-slate-700 rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                                     placeholder="000"
                                     value={minValue}
                                     onChange={(e) => handleMinChange(unit.id, dateStr, e.target.value)}
                                   />
-                                  <label className="text-[8px] text-slate-500 uppercase">MIN</label>
+                                  <label className="text-[7px] sm:text-[8px] text-slate-500 uppercase">MIN</label>
                                 </div>
                               </div>
                             );
