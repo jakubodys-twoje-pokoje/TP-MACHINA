@@ -66,10 +66,10 @@ export const CalendarView: React.FC = () => {
   // Auto-scroll to position selected date at 1/3 of viewport
   useEffect(() => {
     if (scrollContainerRef.current && !loadingAvailability) {
-      // Cell width varies by screen: 60px mobile, 75px tablet, 90px desktop
+      // Cell width varies by screen: 70px mobile (increased for better readability), 75px tablet, 90px desktop
       const isMobile = window.innerWidth < 640;
       const isTablet = window.innerWidth >= 640 && window.innerWidth < 1024;
-      const dayWidth = isMobile ? 60 : isTablet ? 75 : 90;
+      const dayWidth = isMobile ? 70 : isTablet ? 75 : 90;
 
       // Selected date is 30 days from start (1 month before)
       const daysBeforeSelected = 30;
@@ -1362,7 +1362,7 @@ export const CalendarView: React.FC = () => {
             </div>
 
             {/* Scrollable Table */}
-            <div className="overflow-x-auto max-h-[calc(100vh-200px)] sm:max-h-[calc(100vh-250px)] lg:max-h-[calc(100vh-300px)] overflow-y-auto" ref={scrollContainerRef} onScroll={handleMainScroll}>
+            <div className="overflow-x-auto max-h-[calc(100vh-200px)] sm:max-h-[calc(100vh-250px)] lg:max-h-[calc(100vh-300px)] overflow-y-auto scroll-smooth" style={{ WebkitOverflowScrolling: 'touch' }} ref={scrollContainerRef} onScroll={handleMainScroll}>
           <table className="w-full border-collapse">
             <thead className="sticky top-0 z-30 border-b-2 border-border">
               {/* Month headers row */}
@@ -1421,7 +1421,7 @@ export const CalendarView: React.FC = () => {
                   return (
                     <th
                       key={idx}
-                      className={`p-1 sm:p-2 text-center text-[10px] sm:text-xs font-medium border-r border-border min-w-[60px] sm:min-w-[75px] lg:min-w-[90px] ${
+                      className={`p-1 sm:p-2 text-center text-[10px] sm:text-xs font-medium border-r border-border min-w-[70px] sm:min-w-[75px] lg:min-w-[90px] ${
                         isSelected ? 'bg-indigo-900/50' : isToday ? 'bg-indigo-900/30' : 'bg-surface'
                       }`}
                     >
@@ -1506,20 +1506,20 @@ export const CalendarView: React.FC = () => {
                                   <label className="flex flex-col items-center gap-0.5 cursor-pointer">
                                     <input
                                       type="checkbox"
-                                      className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5 cursor-pointer"
+                                      className="w-4 h-4 sm:w-4 sm:h-4 lg:w-5 lg:h-5 cursor-pointer"
                                       checked={ctaValue}
                                       onChange={(e) => handleCtaChange(unit.id, dateStr, e.target.checked)}
                                     />
-                                    <span className="text-slate-400 text-[7px] sm:text-[8px] font-semibold">CTA</span>
+                                    <span className="text-slate-400 text-[8px] sm:text-[9px] font-semibold">CTA</span>
                                   </label>
                                   <label className="flex flex-col items-center gap-0.5 cursor-pointer">
                                     <input
                                       type="checkbox"
-                                      className="w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5 cursor-pointer"
+                                      className="w-4 h-4 sm:w-4 sm:h-4 lg:w-5 lg:h-5 cursor-pointer"
                                       checked={ctdValue}
                                       onChange={(e) => handleCtdChange(unit.id, dateStr, e.target.checked)}
                                     />
-                                    <span className="text-slate-400 text-[7px] sm:text-[8px] font-semibold">CTD</span>
+                                    <span className="text-slate-400 text-[8px] sm:text-[9px] font-semibold">CTD</span>
                                   </label>
                                 </div>
 
@@ -1527,12 +1527,12 @@ export const CalendarView: React.FC = () => {
                                 <div className="flex flex-col gap-0.5 items-center">
                                   <input
                                     type="text"
-                                    className="w-full px-0.5 py-0.5 sm:px-1 sm:py-1 lg:px-1.5 lg:py-1 text-center text-[9px] sm:text-[10px] lg:text-[11px] bg-slate-800 border border-slate-700 rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                    className="w-full px-1 py-1 sm:px-1 sm:py-1 lg:px-1.5 lg:py-1 text-center text-[10px] sm:text-[10px] lg:text-[11px] bg-slate-800 border border-slate-700 rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                                     placeholder="000"
                                     value={minValue}
                                     onChange={(e) => handleMinChange(unit.id, dateStr, e.target.value)}
                                   />
-                                  <label className="text-[7px] sm:text-[8px] text-slate-500 uppercase">MIN</label>
+                                  <label className="text-[8px] sm:text-[9px] text-slate-500 uppercase">MIN</label>
                                 </div>
                               </div>
                             );
