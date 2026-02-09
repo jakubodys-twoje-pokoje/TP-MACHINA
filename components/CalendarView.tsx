@@ -1402,10 +1402,10 @@ export const CalendarView: React.FC = () => {
                     <th
                       key={idx}
                       colSpan={group.count}
-                      className="p-1 text-center text-xs font-bold text-slate-300 border-r border-border bg-slate-800/50"
+                      className="p-1 sm:p-1.5 text-center text-[11px] sm:text-xs font-bold text-slate-300 border-r border-border bg-slate-800/50"
                     >
                       <div className="capitalize">{group.month}</div>
-                      <div className="text-[9px] text-slate-500 font-normal">{group.year}</div>
+                      <div className="text-[9px] sm:text-[10px] text-slate-500 font-normal">{group.year}</div>
                     </th>
                   ));
                 })()}
@@ -1441,7 +1441,7 @@ export const CalendarView: React.FC = () => {
                 const unitAvailability = allUnitsAvailability.get(unit.id);
                 return (
                   <tr key={unit.id} className="border-t border-border hover:bg-slate-800/30">
-                    <td className="sticky left-0 z-20 bg-surface p-1 sm:p-2 text-[9px] sm:text-[10px] lg:text-[11px] font-medium text-white border-r border-border">
+                    <td className="sticky left-0 z-20 bg-surface p-1 sm:p-2 text-[10px] sm:text-[11px] lg:text-xs font-medium text-white border-r border-border">
                       {unit.name}
                     </td>
                     {dates.map((date, idx) => {
@@ -1456,10 +1456,10 @@ export const CalendarView: React.FC = () => {
 
                       // Yellow cell for AI suggestion, otherwise green/red
                       const cellClass = aiSuggestion
-                        ? 'h-5 sm:h-6 lg:h-7 rounded-sm transition-colors cursor-pointer bg-yellow-500/80 hover:bg-yellow-500/100 flex items-center justify-center text-black font-bold text-xs sm:text-sm ring-2 ring-yellow-400'
+                        ? 'h-6 sm:h-6 lg:h-7 rounded-sm transition-colors cursor-pointer bg-yellow-500/80 hover:bg-yellow-500/100 flex items-center justify-center text-black font-bold text-xs sm:text-sm ring-2 ring-yellow-400'
                         : isBooked
-                        ? 'h-5 sm:h-6 lg:h-7 rounded-sm transition-colors cursor-pointer bg-red-600/60 hover:bg-red-600/80 flex items-center justify-center text-white font-bold text-xs sm:text-sm'
-                        : 'h-5 sm:h-6 lg:h-7 rounded-sm transition-colors cursor-pointer bg-green-600/60 hover:bg-green-600/80 flex items-center justify-center text-white font-bold text-xs sm:text-sm';
+                        ? 'h-6 sm:h-6 lg:h-7 rounded-sm transition-colors cursor-pointer bg-red-600/60 hover:bg-red-600/80 flex items-center justify-center text-white font-bold text-xs sm:text-sm'
+                        : 'h-6 sm:h-6 lg:h-7 rounded-sm transition-colors cursor-pointer bg-green-600/60 hover:bg-green-600/80 flex items-center justify-center text-white font-bold text-xs sm:text-sm';
 
                       // Continuous yellow box styling
                       let notifBoxClass = '';
@@ -1548,45 +1548,48 @@ export const CalendarView: React.FC = () => {
         </div>
 
             {/* Legend */}
-            <div className="space-y-2 mt-2">
-              <div className="flex items-center justify-center gap-4 text-xs flex-wrap">
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded bg-green-600/60 flex items-center justify-center text-white font-bold text-xs">1</div>
-                  <span className="text-slate-400">Dostępny</span>
+            <div className="space-y-2 sm:space-y-3 mt-2 sm:mt-3">
+              <div className="flex items-center justify-center gap-2 sm:gap-3 lg:gap-4 text-[10px] sm:text-xs flex-wrap px-2">
+                <div className="flex items-center gap-1 sm:gap-1.5 lg:gap-2">
+                  <div className="w-5 h-5 sm:w-6 sm:h-6 rounded bg-green-600/60 flex items-center justify-center text-white font-bold text-[10px] sm:text-xs flex-shrink-0">1</div>
+                  <span className="text-slate-400 whitespace-nowrap">Dostępny</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded bg-red-600/60 flex items-center justify-center text-white font-bold text-xs">0</div>
-                  <span className="text-slate-400">Zajęty</span>
+                <div className="flex items-center gap-1 sm:gap-1.5 lg:gap-2">
+                  <div className="w-5 h-5 sm:w-6 sm:h-6 rounded bg-red-600/60 flex items-center justify-center text-white font-bold text-[10px] sm:text-xs flex-shrink-0">0</div>
+                  <span className="text-slate-400 whitespace-nowrap">Zajęty</span>
                 </div>
-                <div className="w-px h-4 bg-slate-700"></div>
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded border-2 border-yellow-500"></div>
-                  <span className="text-slate-400">Nieodczytane</span>
+                <div className="hidden sm:block w-px h-4 bg-slate-700"></div>
+                <div className="flex items-center gap-1 sm:gap-1.5 lg:gap-2">
+                  <div className="w-5 h-5 sm:w-6 sm:h-6 rounded border-2 border-yellow-500 flex-shrink-0"></div>
+                  <span className="text-slate-400 whitespace-nowrap">Nieodczytane</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded bg-green-900/30 border border-green-700/50"></div>
-                  <span className="text-slate-400">Zwolnienie (powiadomienie)</span>
+                <div className="flex items-center gap-1 sm:gap-1.5 lg:gap-2">
+                  <div className="w-5 h-5 sm:w-6 sm:h-6 rounded bg-green-900/30 border border-green-700/50 flex-shrink-0"></div>
+                  <span className="text-slate-400 whitespace-nowrap hidden sm:inline">Zwolnienie (powiadomienie)</span>
+                  <span className="text-slate-400 whitespace-nowrap sm:hidden">Zwolnienie</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded bg-red-900/30 border border-red-700/50"></div>
-                  <span className="text-slate-400">Blokada (powiadomienie)</span>
+                <div className="flex items-center gap-1 sm:gap-1.5 lg:gap-2">
+                  <div className="w-5 h-5 sm:w-6 sm:h-6 rounded bg-red-900/30 border border-red-700/50 flex-shrink-0"></div>
+                  <span className="text-slate-400 whitespace-nowrap hidden sm:inline">Blokada (powiadomienie)</span>
+                  <span className="text-slate-400 whitespace-nowrap sm:hidden">Blokada</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded bg-slate-800/50 border border-slate-700/50"></div>
-                  <span className="text-slate-400">Odczytane (powiadomienie)</span>
+                <div className="flex items-center gap-1 sm:gap-1.5 lg:gap-2">
+                  <div className="w-5 h-5 sm:w-6 sm:h-6 rounded bg-slate-800/50 border border-slate-700/50 flex-shrink-0"></div>
+                  <span className="text-slate-400 whitespace-nowrap">Odczytane</span>
                 </div>
-                <div className="w-px h-4 bg-slate-700"></div>
-                <div className="flex items-center gap-2">
-                  <div className="w-6 h-6 rounded bg-yellow-500/80 ring-2 ring-yellow-400 flex items-center justify-center">🤖</div>
-                  <span className="text-slate-400">Sugestia AI (kliknij aby zobaczyć)</span>
+                <div className="hidden sm:block w-px h-4 bg-slate-700"></div>
+                <div className="flex items-center gap-1 sm:gap-1.5 lg:gap-2">
+                  <div className="w-5 h-5 sm:w-6 sm:h-6 rounded bg-yellow-500/80 ring-2 ring-yellow-400 flex items-center justify-center flex-shrink-0">🤖</div>
+                  <span className="text-slate-400 whitespace-nowrap hidden sm:inline">Sugestia AI (kliknij aby zobaczyć)</span>
+                  <span className="text-slate-400 whitespace-nowrap sm:hidden">AI</span>
                 </div>
               </div>
-              <div className="flex items-center justify-center gap-6 text-[11px] text-slate-500">
-                <div className="flex items-center gap-1.5">
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-4 lg:gap-6 text-[10px] sm:text-[11px] text-slate-500 px-2">
+                <div className="flex items-center gap-1 sm:gap-1.5">
                   <span className="font-semibold text-slate-400">CTA:</span>
                   <span>Przyjazd niemożliwy</span>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1 sm:gap-1.5">
                   <span className="font-semibold text-slate-400">CTD:</span>
                   <span>Wyjazd niemożliwy</span>
                 </div>
