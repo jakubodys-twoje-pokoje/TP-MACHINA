@@ -62,12 +62,13 @@ serve(async (req) => {
       rate_id: parseInt(item.rate_id)  // MUST be integer, not string!
     }));
 
-    // Build URL with auth parameters only
-    const url = `https://panel.hotres.pl/api_updateprices?user=${HOTRES_API_USER}&password=${HOTRES_API_PASSWORD}&oid=${oid}`;
+    // Build URL with auth parameters only (credentials must be URL-encoded)
+    const url = `https://panel.hotres.pl/api_updateprices?user=${encodeURIComponent(HOTRES_API_USER)}&password=${encodeURIComponent(HOTRES_API_PASSWORD)}&oid=${oid}`;
 
-    console.log(`📤 Sending price update to Hotres with payload (${normalizedPayload.length} entries):`, JSON.stringify(normalizedPayload, null, 2));
+    console.log(`📤 Sending to Hotres OID=${oid}, payload entries: ${normalizedPayload.length}`);
+    console.log(`📦 Payload:`, JSON.stringify(normalizedPayload, null, 2));
 
-    // Try sending as raw JSON body (Hotres docs say "raw data in request body")
+    // Send as raw JSON body (Hotres docs: "raw data in request body")
     const hotresResponse = await fetch(url, {
       method: 'POST',
       headers: {
@@ -77,10 +78,10 @@ serve(async (req) => {
     });
     const responseText = await hotresResponse.text();
 
-    console.log(`📥 Hotres response: ${responseText}`);
+    console.log(`📥 Hotres status: ${hotresResponse.status}, response: ${responseText}`);
 
     if (!hotresResponse.ok) {
-      throw new Error(`Hotres API error: ${hotresResponse.status} - ${responseText}`);
+      throw new Error(`Hotres API error ${hotresResponse.status}: ${responseText}`);
     }
 
     // Parse response

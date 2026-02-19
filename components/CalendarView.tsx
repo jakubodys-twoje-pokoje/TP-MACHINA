@@ -642,7 +642,8 @@ export const CalendarView: React.FC = () => {
     console.log(`📥 Edge Function response:`, responseData);
 
     if (!response.ok) {
-      throw new Error(`Hotres update failed: ${response.status} ${JSON.stringify(responseData)}`);
+      const errMsg = responseData?.error || JSON.stringify(responseData);
+      throw new Error(`Błąd Hotres (${response.status}): ${errMsg}`);
     }
 
     console.log('✅ Hotres API responded successfully');
