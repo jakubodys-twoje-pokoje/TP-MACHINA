@@ -252,16 +252,11 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
         body: JSON.stringify({ url: targetUrl })
       });
 
-      if (!res.ok) {
-        let body = '';
-        try { body = await res.text(); } catch {}
-        throw new Error(`Proxy error: ${res.status} ${res.statusText} — ${body.slice(0, 300)}`);
-      }
+      const json = await res.json().catch(() => null);
 
-      const json = await res.json();
-
-      if (json.error) {
-        throw new Error(`Hotres error: ${json.error}`);
+      if (!res.ok || json?.error) {
+        const msg = json?.error || `HTTP ${res.status}`;
+        throw new Error(msg);
       }
 
       if (!json.data || json.data.length === 0) {
@@ -282,10 +277,16 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Musisz być zalogowany");
 
-    // 1. Pobierz informacje o obiekcie (do aktualizacji danych property)
-    const objectUrl = `https://panel.hotres.pl/api_object?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
-    const objectResponse = await fetchWithProxy(objectUrl);
-    const objectData = JSON.parse(objectResponse);
+    // 1. Pobierz informacje o obiekcie (do aktualizacji danych property) — non-fatal
+    let objectData: any = {};
+    try {
+      const objectUrl = `https://panel.hotres.pl/api_object?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
+      const objectResponse = await fetchWithProxy(objectUrl);
+      objectData = JSON.parse(objectResponse);
+      console.log('✓ Fetched api_object data');
+    } catch (err: any) {
+      console.warn(`⚠️ api_object failed (non-fatal): ${err.message}`);
+    }
 
     // Tworzę mapę facility ID -> nazwa (zahardkodowane ze słownika Hotres)
     const facilityMap = new Map<string, string>([
@@ -345,11 +346,22 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
     // 2. Pobierz typy pokoi
     const roomTypesUrl = `https://panel.hotres.pl/api_roomstypes?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
-    const roomTypesResponse = await fetchWithProxy(roomTypesUrl);
+    let roomTypesResponse: string;
+    try {
+      roomTypesResponse = await fetchWithProxy(roomTypesUrl);
+    } catch (err: any) {
+      // Try to extract Hotres error message from nested error
+      const msg = err.message || '';
+      const hotresMatch = msg.match(/"message"\s*:\s*"([^"]+)"/);
+      const hotresMsg = hotresMatch ? hotresMatch[1] : msg;
+      throw new Error(`Nie można pobrać pokoi z Hotres (OID: ${oid}): ${hotresMsg}`);
+    }
     const roomTypes = JSON.parse(roomTypesResponse);
 
     if (!Array.isArray(roomTypes)) {
-      throw new Error('Nieprawidłowy format odpowiedzi z api_roomstypes');
+      // Could be an error object from Hotres
+      const hotresError = (roomTypes as any)?.message || (roomTypes as any)?.result;
+      throw new Error(`Hotres API error: ${hotresError || JSON.stringify(roomTypes)}`);
     }
 
     console.log(`Found ${roomTypes.length} room types`);
