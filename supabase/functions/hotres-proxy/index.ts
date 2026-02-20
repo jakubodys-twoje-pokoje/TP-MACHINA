@@ -29,8 +29,9 @@ async function fetchWithRetry(url: string, maxRetries = 3): Promise<Response> {
 
       clearTimeout(timeoutId)
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+    if (!response.ok) {
+        const body = await response.text().catch(() => '')
+        throw new Error(`HTTP error! status: ${response.status}, body: ${body.slice(0, 500)}`)
       }
 
       return response

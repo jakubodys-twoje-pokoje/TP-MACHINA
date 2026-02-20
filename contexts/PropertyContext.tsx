@@ -253,13 +253,15 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
       });
 
       if (!res.ok) {
-        throw new Error(`Proxy error: ${res.status} ${res.statusText}`);
+        let body = '';
+        try { body = await res.text(); } catch {}
+        throw new Error(`Proxy error: ${res.status} ${res.statusText} — ${body.slice(0, 300)}`);
       }
 
       const json = await res.json();
 
       if (json.error) {
-        throw new Error(json.error);
+        throw new Error(`Hotres error: ${json.error}`);
       }
 
       if (!json.data || json.data.length === 0) {

@@ -30,15 +30,23 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
 
     try {
       const description = modalMode === 'import' ? `Zaimportowano z Hotres` : null;
-      // Przekazujemy OID do nowej kolumny, jeśli tryb importu
       const hotresId = modalMode === 'import' ? formData.oid : null;
-      
-      const newProperty = await addProperty(formData.name, description, null, null, hotresId);
-      
+
+      let newProperty;
+      try {
+        newProperty = await addProperty(formData.name, description, null, null, hotresId);
+      } catch (err: any) {
+        throw new Error(`Błąd tworzenia obiektu w bazie: ${err.message || JSON.stringify(err)}`);
+      }
+
       if (!newProperty) throw new Error("Nie udało się utworzyć obiektu");
 
       if (modalMode === 'import' && formData.oid) {
-        await importFromHotres(formData.oid, newProperty.id);
+        try {
+          await importFromHotres(formData.oid, newProperty.id);
+        } catch (err: any) {
+          throw new Error(`Obiekt utworzony, ale import z Hotres nie powiódł się: ${err.message}`);
+        }
       }
 
       setIsModalOpen(false);
@@ -48,7 +56,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
 
     } catch (err: any) {
       alert(`Błąd: ${err.message}`);
-      console.error(JSON.stringify(err, null, 2));
+      console.error('handleCreateProperty error:', err);
     } finally {
       setIsSubmitting(false);
     }
