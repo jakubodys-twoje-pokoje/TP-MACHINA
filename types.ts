@@ -86,6 +86,7 @@ export interface WorkflowEntry {
   task_id: string;
   status_id: string | null;
   comment: string | null;
+  assigned_to: string | null;
   last_updated_by_email?: string | null; // Nowe
   updated_at: string;
 }

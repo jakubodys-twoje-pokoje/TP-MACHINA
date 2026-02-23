@@ -190,7 +190,10 @@ export const WorkflowView: React.FC = () => {
   const [newPropertyName, setNewPropertyName] = useState('');
   const [newStatus, setNewStatus] = useState({ label: '', color: 'bg-slate-600' });
   const [selectedCell, setSelectedCell] = useState<{ propId: string, taskId: string } | null>(null);
-  const [cellForm, setCellForm] = useState({ statusId: '', comment: '' });
+  const DEFAULT_PERSONS = ['Tyberiusz', 'Jakub B.', 'Dorotka', 'Jakub Z.'];
+  const [cellForm, setCellForm] = useState({ statusId: '', comment: '', assignedTo: '' });
+  const [customPersonInput, setCustomPersonInput] = useState('');
+  const [showCustomPersonInput, setShowCustomPersonInput] = useState(false);
 
   const handleToggleTaskActive = async (taskId: string, currentState: boolean) => {
     await supabase.from('workflow_tasks').update({ is_active: !currentState }).eq('id', taskId);
@@ -236,7 +239,9 @@ export const WorkflowView: React.FC = () => {
   const openCellModal = (propId: string, taskId: string) => {
     const entry = entries.find(e => e.property_id === propId && e.task_id === taskId);
     setSelectedCell({ propId, taskId });
-    setCellForm({ statusId: entry?.status_id || '', comment: entry?.comment || '' });
+    setCellForm({ statusId: entry?.status_id || '', comment: entry?.comment || '', assignedTo: entry?.assigned_to || '' });
+    setCustomPersonInput('');
+    setShowCustomPersonInput(false);
     setIsCellModalOpen(true);
   };
 
@@ -244,11 +249,12 @@ export const WorkflowView: React.FC = () => {
     if (!selectedCell) return;
     const { data: { user } } = await supabase.auth.getUser();
     const existing = entries.find(e => e.property_id === selectedCell.propId && e.task_id === selectedCell.taskId);
-    const payload = { 
-      status_id: cellForm.statusId || null, 
-      comment: cellForm.comment, 
-      last_updated_by_email: user?.email || 'System', 
-      updated_at: new Date().toISOString() 
+    const payload = {
+      status_id: cellForm.statusId || null,
+      comment: cellForm.comment,
+      assigned_to: cellForm.assignedTo || null,
+      last_updated_by_email: user?.email || 'System',
+      updated_at: new Date().toISOString()
     };
     if (existing) {
       await supabase.from('workflow_entries').update(payload).eq('id', existing.id);
@@ -370,6 +376,11 @@ export const WorkflowView: React.FC = () => {
                                <span className="text-sm truncate">{status ? status.label : ''}</span>
                                {hasComment && <MessageSquare size={14} className={status ? 'text-white/80' : 'text-indigo-400'} />}
                            </div>
+                           {entry?.assigned_to && (
+                             <div className={`mt-1 flex items-center gap-1 text-[11px] font-normal ${status ? 'text-white/70' : 'text-slate-400'}`}>
+                               <span className="truncate">👤 {entry.assigned_to}</span>
+                             </div>
+                           )}
                         </div>
                       </td>
                     );
@@ -399,6 +410,75 @@ export const WorkflowView: React.FC = () => {
                          </button>
                      ))}
                  </div>
+             </div>
+             <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-400 uppercase">Osoba odpowiedzialna:</label>
+                <div className="flex flex-wrap gap-2">
+                  {/* Brak */}
+                  <button
+                    type="button"
+                    onClick={() => setCellForm({...cellForm, assignedTo: ''})}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${cellForm.assignedTo === '' ? 'bg-slate-600 border-slate-400 text-white' : 'bg-transparent border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300'}`}
+                  >
+                    Brak
+                  </button>
+                  {/* Default persons + any custom one already set */}
+                  {[...DEFAULT_PERSONS, ...(cellForm.assignedTo && !DEFAULT_PERSONS.includes(cellForm.assignedTo) ? [cellForm.assignedTo] : [])].map(person => (
+                    <button
+                      key={person}
+                      type="button"
+                      onClick={() => setCellForm({...cellForm, assignedTo: person})}
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${cellForm.assignedTo === person ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-transparent border-slate-700 text-slate-300 hover:border-indigo-500 hover:text-white'}`}
+                    >
+                      {person}
+                    </button>
+                  ))}
+                  {/* Add custom person */}
+                  {!showCustomPersonInput ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowCustomPersonInput(true)}
+                      className="px-3 py-1.5 rounded-full text-xs font-medium border border-dashed border-slate-600 text-slate-500 hover:border-indigo-500 hover:text-indigo-400 transition-all"
+                    >
+                      + Dodaj osobę
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1 w-full mt-1">
+                      <input
+                        autoFocus
+                        type="text"
+                        value={customPersonInput}
+                        onChange={e => setCustomPersonInput(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && customPersonInput.trim()) {
+                            setCellForm({...cellForm, assignedTo: customPersonInput.trim()});
+                            setShowCustomPersonInput(false);
+                            setCustomPersonInput('');
+                          }
+                          if (e.key === 'Escape') { setShowCustomPersonInput(false); setCustomPersonInput(''); }
+                        }}
+                        placeholder="Wpisz imię..."
+                        className="flex-1 bg-slate-900 border border-indigo-500 rounded-lg px-3 py-1.5 text-white text-xs outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (customPersonInput.trim()) {
+                            setCellForm({...cellForm, assignedTo: customPersonInput.trim()});
+                          }
+                          setShowCustomPersonInput(false);
+                          setCustomPersonInput('');
+                        }}
+                        className="px-2 py-1.5 bg-indigo-600 text-white rounded-lg text-xs"
+                      >OK</button>
+                      <button
+                        type="button"
+                        onClick={() => { setShowCustomPersonInput(false); setCustomPersonInput(''); }}
+                        className="px-2 py-1.5 text-slate-500 hover:text-white text-xs"
+                      >✕</button>
+                    </div>
+                  )}
+                </div>
              </div>
              <div className="space-y-2">
                 <label className="block text-xs font-bold text-slate-400 uppercase">Notatki:</label>
