@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { useProperties } from '../contexts/PropertyContext';
-import { WorkflowTask, WorkflowStatus, WorkflowEntry, Property } from '../types';
+import { WorkflowTask, WorkflowStatus, WorkflowEntry, WorkflowPerson, Property } from '../types';
 import { 
   Plus, X, Loader2, Save, Trash2, Settings, MessageSquare, 
   Search, Eye, EyeOff, GripVertical, Move
@@ -33,6 +33,7 @@ export const WorkflowView: React.FC = () => {
   const { properties, fetchProperties } = useProperties();
   const [tasks, setTasks] = useState<WorkflowTask[]>([]);
   const [statuses, setStatuses] = useState<WorkflowStatus[]>([]);
+  const [persons, setPersons] = useState<WorkflowPerson[]>([]);
   const [entries, setEntries] = useState<WorkflowEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSavingOrder, setIsSavingOrder] = useState(false);
@@ -56,6 +57,11 @@ export const WorkflowView: React.FC = () => {
     if (data) setStatuses(data);
   }, []);
 
+  const fetchPersons = useCallback(async () => {
+    const { data } = await supabase.from('workflow_persons').select('*').order('created_at', { ascending: true });
+    if (data) setPersons(data);
+  }, []);
+
   const fetchEntries = useCallback(async () => {
     const { data } = await supabase.from('workflow_entries').select('*');
     if (data) setEntries(data);
@@ -65,7 +71,7 @@ export const WorkflowView: React.FC = () => {
   useEffect(() => {
     const loadAll = async () => {
       setLoading(true);
-      await Promise.all([fetchTasks(), fetchStatuses(), fetchEntries(), fetchProperties()]);
+      await Promise.all([fetchTasks(), fetchStatuses(), fetchPersons(), fetchEntries(), fetchProperties()]);
       setLoading(false);
     };
     loadAll();
@@ -78,13 +84,16 @@ export const WorkflowView: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => {
         if (!isSavingRef.current) fetchStatuses();
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_persons' }, () => {
+        if (!isSavingRef.current) fetchPersons();
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => {
         if (!isSavingRef.current) fetchTasks();
       })
       .subscribe();
       
     return () => { supabase.removeChannel(channel); };
-  }, [fetchTasks, fetchStatuses, fetchEntries, fetchProperties]);
+  }, [fetchTasks, fetchStatuses, fetchPersons, fetchEntries, fetchProperties]);
 
   // --- RDZEŃ DRAG & DROP ---
 
@@ -183,17 +192,16 @@ export const WorkflowView: React.FC = () => {
   // --- MODALE I AKCJE ---
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
+  const [isPersonsModalOpen, setIsPersonsModalOpen] = useState(false);
   const [isCellModalOpen, setIsCellModalOpen] = useState(false);
   const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false);
 
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newPropertyName, setNewPropertyName] = useState('');
   const [newStatus, setNewStatus] = useState({ label: '', color: 'bg-slate-600' });
+  const [newPersonName, setNewPersonName] = useState('');
   const [selectedCell, setSelectedCell] = useState<{ propId: string, taskId: string } | null>(null);
-  const DEFAULT_PERSONS = ['Tyberiusz', 'Jakub B.', 'Dorotka', 'Jakub Z.'];
   const [cellForm, setCellForm] = useState({ statusId: '', comment: '', assignedTo: '' });
-  const [customPersonInput, setCustomPersonInput] = useState('');
-  const [showCustomPersonInput, setShowCustomPersonInput] = useState(false);
 
   const handleToggleTaskActive = async (taskId: string, currentState: boolean) => {
     await supabase.from('workflow_tasks').update({ is_active: !currentState }).eq('id', taskId);
@@ -236,12 +244,18 @@ export const WorkflowView: React.FC = () => {
     setNewStatus({ label: '', color: 'bg-slate-600' }); fetchStatuses();
   };
 
+  const handleAddPerson = async () => {
+    if (!newPersonName.trim()) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    await supabase.from('workflow_persons').insert({ name: newPersonName.trim(), user_id: user.id });
+    setNewPersonName(''); fetchPersons();
+  };
+
   const openCellModal = (propId: string, taskId: string) => {
     const entry = entries.find(e => e.property_id === propId && e.task_id === taskId);
     setSelectedCell({ propId, taskId });
     setCellForm({ statusId: entry?.status_id || '', comment: entry?.comment || '', assignedTo: entry?.assigned_to || '' });
-    setCustomPersonInput('');
-    setShowCustomPersonInput(false);
     setIsCellModalOpen(true);
   };
 
@@ -294,6 +308,7 @@ export const WorkflowView: React.FC = () => {
             </button>
             <button onClick={() => setIsPropertyModalOpen(true)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm flex items-center gap-2 border border-slate-700 transition-colors"><Plus size={16} /> Obiekt</button>
             <button onClick={() => setIsStatusModalOpen(true)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm flex items-center gap-2 border border-slate-700 transition-colors"><Settings size={16} /> Statusy</button>
+            <button onClick={() => setIsPersonsModalOpen(true)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm flex items-center gap-2 border border-slate-700 transition-colors"><Settings size={16} /> Osoby</button>
             <button onClick={() => setIsTaskModalOpen(true)} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm flex items-center gap-2 transition-all"><Plus size={16} /> Kolumna</button>
         </div>
       </div>
@@ -413,72 +428,19 @@ export const WorkflowView: React.FC = () => {
              </div>
              <div className="space-y-2">
                 <label className="block text-xs font-bold text-slate-400 uppercase">Osoba odpowiedzialna:</label>
-                <div className="flex flex-wrap gap-2">
-                  {/* Brak */}
-                  <button
-                    type="button"
-                    onClick={() => setCellForm({...cellForm, assignedTo: ''})}
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${cellForm.assignedTo === '' ? 'bg-slate-600 border-slate-400 text-white' : 'bg-transparent border-slate-700 text-slate-500 hover:border-slate-500 hover:text-slate-300'}`}
-                  >
-                    Brak
-                  </button>
-                  {/* Default persons + any custom one already set */}
-                  {[...DEFAULT_PERSONS, ...(cellForm.assignedTo && !DEFAULT_PERSONS.includes(cellForm.assignedTo) ? [cellForm.assignedTo] : [])].map(person => (
-                    <button
-                      key={person}
-                      type="button"
-                      onClick={() => setCellForm({...cellForm, assignedTo: person})}
-                      className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${cellForm.assignedTo === person ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-transparent border-slate-700 text-slate-300 hover:border-indigo-500 hover:text-white'}`}
-                    >
-                      {person}
-                    </button>
+                <select
+                  value={cellForm.assignedTo}
+                  onChange={e => setCellForm({...cellForm, assignedTo: e.target.value})}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                >
+                  <option value="">— Brak —</option>
+                  {persons.map(p => (
+                    <option key={p.id} value={p.name}>{p.name}</option>
                   ))}
-                  {/* Add custom person */}
-                  {!showCustomPersonInput ? (
-                    <button
-                      type="button"
-                      onClick={() => setShowCustomPersonInput(true)}
-                      className="px-3 py-1.5 rounded-full text-xs font-medium border border-dashed border-slate-600 text-slate-500 hover:border-indigo-500 hover:text-indigo-400 transition-all"
-                    >
-                      + Dodaj osobę
-                    </button>
-                  ) : (
-                    <div className="flex items-center gap-1 w-full mt-1">
-                      <input
-                        autoFocus
-                        type="text"
-                        value={customPersonInput}
-                        onChange={e => setCustomPersonInput(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter' && customPersonInput.trim()) {
-                            setCellForm({...cellForm, assignedTo: customPersonInput.trim()});
-                            setShowCustomPersonInput(false);
-                            setCustomPersonInput('');
-                          }
-                          if (e.key === 'Escape') { setShowCustomPersonInput(false); setCustomPersonInput(''); }
-                        }}
-                        placeholder="Wpisz imię..."
-                        className="flex-1 bg-slate-900 border border-indigo-500 rounded-lg px-3 py-1.5 text-white text-xs outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (customPersonInput.trim()) {
-                            setCellForm({...cellForm, assignedTo: customPersonInput.trim()});
-                          }
-                          setShowCustomPersonInput(false);
-                          setCustomPersonInput('');
-                        }}
-                        className="px-2 py-1.5 bg-indigo-600 text-white rounded-lg text-xs"
-                      >OK</button>
-                      <button
-                        type="button"
-                        onClick={() => { setShowCustomPersonInput(false); setCustomPersonInput(''); }}
-                        className="px-2 py-1.5 text-slate-500 hover:text-white text-xs"
-                      >✕</button>
-                    </div>
-                  )}
-                </div>
+                </select>
+                {persons.length === 0 && (
+                  <p className="text-xs text-slate-500">Dodaj osoby w sekcji "Osoby" w nagłówku.</p>
+                )}
              </div>
              <div className="space-y-2">
                 <label className="block text-xs font-bold text-slate-400 uppercase">Notatki:</label>
@@ -539,6 +501,43 @@ export const WorkflowView: React.FC = () => {
                     </div>
                     <div className="flex gap-2 flex-wrap">
                         {COLORS.map(c => ( <button key={c.class} onClick={() => setNewStatus({...newStatus, color: c.class})} className={`w-6 h-6 rounded-full ${c.class} transition-all hover:scale-110 ${newStatus.color === c.class ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-800' : ''}`} title={c.name} /> ))}
+                    </div>
+                </div>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {isPersonsModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="bg-surface w-full max-w-lg rounded-xl border border-border shadow-2xl overflow-hidden">
+             <div className="p-4 border-b border-border flex justify-between items-center bg-slate-900/50">
+                <h3 className="font-bold text-white">Zarządzaj Osobami</h3>
+                <button onClick={() => setIsPersonsModalOpen(false)}><X className="text-slate-400 hover:text-white" /></button>
+             </div>
+             <div className="p-6 space-y-6">
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                    {persons.length === 0 && (
+                      <p className="text-slate-500 text-sm text-center py-4">Brak osób. Dodaj pierwszą osobę poniżej.</p>
+                    )}
+                    {persons.map(p => (
+                        <div key={p.id} className="flex items-center justify-between bg-slate-900 p-2 rounded border border-border group">
+                            <span className="text-white text-sm">{p.name}</span>
+                            <button onClick={async () => { if(confirm("Usunąć osobę?")) { await supabase.from('workflow_persons').delete().eq('id', p.id); fetchPersons(); }}} className="text-slate-500 hover:text-red-400"><Trash2 size={16}/></button>
+                        </div>
+                    ))}
+                </div>
+                <div className="border-t border-border pt-4 space-y-3">
+                    <p className="text-xs font-bold text-slate-400 uppercase">Nowa osoba</p>
+                    <div className="flex gap-2">
+                         <input
+                           value={newPersonName}
+                           onChange={e => setNewPersonName(e.target.value)}
+                           onKeyDown={e => { if (e.key === 'Enter') handleAddPerson(); }}
+                           placeholder="Imię i nazwisko"
+                           className="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:ring-1 focus:ring-indigo-500"
+                         />
+                         <button onClick={handleAddPerson} className="px-3 bg-indigo-600 text-white rounded-lg text-sm"><Plus /></button>
                     </div>
                 </div>
              </div>
