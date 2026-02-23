@@ -246,9 +246,7 @@ export const WorkflowView: React.FC = () => {
 
   const handleAddPerson = async () => {
     if (!newPersonName.trim()) return;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    await supabase.from('workflow_persons').insert({ name: newPersonName.trim(), user_id: user.id });
+    await supabase.from('workflow_persons').insert({ name: newPersonName.trim() });
     setNewPersonName(''); fetchPersons();
   };
 
