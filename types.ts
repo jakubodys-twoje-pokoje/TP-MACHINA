@@ -65,7 +65,7 @@ export interface RatePlan {
 
 export interface WorkflowTask {
   id: string;
-  user_id: string;
+  user_id?: string | null; // Audit only (platform-wide)
   title: string;
   is_active: boolean; // Nowe
   position: number;   // Nowe
@@ -74,7 +74,7 @@ export interface WorkflowTask {
 
 export interface WorkflowStatus {
   id: string;
-  user_id: string;
+  user_id?: string | null; // Audit only (platform-wide)
   label: string;
   color: string;
   created_at: string;
