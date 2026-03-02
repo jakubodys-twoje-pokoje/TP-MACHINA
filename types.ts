@@ -97,6 +97,22 @@ export interface WorkflowEntry {
   updated_at: string;
 }
 
+export interface WorkflowEntryHistory {
+  id: string;
+  entry_id: string;
+  property_id: string;
+  task_id: string;
+  old_status_id: string | null;
+  old_comment: string | null;
+  old_assigned_to: string | null;
+  new_status_id: string | null;
+  new_comment: string | null;
+  new_assigned_to: string | null;
+  change_reason: string;
+  changed_by_email: string;
+  changed_at: string;
+}
+
 export interface Notification {
   id: string;
   property_id: string;
