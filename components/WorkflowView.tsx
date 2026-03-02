@@ -226,6 +226,11 @@ export const WorkflowView: React.FC = () => {
     fetchProperties();
   };
 
+  const handleUpdatePropertyAssignedTo = async (propId: string, personName: string) => {
+    await supabase.from('properties').update({ workflow_assigned_to: personName || null }).eq('id', propId);
+    fetchProperties();
+  };
+
   const handleAddTask = async () => {
     if (!newTaskTitle.trim()) return;
     const { data: { user } } = await supabase.auth.getUser();
@@ -446,19 +451,32 @@ export const WorkflowView: React.FC = () => {
                   onDrop={(e) => handleDrop(e, property.id)}
                   className={`hover:bg-slate-800/30 transition-all ${!rowIsActive ? 'opacity-30 grayscale bg-slate-900/50' : ''} ${isTarget ? 'bg-indigo-500/20 shadow-[inset_0_4px_0_0_#818cf8,inset_0_-4px_0_0_#818cf8]' : ''} ${isSource ? 'opacity-20 bg-indigo-500/10' : ''}`}
                 >
-                  <td className={`p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)]`}>
-                    <div className="flex justify-between items-center gap-2">
-                        <div className="flex items-center gap-3 flex-grow truncate">
+                  <td className={`p-3 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)]`}>
+                    <div className="flex justify-between items-start gap-2 h-full">
+                        <div className="flex items-start gap-2 flex-grow min-w-0">
                             {isReorderMode && (
-                                <div 
-                                  draggable 
+                                <div
+                                  draggable
                                   onDragStart={() => handleDragStart(property.id, 'property')}
-                                  className="cursor-grab active:cursor-grabbing p-1.5 bg-indigo-500/20 hover:bg-indigo-500/40 rounded transition-colors"
+                                  className="cursor-grab active:cursor-grabbing p-1.5 bg-indigo-500/20 hover:bg-indigo-500/40 rounded transition-colors mt-0.5"
                                 >
                                     <GripVertical size={16} className="text-indigo-400" />
                                 </div>
                             )}
-                            <div className="truncate font-medium text-white text-sm">{property.name}</div>
+                            <div className="flex flex-col gap-1 flex-grow min-w-0">
+                                <div className="truncate font-medium text-white text-sm">{property.name}</div>
+                                <select
+                                  value={property.workflow_assigned_to || ''}
+                                  onChange={(e) => handleUpdatePropertyAssignedTo(property.id, e.target.value)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-xs bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-slate-300 outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer hover:bg-slate-700 transition-colors"
+                                >
+                                  <option value="">Opiekun: —</option>
+                                  {persons.map(p => (
+                                    <option key={p.id} value={p.name}>{p.name}</option>
+                                  ))}
+                                </select>
+                            </div>
                         </div>
                         <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button onClick={() => handleTogglePropertyActive(property.id, rowIsActive)} className="text-slate-500 hover:text-indigo-400 p-1"><Eye size={14}/></button>

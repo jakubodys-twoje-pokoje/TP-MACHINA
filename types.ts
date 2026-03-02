@@ -16,6 +16,7 @@ export interface Property {
   auto_sync_interval?: number;
   workflow_is_active?: boolean; // Nowe
   workflow_position?: number;   // Nowe
+  workflow_assigned_to?: string | null; // Opiekun obiektu
   created_at: string;
 }
 
