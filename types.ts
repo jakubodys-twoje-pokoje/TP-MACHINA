@@ -92,7 +92,6 @@ export interface WorkflowEntry {
 
 export interface Notification {
   id: string;
-  user_id: string;
   property_id: string;
   unit_id: string;
   property_name: string;
@@ -101,5 +100,32 @@ export interface Notification {
   start_date: string;
   end_date: string;
   is_read: boolean;
+  read_by_email?: string | null;
+  read_at?: string | null;
   created_at: string;
+}
+
+export interface SyncHistory {
+  id: string;
+  property_id: string;
+  property_name: string;
+  synced_at: string;
+  records_compared: number;
+  changes_detected: number;
+  notifications_sent: number;
+  status: 'success' | 'error';
+  error_message?: string | null;
+}
+
+export interface Price {
+  id: string;
+  unit_id: string;
+  rate_id: string;
+  date: string;
+  price: number | null;
+  min: number | null;
+  max: number | null;
+  cta: 0 | 1 | null;
+  ctd: 0 | 1 | null;
+  synced_at?: string;
 }

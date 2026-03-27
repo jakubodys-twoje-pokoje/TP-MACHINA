@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from './Sidebar';
 import { supabase, VAPID_PUBLIC_KEY } from '../services/supabaseClient';
-import { LogOut, BellRing } from 'lucide-react';
+import { LogOut, BellRing, Clock } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
+import { useProperties } from '../contexts/PropertyContext';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -26,6 +27,26 @@ const urlBase64ToUint8Array = (base64String: string) => {
 export const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const location = useLocation();
+  const { syncLogs } = useProperties();
+
+  // Get last sync timestamp
+  const lastSync = syncLogs[0];
+  const getLastSyncText = () => {
+    if (!lastSync) return 'Brak synchronizacji';
+
+    const date = new Date(lastSync.timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+
+    if (diffMins < 1) return 'Przed chwilą';
+    if (diffMins < 60) return `${diffMins} min temu`;
+
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h temu`;
+
+    return date.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  };
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -58,9 +79,13 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
-              const { error } = await supabase.from('push_subscriptions').insert({
+              // Use upsert to prevent duplicates (unique constraint on user_id + endpoint)
+              const { error } = await supabase.from('push_subscriptions').upsert({
                 user_id: user.id,
                 subscription: subscription
+              }, {
+                onConflict: 'user_id,endpoint',
+                ignoreDuplicates: false
               });
               if (error) throw error;
               alert("Powiadomienia zostały włączone!");
@@ -76,8 +101,9 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   // Logic to determine layout width based on current path
   const isWorkflow = location.pathname === '/workflow';
-  // Use w-full for workflow to utilize ultrawide monitors, keep constrained width for other views
-  const containerClass = isWorkflow ? "w-full px-6" : "max-w-6xl mx-auto px-4";
+  const isCalendar = location.pathname.includes('/calendar');
+  // Use w-full for workflow and calendar to utilize ultrawide monitors, keep constrained width for other views
+  const containerClass = (isWorkflow || isCalendar) ? "w-full px-6" : "max-w-6xl mx-auto px-4";
 
   return (
     <div className="flex h-screen w-full bg-background text-slate-100 overflow-hidden font-sans">
@@ -86,7 +112,12 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
             <Sidebar />
         </div>
         <div className="p-4 border-t border-border bg-slate-900/50 space-y-2">
-          <button 
+          {/* Last sync timestamp */}
+          <div className="px-3 py-2 text-[10px] text-slate-500 flex items-center gap-2">
+            <Clock size={12} className="flex-shrink-0" />
+            <span className="truncate">Ostatnia synch: {getLastSyncText()}</span>
+          </div>
+          <button
             onClick={handleEnablePush}
             className="w-full flex items-center gap-2 px-3 py-2 text-xs text-indigo-400 hover:bg-indigo-500/10 rounded transition-colors"
           >
