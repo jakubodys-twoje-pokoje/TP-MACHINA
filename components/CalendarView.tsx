@@ -650,6 +650,235 @@ export const CalendarView: React.FC = () => {
     console.log('📥 Hotres raw response:', responseData.hotres_response);
   };
 
+  const handleOverwriteAllPrices = async () => {
+    if (!property) return;
+
+    // Password protection
+    const password = prompt('⚠️ NADPISZ WSZYSTKIE DANE W HOTRES\n\nTa operacja wyśle CAŁY CENNIK (wszystkie dni, CTA, CTD, MIN) do Hotresa i nadpisze istniejące dane.\n\nWpisz hasło aby kontynuować:');
+
+    if (password !== 'Tyberiusz@12121') {
+      if (password !== null) {
+        alert('❌ Nieprawidłowe hasło');
+      }
+      return;
+    }
+
+    // Final confirmation
+    if (!confirm(`🚨 UWAGA! 🚨\n\nZa chwilę wyślesz WSZYSTKIE DANE cennika do Hotresa:\n• Wszystkie jednostki\n• Wszystkie dni (20.01.2026 - 31.12.2026)\n• Wszystkie CTA, CTD, MIN\n\nTo NADPISZE istniejące dane w Hotresie!\n\nCzy na pewno chcesz kontynuować?`)) {
+      return;
+    }
+
+    try {
+      await sendAllPricesToHotres();
+      alert('✅ SUKCES!\n\nCały cennik został wysłany do Hotresa.');
+    } catch (error: any) {
+      alert(`❌ Błąd: ${error.message}`);
+      console.error('Error overwriting all prices:', error);
+    }
+  };
+
+  const sendAllPricesToHotres = async () => {
+    if (!property) throw new Error('Brak informacji o obiekcie');
+
+    console.log('🏠 OVERWRITE ALL: Sending ALL prices for property:', property.name, 'ID:', property.id);
+
+    // Get all rate_plans
+    const { data: allRatePlansRaw, error: rpError } = await supabase
+      .from('rate_plans')
+      .select('id, name, external_id')
+      .eq('property_id', property.id);
+
+    console.log('📊 ALL rate_plans for property:', allRatePlansRaw);
+
+    if (rpError || !allRatePlansRaw || allRatePlansRaw.length === 0) {
+      throw new Error('Brak cenników dla tego obiektu. Dodaj cenniki w zakładce "Cenniki i Oferty".');
+    }
+
+    // Filter only those with external_id
+    const allRatePlans = allRatePlansRaw.filter(rp => rp.external_id !== null && rp.external_id !== undefined);
+
+    console.log('📊 Rate_plans WITH external_id:', allRatePlans);
+
+    if (allRatePlans.length === 0) {
+      const names = allRatePlansRaw.map(rp => rp.name).join(', ');
+      throw new Error(`Cenniki istnieją (${names}), ale nie mają external_id. Pobierz cenniki z Hotres używając przycisku "Pobierz z Hotres" w zakładce Cenniki.`);
+    }
+
+    // Fixed date range: 20.01.2026 to 31.12.2026
+    const startDate = new Date('2026-01-20');
+    const endDate = new Date('2026-12-31');
+
+    const unitIds = units.map(u => u.id);
+
+    console.log('📊 Fetching ALL prices from database...');
+    console.log('📊 Date range:', startDate.toISOString().split('T')[0], 'to', endDate.toISOString().split('T')[0]);
+    console.log('📊 Unit IDs:', unitIds);
+
+    // Fetch ALL prices from database
+    const { data: allPrices, error: pricesError } = await supabase
+      .from('prices')
+      .select('*')
+      .in('unit_id', unitIds)
+      .gte('date', startDate.toISOString().split('T')[0])
+      .lte('date', endDate.toISOString().split('T')[0]);
+
+    if (pricesError) {
+      throw new Error(`Błąd pobierania cen: ${pricesError.message}`);
+    }
+
+    if (!allPrices || allPrices.length === 0) {
+      throw new Error('Brak danych cenowych w bazie. Zsynchronizuj dane z Hotres najpierw.');
+    }
+
+    console.log('📊 Fetched', allPrices.length, 'price records from database');
+
+    // Group ALL prices by type_id
+    const pricesByTypeId = new Map<string, Array<{ date: string; cta?: number; ctd?: number; min?: number | null }>>();
+
+    allPrices.forEach((price) => {
+      const unit = units.find(u => u.id === price.unit_id);
+      if (!unit || !unit.external_type_id) return;
+
+      const typeId = unit.external_type_id;
+
+      if (!pricesByTypeId.has(typeId)) {
+        pricesByTypeId.set(typeId, []);
+      }
+
+      pricesByTypeId.get(typeId)!.push({
+        date: price.date,
+        cta: price.cta,
+        ctd: price.ctd,
+        min: price.min
+      });
+    });
+
+    // Helper: Is next day check
+    const isNextDay = (dateStr1: string, dateStr2: string) => {
+      const d1 = new Date(dateStr1);
+      const d2 = new Date(dateStr2);
+      d1.setHours(12, 0, 0, 0);
+      d2.setHours(12, 0, 0, 0);
+      const diffTime = Math.abs(d2.getTime() - d1.getTime());
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      return diffDays === 1 && d2 > d1;
+    };
+
+    // Build payload array in Hotres format
+    const payloadArray: Array<{
+      type_id: number;
+      rate_id: number;
+      mode: string;
+      prices: Array<{
+        from: string;
+        till: string;
+        cta?: number;
+        ctd?: number;
+        min?: number | null;
+      }>;
+    }> = [];
+
+    // For each type_id, group prices into continuous ranges
+    for (const [typeIdStr, prices] of pricesByTypeId) {
+      const currentTypeId = parseInt(typeIdStr, 10);
+
+      // Sort prices by date
+      prices.sort((a, b) => a.date.localeCompare(b.date));
+
+      // Group into continuous ranges with same values
+      const ranges: Array<{
+        from: string;
+        till: string;
+        cta?: number;
+        ctd?: number;
+        min?: number | null;
+      }> = [];
+
+      let currentRange: any = null;
+
+      for (const price of prices) {
+        const isSameValues = currentRange &&
+          currentRange.cta === price.cta &&
+          currentRange.ctd === price.ctd &&
+          currentRange.min === price.min;
+
+        const isNext = currentRange && isNextDay(currentRange.till, price.date);
+
+        if (isSameValues && isNext) {
+          // Extend current range
+          currentRange.till = price.date;
+        } else {
+          // Push old range if exists
+          if (currentRange) ranges.push(currentRange);
+
+          // Start new range
+          currentRange = {
+            from: price.date,
+            till: price.date
+          };
+          if (price.cta !== undefined) currentRange.cta = price.cta;
+          if (price.ctd !== undefined) currentRange.ctd = price.ctd;
+          if (price.min !== undefined) currentRange.min = price.min;
+        }
+      }
+
+      if (currentRange) ranges.push(currentRange);
+
+      // Send same data to ALL rate_plans for this property
+      console.log(`📋 Building payload for type_id ${currentTypeId} with ${allRatePlans.length} rate plans`);
+
+      for (const ratePlan of allRatePlans) {
+        const entry = {
+          type_id: currentTypeId,
+          rate_id: parseInt(ratePlan.external_id!, 10),
+          mode: 'delta',
+          prices: ranges
+        };
+        console.log(`  ➕ Adding entry for rate_plan: ${ratePlan.name} (external_id: ${ratePlan.external_id})`);
+        payloadArray.push(entry);
+      }
+    }
+
+    if (payloadArray.length === 0) {
+      throw new Error('Brak danych do wysłania. Sprawdź czy jednostki mają external_type_id.');
+    }
+
+    console.log(`📦 FINAL PAYLOAD (${payloadArray.length} entries):`);
+    console.log(JSON.stringify(payloadArray, null, 2));
+
+    // Send to Hotres
+    console.log('📤 Sending ALL prices to Hotres...');
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Musisz być zalogowany');
+
+    const response = await fetch(
+      'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/update-hotres-prices',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          property_id: property.id,
+          payload: payloadArray
+        })
+      }
+    );
+
+    const responseData = await response.json();
+
+    console.log(`📥 Edge Function response:`, responseData);
+
+    if (!response.ok) {
+      const errMsg = responseData?.error || JSON.stringify(responseData);
+      throw new Error(`Błąd Hotres (${response.status}): ${errMsg}`);
+    }
+
+    console.log('✅ ALL PRICES sent to Hotres successfully');
+    console.log('📥 Hotres raw response:', responseData.hotres_response);
+  };
+
   const handleCtaChange = (unitId: string, dateStr: string, checked: boolean) => {
     const key = `${unitId}_${dateStr}`;
     const currentPrice = pricesData.get(key);
@@ -1318,6 +1547,17 @@ export const CalendarView: React.FC = () => {
                 </div>
               </div>
             )}
+
+            {/* NADPISZ HOTRES Button - Always Visible */}
+            <div className="mt-3">
+              <button
+                onClick={handleOverwriteAllPrices}
+                className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+              >
+                <span className="text-xs sm:text-sm">⚠️ NADPISZ HOTRES</span>
+              </button>
+              <p className="text-[10px] text-slate-500 text-center mt-1">Wysyła CAŁY CENNIK do Hotresa (wymaga hasła)</p>
+            </div>
           </div>
         )}
 
@@ -1347,6 +1587,19 @@ export const CalendarView: React.FC = () => {
             <div className="text-xs text-slate-400 whitespace-nowrap">
               Pozostało: <span className="font-bold text-yellow-400">{10 - hotresSyncCount.count}</span>/10
             </div>
+          </div>
+        )}
+
+        {/* NADPISZ HOTRES Button for Full View - Always Visible */}
+        {viewMode === 'full' && (
+          <div className="mb-2 sm:mb-3">
+            <button
+              onClick={handleOverwriteAllPrices}
+              className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+            >
+              <span className="text-xs sm:text-sm">⚠️ NADPISZ HOTRES</span>
+            </button>
+            <p className="text-[10px] text-slate-500 text-center mt-1">Wysyła CAŁY CENNIK do Hotresa (wymaga hasła)</p>
           </div>
         )}
 
