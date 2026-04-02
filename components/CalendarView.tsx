@@ -23,6 +23,12 @@ export const CalendarView: React.FC = () => {
   const [aiSuggestions, setAiSuggestions] = useState<Map<string, AISuggestion>>(new Map());
   const [selectedSuggestion, setSelectedSuggestion] = useState<AISuggestion | null>(null);
 
+  // Override modal state
+  const [showOverrideModal, setShowOverrideModal] = useState(false);
+  const [overrideCTA, setOverrideCTA] = useState(false);
+  const [overrideCTD, setOverrideCTD] = useState(false);
+  const [overrideMIN, setOverrideMIN] = useState(false);
+
   // Hotres sync counter - separate for each property
   const getHotresSyncCount = (propertyId: string | null): { count: number; hourStart: number } => {
     if (!propertyId) return { count: 0, hourStart: Date.now() };
@@ -650,37 +656,57 @@ export const CalendarView: React.FC = () => {
     console.log('📥 Hotres raw response:', responseData.hotres_response);
   };
 
-  const handleOverwriteAllPrices = async () => {
-    if (!property) return;
-
+  const handleOpenOverrideModal = () => {
     // Password protection
-    const password = prompt('⚠️ NADPISZ WSZYSTKIE DANE W HOTRES\n\nTa operacja wyśle CAŁY CENNIK (wszystkie dni, CTA, CTD, MIN) do Hotresa i nadpisze istniejące dane.\n\nWpisz hasło aby kontynuować:');
+    const password = prompt('⚠️ NADPISZ RESTRYKCJE W HOTRES\n\nWpisz hasło aby kontynuować:');
 
-    if (password !== 'Tyberiusz@12121') {
+    if (password !== 'wyjebtowpizdu') {
       if (password !== null) {
         alert('❌ Nieprawidłowe hasło');
       }
       return;
     }
 
-    // Final confirmation
-    if (!confirm(`🚨 UWAGA! 🚨\n\nZa chwilę wyślesz WSZYSTKIE DANE cennika do Hotresa:\n• Wszystkie jednostki\n• Wszystkie dni (20.01.2026 - 31.12.2026)\n• Wszystkie CTA, CTD, MIN\n\nTo NADPISZE istniejące dane w Hotresie!\n\nCzy na pewno chcesz kontynuować?`)) {
+    // Reset toggles and open modal
+    setOverrideCTA(false);
+    setOverrideCTD(false);
+    setOverrideMIN(false);
+    setShowOverrideModal(true);
+  };
+
+  const handleConfirmOverride = async () => {
+    if (!property) return;
+
+    // Check if at least one option is selected
+    if (!overrideCTA && !overrideCTD && !overrideMIN) {
+      alert('❌ Wybierz przynajmniej jedną opcję');
+      return;
+    }
+
+    // Build confirmation message
+    const selected: string[] = [];
+    if (overrideCTA) selected.push('CTA');
+    if (overrideCTD) selected.push('CTD');
+    if (overrideMIN) selected.push('MIN nocy');
+
+    if (!confirm(`🚨 UWAGA! 🚨\n\nZa chwilę wyślesz do Hotresa:\n• ${selected.join(', ')}\n• Wszystkie jednostki\n• Wszystkie dni (20.01.2026 - 31.12.2026)\n\nTo NADPISZE istniejące dane w Hotresie!\n\nCzy na pewno chcesz kontynuować?`)) {
       return;
     }
 
     try {
+      setShowOverrideModal(false);
       await sendAllPricesToHotres();
-      alert('✅ SUKCES!\n\nCały cennik został wysłany do Hotresa.');
+      alert(`✅ SUKCES!\n\nWysłano: ${selected.join(', ')}`);
     } catch (error: any) {
       alert(`❌ Błąd: ${error.message}`);
-      console.error('Error overwriting all prices:', error);
+      console.error('Error overwriting restrictions:', error);
     }
   };
 
   const sendAllPricesToHotres = async () => {
     if (!property) throw new Error('Brak informacji o obiekcie');
 
-    console.log('🏠 OVERWRITE ALL: Sending ALL prices for property:', property.name, 'ID:', property.id);
+    console.log('🏠 OVERWRITE ALL: Sending ALL restrictions (CTA/CTD/MIN) for property:', property.name, 'ID:', property.id);
 
     // Get all rate_plans
     const { data: allRatePlansRaw, error: rpError } = await supabase
@@ -710,29 +736,30 @@ export const CalendarView: React.FC = () => {
 
     const unitIds = units.map(u => u.id);
 
-    console.log('📊 Fetching ALL prices from database...');
+    console.log('📊 Fetching ALL restrictions (CTA/CTD/MIN) from database...');
     console.log('📊 Date range:', startDate.toISOString().split('T')[0], 'to', endDate.toISOString().split('T')[0]);
     console.log('📊 Unit IDs:', unitIds);
 
-    // Fetch ALL prices from database
+    // Fetch ALL restrictions from database (CTA/CTD/MIN only)
     const { data: allPrices, error: pricesError } = await supabase
       .from('prices')
-      .select('*')
+      .select('unit_id, date, cta, ctd, min')
       .in('unit_id', unitIds)
       .gte('date', startDate.toISOString().split('T')[0])
       .lte('date', endDate.toISOString().split('T')[0]);
 
     if (pricesError) {
-      throw new Error(`Błąd pobierania cen: ${pricesError.message}`);
+      throw new Error(`Błąd pobierania restrykcji: ${pricesError.message}`);
     }
 
     if (!allPrices || allPrices.length === 0) {
-      throw new Error('Brak danych cenowych w bazie. Zsynchronizuj dane z Hotres najpierw.');
+      throw new Error('Brak danych restrykcji w bazie. Zsynchronizuj dane z Hotres najpierw.');
     }
 
-    console.log('📊 Fetched', allPrices.length, 'price records from database');
+    console.log('📊 Fetched', allPrices.length, 'restriction records from database');
+    console.log('📊 Selected fields to send:', { CTA: overrideCTA, CTD: overrideCTD, MIN: overrideMIN });
 
-    // Group ALL prices by type_id
+    // Group ALL prices by type_id (only include selected fields)
     const pricesByTypeId = new Map<string, Array<{ date: string; cta?: number; ctd?: number; min?: number | null }>>();
 
     allPrices.forEach((price) => {
@@ -745,12 +772,15 @@ export const CalendarView: React.FC = () => {
         pricesByTypeId.set(typeId, []);
       }
 
-      pricesByTypeId.get(typeId)!.push({
-        date: price.date,
-        cta: price.cta,
-        ctd: price.ctd,
-        min: price.min
-      });
+      // Build price object with only selected fields
+      const priceObj: { date: string; cta?: number; ctd?: number; min?: number | null } = {
+        date: price.date
+      };
+      if (overrideCTA) priceObj.cta = price.cta;
+      if (overrideCTD) priceObj.ctd = price.ctd;
+      if (overrideMIN) priceObj.min = price.min;
+
+      pricesByTypeId.get(typeId)!.push(priceObj);
     });
 
     // Helper: Is next day check
@@ -797,10 +827,11 @@ export const CalendarView: React.FC = () => {
       let currentRange: any = null;
 
       for (const price of prices) {
-        const isSameValues = currentRange &&
-          currentRange.cta === price.cta &&
-          currentRange.ctd === price.ctd &&
-          currentRange.min === price.min;
+        // Check if values match (only for selected fields)
+        let isSameValues = !!currentRange;
+        if (overrideCTA && currentRange) isSameValues = isSameValues && currentRange.cta === price.cta;
+        if (overrideCTD && currentRange) isSameValues = isSameValues && currentRange.ctd === price.ctd;
+        if (overrideMIN && currentRange) isSameValues = isSameValues && currentRange.min === price.min;
 
         const isNext = currentRange && isNextDay(currentRange.till, price.date);
 
@@ -811,14 +842,14 @@ export const CalendarView: React.FC = () => {
           // Push old range if exists
           if (currentRange) ranges.push(currentRange);
 
-          // Start new range
+          // Start new range (only with selected fields)
           currentRange = {
             from: price.date,
             till: price.date
           };
-          if (price.cta !== undefined) currentRange.cta = price.cta;
-          if (price.ctd !== undefined) currentRange.ctd = price.ctd;
-          if (price.min !== undefined) currentRange.min = price.min;
+          if (overrideCTA && price.cta !== undefined) currentRange.cta = price.cta;
+          if (overrideCTD && price.ctd !== undefined) currentRange.ctd = price.ctd;
+          if (overrideMIN && price.min !== undefined) currentRange.min = price.min;
         }
       }
 
@@ -843,11 +874,11 @@ export const CalendarView: React.FC = () => {
       throw new Error('Brak danych do wysłania. Sprawdź czy jednostki mają external_type_id.');
     }
 
-    console.log(`📦 FINAL PAYLOAD (${payloadArray.length} entries):`);
+    console.log(`📦 FINAL PAYLOAD (${payloadArray.length} entries - CTA/CTD/MIN only):`);
     console.log(JSON.stringify(payloadArray, null, 2));
 
-    // Send to Hotres
-    console.log('📤 Sending ALL prices to Hotres...');
+    // Send to Hotres (mode: delta - only restrictions, no prices)
+    console.log('📤 Sending ALL restrictions (CTA/CTD/MIN) to Hotres using mode: delta...');
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Musisz być zalogowany');
 
@@ -875,7 +906,7 @@ export const CalendarView: React.FC = () => {
       throw new Error(`Błąd Hotres (${response.status}): ${errMsg}`);
     }
 
-    console.log('✅ ALL PRICES sent to Hotres successfully');
+    console.log('✅ ALL RESTRICTIONS (CTA/CTD/MIN) sent to Hotres successfully');
     console.log('📥 Hotres raw response:', responseData.hotres_response);
   };
 
@@ -1548,15 +1579,15 @@ export const CalendarView: React.FC = () => {
               </div>
             )}
 
-            {/* NADPISZ HOTRES Button - Always Visible */}
+            {/* OVERRIDE Button - Always Visible */}
             <div className="mt-3">
               <button
-                onClick={handleOverwriteAllPrices}
+                onClick={handleOpenOverrideModal}
                 className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
               >
-                <span className="text-xs sm:text-sm">⚠️ NADPISZ HOTRES</span>
+                <span className="text-xs sm:text-sm">🚨 OVERRIDE</span>
               </button>
-              <p className="text-[10px] text-slate-500 text-center mt-1">Wysyła CAŁY CENNIK do Hotresa (wymaga hasła)</p>
+              <p className="text-[10px] text-slate-500 text-center mt-1">Nadpisz wybrane restrykcje w Hotresie (wymaga hasła)</p>
             </div>
           </div>
         )}
@@ -1590,16 +1621,16 @@ export const CalendarView: React.FC = () => {
           </div>
         )}
 
-        {/* NADPISZ HOTRES Button for Full View - Always Visible */}
+        {/* OVERRIDE Button for Full View - Always Visible */}
         {viewMode === 'full' && (
           <div className="mb-2 sm:mb-3">
             <button
-              onClick={handleOverwriteAllPrices}
+              onClick={handleOpenOverrideModal}
               className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
             >
-              <span className="text-xs sm:text-sm">⚠️ NADPISZ HOTRES</span>
+              <span className="text-xs sm:text-sm">🚨 OVERRIDE</span>
             </button>
-            <p className="text-[10px] text-slate-500 text-center mt-1">Wysyła CAŁY CENNIK do Hotresa (wymaga hasła)</p>
+            <p className="text-[10px] text-slate-500 text-center mt-1">Nadpisz wybrane restrykcje w Hotresie (wymaga hasła)</p>
           </div>
         )}
 
@@ -1958,6 +1989,88 @@ export const CalendarView: React.FC = () => {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Override Modal */}
+      {showOverrideModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl shadow-2xl max-w-md w-full p-6 border border-red-600">
+            <h2 className="text-xl font-bold text-red-500 mb-4 flex items-center gap-2">
+              🚨 OVERRIDE - Wybierz co wysłać
+            </h2>
+
+            <p className="text-sm text-slate-300 mb-6">
+              Zaznacz pola które chcesz nadpisać w Hotresie.<br />
+              Wysłane zostaną <strong>WSZYSTKIE</strong> dni i jednostki dla wybranych pól.
+            </p>
+
+            <div className="space-y-4 mb-6">
+              {/* CTA Toggle */}
+              <label className="flex items-center gap-3 p-3 bg-slate-700/50 rounded-lg cursor-pointer hover:bg-slate-700 transition">
+                <input
+                  type="checkbox"
+                  checked={overrideCTA}
+                  onChange={(e) => setOverrideCTA(e.target.checked)}
+                  className="w-5 h-5 accent-red-600"
+                />
+                <div>
+                  <div className="font-semibold text-white">CTA</div>
+                  <div className="text-xs text-slate-400">Check-in Advance (przybycie)</div>
+                </div>
+              </label>
+
+              {/* CTD Toggle */}
+              <label className="flex items-center gap-3 p-3 bg-slate-700/50 rounded-lg cursor-pointer hover:bg-slate-700 transition">
+                <input
+                  type="checkbox"
+                  checked={overrideCTD}
+                  onChange={(e) => setOverrideCTD(e.target.checked)}
+                  className="w-5 h-5 accent-red-600"
+                />
+                <div>
+                  <div className="font-semibold text-white">CTD</div>
+                  <div className="text-xs text-slate-400">Check-out Departure (wyjazd)</div>
+                </div>
+              </label>
+
+              {/* MIN Toggle */}
+              <label className="flex items-center gap-3 p-3 bg-slate-700/50 rounded-lg cursor-pointer hover:bg-slate-700 transition">
+                <input
+                  type="checkbox"
+                  checked={overrideMIN}
+                  onChange={(e) => setOverrideMIN(e.target.checked)}
+                  className="w-5 h-5 accent-red-600"
+                />
+                <div>
+                  <div className="font-semibold text-white">MIN nocy</div>
+                  <div className="text-xs text-slate-400">Minimalna liczba nocy</div>
+                </div>
+              </label>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowOverrideModal(false)}
+                className="flex-1 bg-slate-600 hover:bg-slate-700 text-white font-semibold py-2.5 px-4 rounded-lg transition"
+              >
+                Anuluj
+              </button>
+              <button
+                onClick={handleConfirmOverride}
+                disabled={!overrideCTA && !overrideCTD && !overrideMIN}
+                className="flex-1 bg-red-600 hover:bg-red-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold py-2.5 px-4 rounded-lg transition"
+              >
+                Wyślij do Hotresa
+              </button>
+            </div>
+
+            {(!overrideCTA && !overrideCTD && !overrideMIN) && (
+              <p className="text-xs text-red-400 text-center mt-3">
+                Zaznacz przynajmniej jedno pole
+              </p>
+            )}
           </div>
         </div>
       )}
