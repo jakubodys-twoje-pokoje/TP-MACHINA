@@ -242,7 +242,7 @@ export const PropertyView: React.FC = () => {
             disabled={saving}
             className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 sm:px-6 py-2 sm:py-2.5 rounded-lg text-sm sm:text-base font-medium flex items-center gap-1.5 sm:gap-2 transition-colors disabled:opacity-50"
           >
-            {saving ? <Loader2 className="animate-spin" size={16} className="sm:w-[18px] sm:h-[18px]" /> : <Save size={16} className="sm:w-[18px] sm:h-[18px]" />}
+            {saving ? <Loader2 className="animate-spin sm:w-[18px] sm:h-[18px]" size={16} /> : <Save size={16} className="sm:w-[18px] sm:h-[18px]" />}
             Zapisz zmiany
           </button>
         </div>
