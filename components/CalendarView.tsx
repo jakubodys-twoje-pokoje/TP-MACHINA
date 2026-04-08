@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useLocation } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { Property, Availability, Unit, Notification, Price, AISuggestion } from '../types';
 import { Loader2, ChevronLeft, ChevronRight, RefreshCw, Sparkles, ArrowRight, CheckSquare, Square, X, Save } from 'lucide-react';
 
 export const CalendarView: React.FC = () => {
   const { id: propertyId } = useParams<{ id: string }>();
+  const location = useLocation();
   const [property, setProperty] = useState<Property | null>(null);
   const [units, setUnits] = useState<Unit[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -61,6 +62,15 @@ export const CalendarView: React.FC = () => {
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const topScrollRef = useRef<HTMLDivElement>(null);
+
+  // Handle navigation from notifications with date
+  useEffect(() => {
+    if (location.state && (location.state as any).selectedDate) {
+      const dateStr = (location.state as any).selectedDate;
+      setSelectedDate(new Date(dateStr));
+      setViewMode('full');
+    }
+  }, [location.state]);
 
   useEffect(() => {
     if (propertyId) {
@@ -1588,8 +1598,8 @@ export const CalendarView: React.FC = () => {
               </button>
             )}
 
-            {/* Bulk Edit Mode Toggle - only in full view */}
-            {viewMode === 'full' && (
+            {/* Bulk Edit Mode Toggle - available in full and notifications view */}
+            {(viewMode === 'full' || viewMode === 'notifications') && (
               <>
                 <button
                   onClick={toggleBulkEditMode}

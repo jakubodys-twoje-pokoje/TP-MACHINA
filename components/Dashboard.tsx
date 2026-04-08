@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useProperties } from '../contexts/PropertyContext';
 import { Notification } from '../types';
-import { Loader2, Bell, Check, Trash2, Inbox, ArrowUp, ArrowDown, LayoutGrid, List, ChevronDown, ChevronRight, RotateCcw, BarChart3 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Loader2, Bell, Check, Trash2, Inbox, ArrowUp, ArrowDown, LayoutGrid, List, ChevronDown, ChevronRight, RotateCcw, BarChart3, ArrowRight } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import { SyncHistory } from './SyncHistory';
 
 const formatDateRange = (start: string, end: string) => {
@@ -20,6 +20,7 @@ const NotificationItem: React.FC<{
   onMarkUnread: (id: string) => void;
   onDelete: (id: string) => void;
 }> = ({ notification, onMarkRead, onMarkUnread, onDelete }) => {
+  const navigate = useNavigate();
   const isAvailable = notification.change_type === 'available';
   const createdDate = new Date(notification.created_at);
   const formattedTime = createdDate.toLocaleString('pl-PL', {
@@ -34,10 +35,19 @@ const NotificationItem: React.FC<{
   const formattedReadAt = readAtDate ? readAtDate.toLocaleString('pl-PL', {
     day: '2-digit',
     month: '2-digit',
-    year: 'numeric',
+    year: '2-digit',
     hour: '2-digit',
     minute: '2-digit'
   }) : null;
+
+  const handleGoToCalendar = () => {
+    navigate(`/property/${notification.property_id}/calendar`, {
+      state: {
+        selectedDate: notification.start_date,
+        unitId: notification.unit_id
+      }
+    });
+  };
 
   return (
     <div className="flex flex-col sm:flex-row items-start gap-2 sm:gap-3 lg:gap-4 p-3 sm:p-4 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition-colors">
@@ -68,6 +78,9 @@ const NotificationItem: React.FC<{
           )}
         </div>
         <div className="flex items-center gap-1 sm:gap-1.5">
+          <button onClick={handleGoToCalendar} title="Przejdź do kalendarza" className="p-1.5 sm:p-2 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 rounded-md transition-colors">
+            <ArrowRight size={14} className="sm:w-4 sm:h-4" />
+          </button>
           {!notification.is_read && (
             <button onClick={() => onMarkRead(notification.id)} title="Oznacz jako przeczytane" className="p-1.5 sm:p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-md transition-colors">
               <Check size={14} className="sm:w-4 sm:h-4" />
