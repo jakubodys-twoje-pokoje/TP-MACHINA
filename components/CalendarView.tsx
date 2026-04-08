@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { Property, Availability, Unit, Notification, Price, AISuggestion } from '../types';
-import { Loader2, ChevronLeft, ChevronRight, RefreshCw, Sparkles } from 'lucide-react';
+import { Loader2, ChevronLeft, ChevronRight, RefreshCw, Sparkles, ArrowRight, CheckSquare, Square, X, Save } from 'lucide-react';
 
 export const CalendarView: React.FC = () => {
   const { id: propertyId } = useParams<{ id: string }>();
@@ -28,6 +28,14 @@ export const CalendarView: React.FC = () => {
   const [overrideCTA, setOverrideCTA] = useState(false);
   const [overrideCTD, setOverrideCTD] = useState(false);
   const [overrideMIN, setOverrideMIN] = useState(false);
+
+  // Bulk edit mode state
+  const [bulkEditMode, setBulkEditMode] = useState(false);
+  const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set()); // Set of "unitId_date" keys
+  const [showBulkEditModal, setShowBulkEditModal] = useState(false);
+  const [bulkEditCTA, setBulkEditCTA] = useState<number | null>(null);
+  const [bulkEditCTD, setBulkEditCTD] = useState<number | null>(null);
+  const [bulkEditMIN, setBulkEditMIN] = useState<number | null>(null);
 
   // Hotres sync counter - separate for each property
   const getHotresSyncCount = (propertyId: string | null): { count: number; hourStart: number } => {
@@ -385,6 +393,93 @@ export const CalendarView: React.FC = () => {
       // Add to read set
       setReadNotificationIds(prev => new Set(prev).add(notificationId));
     }
+  };
+
+  const handleGoToNotificationDate = (notificationId: string) => {
+    const notification = unreadNotifications.find(n => n.id === notificationId);
+    if (!notification) return;
+
+    // Set the selected date to the start date of the notification
+    const startDate = new Date(notification.start_date);
+    setSelectedDate(startDate);
+
+    // Switch to full view to show the calendar
+    setViewMode('full');
+
+    // Scroll will happen automatically via useEffect
+  };
+
+  const toggleBulkEditMode = () => {
+    if (bulkEditMode) {
+      // Exiting bulk edit mode - clear selection
+      setSelectedCells(new Set());
+    }
+    setBulkEditMode(!bulkEditMode);
+  };
+
+  const handleCellClick = (unitId: string, dateStr: string) => {
+    if (bulkEditMode) {
+      // In bulk edit mode - toggle selection
+      const key = `${unitId}_${dateStr}`;
+      setSelectedCells(prev => {
+        const newSet = new Set(prev);
+        if (newSet.has(key)) {
+          newSet.delete(key);
+        } else {
+          newSet.add(key);
+        }
+        return newSet;
+      });
+    } else {
+      // Normal mode - open modal (existing behavior)
+      // This will be handled in the cell onClick
+    }
+  };
+
+  const handleOpenBulkEditModal = () => {
+    if (selectedCells.size === 0) {
+      alert('Zaznacz przynajmniej jedną komórkę');
+      return;
+    }
+
+    // Reset bulk edit values
+    setBulkEditCTA(null);
+    setBulkEditCTD(null);
+    setBulkEditMIN(null);
+    setShowBulkEditModal(true);
+  };
+
+  const handleApplyBulkEdit = () => {
+    // Apply changes to all selected cells
+    selectedCells.forEach(key => {
+      const [unitId, dateStr] = key.split('_');
+      const currentPrice = pricesData.get(key);
+      const currentChange = priceChanges.get(key);
+
+      const updatedChange: Partial<Price> = {
+        ...currentChange,
+        unit_id: unitId,
+        date: dateStr,
+        rate_id: currentPrice?.rate_id || ''
+      };
+
+      if (bulkEditCTA !== null) updatedChange.cta = bulkEditCTA;
+      if (bulkEditCTD !== null) updatedChange.ctd = bulkEditCTD;
+      if (bulkEditMIN !== null) updatedChange.min = bulkEditMIN;
+
+      setPriceChanges(prev => {
+        const updated = new Map(prev);
+        updated.set(key, updatedChange);
+        return updated;
+      });
+    });
+
+    // Close modal and exit bulk edit mode
+    setShowBulkEditModal(false);
+    setBulkEditMode(false);
+    setSelectedCells(new Set());
+
+    alert(`✓ Zastosowano zmiany dla ${selectedCells.size} komórek`);
   };
 
   const handleSyncToHotres = async () => {
@@ -1493,6 +1588,45 @@ export const CalendarView: React.FC = () => {
               </button>
             )}
 
+            {/* Bulk Edit Mode Toggle - only in full view */}
+            {viewMode === 'full' && (
+              <>
+                <button
+                  onClick={toggleBulkEditMode}
+                  className={`flex items-center gap-1 sm:gap-2 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs rounded-lg transition-colors font-medium whitespace-nowrap ${
+                    bulkEditMode
+                      ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                      : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                  }`}
+                >
+                  {bulkEditMode ? (
+                    <>
+                      <X size={12} className="sm:w-3.5 sm:h-3.5" />
+                      <span className="hidden sm:inline">Anuluj ({selectedCells.size})</span>
+                      <span className="sm:hidden">✕ ({selectedCells.size})</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckSquare size={12} className="sm:w-3.5 sm:h-3.5" />
+                      <span className="hidden sm:inline">Zaznacz wiele</span>
+                      <span className="sm:hidden">☑ Wiele</span>
+                    </>
+                  )}
+                </button>
+
+                {bulkEditMode && selectedCells.size > 0 && (
+                  <button
+                    onClick={handleOpenBulkEditModal}
+                    className="flex items-center gap-1 sm:gap-2 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium whitespace-nowrap"
+                  >
+                    <Save size={12} className="sm:w-3.5 sm:h-3.5" />
+                    <span className="hidden sm:inline">Zmień wiele ({selectedCells.size})</span>
+                    <span className="sm:hidden">✓ ({selectedCells.size})</span>
+                  </button>
+                )}
+              </>
+            )}
+
             <input
               type="date"
               value={selectedDateStr}
@@ -1536,18 +1670,39 @@ export const CalendarView: React.FC = () => {
                   : isAvailable ? 'text-green-300' : 'text-red-300';
 
                 return (
-                  <button
+                  <div
                     key={idx}
-                    onClick={() => handleMarkNotificationAsRead(item.notificationId)}
-                    className={`inline-flex items-center gap-2 px-2.5 py-0.5 ${bgColor} border ${borderColor} rounded-full text-[10px] transition-opacity hover:opacity-80 cursor-pointer ${
+                    className={`inline-flex items-center gap-1 px-2.5 py-0.5 ${bgColor} border ${borderColor} rounded-full text-[10px] ${
                       isRead ? 'opacity-60' : ''
                     }`}
                   >
                     <span className={`font-semibold ${nameColor}`}>{item.unitName}</span>
                     <span className={dateColor}>{item.dateRange}</span>
-                    {!isRead && <span className="text-slate-500 text-[9px]">(kliknij aby odczytać)</span>}
-                    {isRead && <span className="text-slate-600 text-[9px]">✓ odczytane (kliknij aby cofnąć)</span>}
-                  </button>
+
+                    <div className="flex items-center gap-0.5 ml-1">
+                      {/* Go to date button */}
+                      <button
+                        onClick={() => handleGoToNotificationDate(item.notificationId)}
+                        className="p-0.5 hover:bg-slate-700/50 rounded transition-colors"
+                        title="Przejdź do daty"
+                      >
+                        <ArrowRight size={12} className="text-indigo-400" />
+                      </button>
+
+                      {/* Mark as read/unread button */}
+                      <button
+                        onClick={() => handleMarkNotificationAsRead(item.notificationId)}
+                        className="p-0.5 hover:bg-slate-700/50 rounded transition-colors"
+                        title={isRead ? "Cofnij odczytanie" : "Oznacz jako odczytane"}
+                      >
+                        {isRead ? (
+                          <CheckSquare size={12} className="text-green-500" />
+                        ) : (
+                          <Square size={12} className="text-slate-500" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -1758,15 +1913,21 @@ export const CalendarView: React.FC = () => {
                         notifBoxClass = 'border-2 border-yellow-500 rounded-r border-l-0';
                       }
 
+                      const cellKey = `${unit.id}_${dateStr}`;
+                      const isCellSelected = selectedCells.has(cellKey);
+
                       return (
                         <td
                           key={idx}
+                          onClick={() => bulkEditMode && handleCellClick(unit.id, dateStr)}
                           className={`p-1 border-r border-border ${
                             isSelected ? 'bg-indigo-900/30' : isToday ? 'bg-indigo-900/20' : ''
-                          } ${notifBoxClass}`}
+                          } ${notifBoxClass} ${bulkEditMode ? 'cursor-pointer hover:bg-indigo-800/40' : ''} ${
+                            isCellSelected ? 'bg-indigo-600/50 ring-2 ring-indigo-400 ring-inset' : ''
+                          }`}
                         >
                           {(() => {
-                            const priceKey = `${unit.id}_${dateStr}`;
+                            const priceKey = cellKey;
                             const priceData = pricesData.get(priceKey);
                             const changeData = priceChanges.get(priceKey);
 
@@ -2071,6 +2232,80 @@ export const CalendarView: React.FC = () => {
                 Zaznacz przynajmniej jedno pole
               </p>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Edit Modal */}
+      {showBulkEditModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl shadow-2xl max-w-md w-full p-6 border border-green-600">
+            <h2 className="text-xl font-bold text-green-500 mb-4 flex items-center gap-2">
+              ✏️ Zmień wiele ({selectedCells.size} komórek)
+            </h2>
+
+            <p className="text-sm text-slate-300 mb-6">
+              Ustaw wartości dla zaznaczonych komórek. <br />
+              Pola pozostawione puste nie zostaną zmienione.
+            </p>
+
+            <div className="space-y-4 mb-6">
+              {/* CTA */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-400 uppercase">CTA (Check-in Advance)</label>
+                <select
+                  value={bulkEditCTA === null ? '' : bulkEditCTA}
+                  onChange={(e) => setBulkEditCTA(e.target.value === '' ? null : parseInt(e.target.value))}
+                  className="w-full bg-slate-700 border border-slate-600 rounded-lg p-2.5 text-white text-sm outline-none focus:ring-2 focus:ring-green-500"
+                >
+                  <option value="">— Bez zmian —</option>
+                  <option value="0">0 (Wyłączone)</option>
+                  <option value="1">1 (Włączone)</option>
+                </select>
+              </div>
+
+              {/* CTD */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-400 uppercase">CTD (Check-out Departure)</label>
+                <select
+                  value={bulkEditCTD === null ? '' : bulkEditCTD}
+                  onChange={(e) => setBulkEditCTD(e.target.value === '' ? null : parseInt(e.target.value))}
+                  className="w-full bg-slate-700 border border-slate-600 rounded-lg p-2.5 text-white text-sm outline-none focus:ring-2 focus:ring-green-500"
+                >
+                  <option value="">— Bez zmian —</option>
+                  <option value="0">0 (Wyłączone)</option>
+                  <option value="1">1 (Włączone)</option>
+                </select>
+              </div>
+
+              {/* MIN */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-400 uppercase">MIN nocy</label>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Bez zmian"
+                  value={bulkEditMIN === null ? '' : bulkEditMIN}
+                  onChange={(e) => setBulkEditMIN(e.target.value === '' ? null : parseInt(e.target.value))}
+                  className="w-full bg-slate-700 border border-slate-600 rounded-lg p-2.5 text-white text-sm outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowBulkEditModal(false)}
+                className="flex-1 bg-slate-600 hover:bg-slate-700 text-white font-semibold py-2.5 px-4 rounded-lg transition"
+              >
+                Anuluj
+              </button>
+              <button
+                onClick={handleApplyBulkEdit}
+                className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 px-4 rounded-lg transition"
+              >
+                Zastosuj zmiany
+              </button>
+            </div>
           </div>
         </div>
       )}
