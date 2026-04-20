@@ -413,8 +413,7 @@ export const CalendarView: React.FC = () => {
     const startDate = new Date(notification.start_date);
     setSelectedDate(startDate);
 
-    // Switch to full view to show the calendar
-    setViewMode('full');
+    setViewMode('notifications');
 
     // Scroll will happen automatically via useEffect
   };
