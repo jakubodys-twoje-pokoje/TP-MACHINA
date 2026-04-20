@@ -68,7 +68,7 @@ export const CalendarView: React.FC = () => {
     if (location.state && (location.state as any).selectedDate) {
       const dateStr = (location.state as any).selectedDate;
       setSelectedDate(new Date(dateStr));
-      setViewMode('full');
+      setViewMode('notifications');
     }
   }, [location.state]);
 
