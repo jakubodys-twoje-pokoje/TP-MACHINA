@@ -39,14 +39,15 @@ WHERE u.property_id = 'TUTAJ_WSTAW_PROPERTY_ID_Z_KROKU_1'
   AND p.date <= '2026-09-15'
 ORDER BY u.name, p.date;
 
--- 5. Sprawdź logi synchronizacji dla tego obiektu
+-- 5. Sprawdź historię synchronizacji dla tego obiektu
 SELECT
-  created_at,
+  synced_at,
   status,
-  error,
   records_compared,
-  changes_detected
-FROM sync_logs
+  changes_detected,
+  notifications_sent,
+  error_message
+FROM sync_history
 WHERE property_id = 'TUTAJ_WSTAW_PROPERTY_ID_Z_KROKU_1'
-ORDER BY created_at DESC
+ORDER BY synced_at DESC
 LIMIT 10;
