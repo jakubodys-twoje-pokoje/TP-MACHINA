@@ -6,7 +6,7 @@ FROM properties
 WHERE name ILIKE '%zew%morza%' OR name ILIKE '%morza%';
 
 -- 2. Znajdź units dla tego obiektu (wstaw property_id z wyniku powyżej)
-SELECT id, name, external_type_id, sync_enabled
+SELECT id, name, external_type_id
 FROM units
 WHERE property_id = 'TUTAJ_WSTAW_PROPERTY_ID_Z_KROKU_1'
 ORDER BY name;
