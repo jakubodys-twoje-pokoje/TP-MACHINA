@@ -16,6 +16,7 @@ export interface Property {
   auto_sync_interval?: number;
   workflow_is_active?: boolean; // Nowe
   workflow_position?: number;   // Nowe
+  workflow_assigned_to?: string | null; // Opiekun obiektu
   created_at: string;
 }
 
@@ -65,7 +66,7 @@ export interface RatePlan {
 
 export interface WorkflowTask {
   id: string;
-  user_id: string;
+  user_id?: string | null; // Audit only (platform-wide)
   title: string;
   is_active: boolean; // Nowe
   position: number;   // Nowe
@@ -74,9 +75,15 @@ export interface WorkflowTask {
 
 export interface WorkflowStatus {
   id: string;
-  user_id: string;
+  user_id?: string | null; // Audit only (platform-wide)
   label: string;
   color: string;
+  created_at: string;
+}
+
+export interface WorkflowPerson {
+  id: string;
+  name: string;
   created_at: string;
 }
 
@@ -86,13 +93,29 @@ export interface WorkflowEntry {
   task_id: string;
   status_id: string | null;
   comment: string | null;
+  assigned_to: string | null;
   last_updated_by_email?: string | null; // Nowe
   updated_at: string;
 }
 
+export interface WorkflowEntryHistory {
+  id: string;
+  entry_id: string;
+  property_id: string;
+  task_id: string;
+  old_status_id: string | null;
+  old_comment: string | null;
+  old_assigned_to: string | null;
+  new_status_id: string | null;
+  new_comment: string | null;
+  new_assigned_to: string | null;
+  change_reason: string;
+  changed_by_email: string;
+  changed_at: string;
+}
+
 export interface Notification {
   id: string;
-  user_id: string;
   property_id: string;
   unit_id: string;
   property_name: string;
@@ -101,5 +124,53 @@ export interface Notification {
   start_date: string;
   end_date: string;
   is_read: boolean;
+  read_by_email?: string | null;
+  read_at?: string | null;
+  created_at: string;
+}
+
+export interface SyncHistory {
+  id: string;
+  property_id: string;
+  property_name: string;
+  synced_at: string;
+  records_compared: number;
+  changes_detected: number;
+  notifications_sent: number;
+  status: 'success' | 'error';
+  error_message?: string | null;
+}
+
+export interface Price {
+  id: string;
+  unit_id: string;
+  rate_id: string;
+  date: string;
+  price: number | null;
+  min: number | null;
+  max: number | null;
+  cta: 0 | 1 | null;
+  ctd: 0 | 1 | null;
+  synced_at?: string;
+}
+
+export interface AISuggestion {
+  id: string;
+  notification_id: string;
+  property_id: string;
+  unit_id: string;
+  property_name: string | null;
+  unit_name: string | null;
+  date_start: string;
+  date_end: string;
+  suggested_cta: number;
+  suggested_ctd: number;
+  suggested_min: number;
+  confidence: number;
+  reasoning: string;
+  expected_impact: string;
+  status: 'pending' | 'applied' | 'rejected';
+  applied_at: string | null;
+  applied_by: string | null;
   created_at: string;
 }

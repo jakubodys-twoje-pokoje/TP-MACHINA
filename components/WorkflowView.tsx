@@ -2,10 +2,10 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { useProperties } from '../contexts/PropertyContext';
-import { WorkflowTask, WorkflowStatus, WorkflowEntry, Property } from '../types';
-import { 
-  Plus, X, Loader2, Save, Trash2, Settings, MessageSquare, 
-  Search, Eye, EyeOff, GripVertical, Move
+import { WorkflowTask, WorkflowStatus, WorkflowEntry, WorkflowPerson, Property, WorkflowEntryHistory } from '../types';
+import {
+  Plus, X, Loader2, Save, Trash2, Settings, MessageSquare,
+  Search, Eye, EyeOff, GripVertical, Move, History
 } from 'lucide-react';
 
 const COLORS = [
@@ -33,6 +33,7 @@ export const WorkflowView: React.FC = () => {
   const { properties, fetchProperties } = useProperties();
   const [tasks, setTasks] = useState<WorkflowTask[]>([]);
   const [statuses, setStatuses] = useState<WorkflowStatus[]>([]);
+  const [persons, setPersons] = useState<WorkflowPerson[]>([]);
   const [entries, setEntries] = useState<WorkflowEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSavingOrder, setIsSavingOrder] = useState(false);
@@ -56,6 +57,11 @@ export const WorkflowView: React.FC = () => {
     if (data) setStatuses(data);
   }, []);
 
+  const fetchPersons = useCallback(async () => {
+    const { data } = await supabase.from('workflow_persons').select('*').order('created_at', { ascending: true });
+    if (data) setPersons(data);
+  }, []);
+
   const fetchEntries = useCallback(async () => {
     const { data } = await supabase.from('workflow_entries').select('*');
     if (data) setEntries(data);
@@ -65,7 +71,7 @@ export const WorkflowView: React.FC = () => {
   useEffect(() => {
     const loadAll = async () => {
       setLoading(true);
-      await Promise.all([fetchTasks(), fetchStatuses(), fetchEntries(), fetchProperties()]);
+      await Promise.all([fetchTasks(), fetchStatuses(), fetchPersons(), fetchEntries(), fetchProperties()]);
       setLoading(false);
     };
     loadAll();
@@ -78,13 +84,16 @@ export const WorkflowView: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_statuses' }, () => {
         if (!isSavingRef.current) fetchStatuses();
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_persons' }, () => {
+        if (!isSavingRef.current) fetchPersons();
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workflow_tasks' }, () => {
         if (!isSavingRef.current) fetchTasks();
       })
       .subscribe();
       
     return () => { supabase.removeChannel(channel); };
-  }, [fetchTasks, fetchStatuses, fetchEntries, fetchProperties]);
+  }, [fetchTasks, fetchStatuses, fetchPersons, fetchEntries, fetchProperties]);
 
   // --- RDZEŃ DRAG & DROP ---
 
@@ -183,14 +192,29 @@ export const WorkflowView: React.FC = () => {
   // --- MODALE I AKCJE ---
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isStatusModalOpen, setIsStatusModalOpen] = useState(false);
+  const [isPersonsModalOpen, setIsPersonsModalOpen] = useState(false);
   const [isCellModalOpen, setIsCellModalOpen] = useState(false);
   const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false);
 
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newPropertyName, setNewPropertyName] = useState('');
   const [newStatus, setNewStatus] = useState({ label: '', color: 'bg-slate-600' });
+  const [newPersonName, setNewPersonName] = useState('');
   const [selectedCell, setSelectedCell] = useState<{ propId: string, taskId: string } | null>(null);
-  const [cellForm, setCellForm] = useState({ statusId: '', comment: '' });
+  const [cellForm, setCellForm] = useState({ statusId: '', comment: '', assignedTo: '' });
+
+  // Confirmation modal for changes
+  const [isConfirmChangeModalOpen, setIsConfirmChangeModalOpen] = useState(false);
+  const [changeReason, setChangeReason] = useState('');
+  const [pendingCellData, setPendingCellData] = useState<{
+    oldEntry: WorkflowEntry | null;
+    newData: { statusId: string; comment: string; assignedTo: string };
+  } | null>(null);
+
+  // History modal
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [historyEntries, setHistoryEntries] = useState<WorkflowEntryHistory[]>([]);
+  const [historyCell, setHistoryCell] = useState<{ propId: string; taskId: string } | null>(null);
 
   const handleToggleTaskActive = async (taskId: string, currentState: boolean) => {
     await supabase.from('workflow_tasks').update({ is_active: !currentState }).eq('id', taskId);
@@ -199,6 +223,11 @@ export const WorkflowView: React.FC = () => {
 
   const handleTogglePropertyActive = async (propId: string, currentState: boolean) => {
     await supabase.from('properties').update({ workflow_is_active: !currentState }).eq('id', propId);
+    fetchProperties();
+  };
+
+  const handleUpdatePropertyAssignedTo = async (propId: string, personName: string) => {
+    await supabase.from('properties').update({ workflow_assigned_to: personName || null }).eq('id', propId);
     fetchProperties();
   };
 
@@ -233,30 +262,111 @@ export const WorkflowView: React.FC = () => {
     setNewStatus({ label: '', color: 'bg-slate-600' }); fetchStatuses();
   };
 
+  const handleAddPerson = async () => {
+    if (!newPersonName.trim()) return;
+    await supabase.from('workflow_persons').insert({ name: newPersonName.trim() });
+    setNewPersonName(''); fetchPersons();
+  };
+
   const openCellModal = (propId: string, taskId: string) => {
     const entry = entries.find(e => e.property_id === propId && e.task_id === taskId);
     setSelectedCell({ propId, taskId });
-    setCellForm({ statusId: entry?.status_id || '', comment: entry?.comment || '' });
+    setCellForm({ statusId: entry?.status_id || '', comment: entry?.comment || '', assignedTo: entry?.assigned_to || '' });
     setIsCellModalOpen(true);
   };
 
   const saveCell = async () => {
     if (!selectedCell) return;
-    const { data: { user } } = await supabase.auth.getUser();
     const existing = entries.find(e => e.property_id === selectedCell.propId && e.task_id === selectedCell.taskId);
-    const payload = { 
-      status_id: cellForm.statusId || null, 
-      comment: cellForm.comment, 
-      last_updated_by_email: user?.email || 'System', 
-      updated_at: new Date().toISOString() 
-    };
-    if (existing) {
-      await supabase.from('workflow_entries').update(payload).eq('id', existing.id);
-    } else {
-      await supabase.from('workflow_entries').insert({ ...payload, property_id: selectedCell.propId, task_id: selectedCell.taskId });
+
+    // Check if anything changed
+    const hasChanges =
+      (existing?.status_id || '') !== cellForm.statusId ||
+      (existing?.comment || '') !== cellForm.comment ||
+      (existing?.assigned_to || '') !== cellForm.assignedTo;
+
+    if (!hasChanges) {
+      // No changes, just close modal
+      setIsCellModalOpen(false);
+      return;
     }
-    setIsCellModalOpen(false);
-    fetchEntries();
+
+    // Store pending data and show confirmation modal
+    setPendingCellData({
+      oldEntry: existing || null,
+      newData: { statusId: cellForm.statusId, comment: cellForm.comment, assignedTo: cellForm.assignedTo }
+    });
+    setChangeReason('');
+    setIsConfirmChangeModalOpen(true);
+  };
+
+  const saveCellWithHistory = async () => {
+    if (!selectedCell || !pendingCellData) return;
+
+    const { data: { user } } = await supabase.auth.getUser();
+    const { oldEntry, newData } = pendingCellData;
+
+    const payload = {
+      status_id: newData.statusId || null,
+      comment: newData.comment,
+      assigned_to: newData.assignedTo || null,
+      last_updated_by_email: user?.email || 'System',
+      updated_at: new Date().toISOString()
+    };
+
+    try {
+      let entryId = oldEntry?.id;
+
+      // Save to workflow_entries
+      if (oldEntry) {
+        await supabase.from('workflow_entries').update(payload).eq('id', oldEntry.id);
+      } else {
+        const { data: newEntry } = await supabase
+          .from('workflow_entries')
+          .insert({ ...payload, property_id: selectedCell.propId, task_id: selectedCell.taskId })
+          .select()
+          .single();
+        entryId = newEntry?.id;
+      }
+
+      // Save to workflow_entry_history
+      if (entryId) {
+        await supabase.from('workflow_entry_history').insert({
+          entry_id: entryId,
+          property_id: selectedCell.propId,
+          task_id: selectedCell.taskId,
+          old_status_id: oldEntry?.status_id || null,
+          old_comment: oldEntry?.comment || null,
+          old_assigned_to: oldEntry?.assigned_to || null,
+          new_status_id: newData.statusId || null,
+          new_comment: newData.comment || null,
+          new_assigned_to: newData.assignedTo || null,
+          change_reason: changeReason || 'Brak opisu',
+          changed_by_email: user?.email || 'System'
+        });
+      }
+
+      setIsCellModalOpen(false);
+      setIsConfirmChangeModalOpen(false);
+      setPendingCellData(null);
+      setChangeReason('');
+      fetchEntries();
+    } catch (err) {
+      console.error('Error saving cell with history:', err);
+      alert('Błąd podczas zapisywania zmian.');
+    }
+  };
+
+  const openHistoryModal = async (propId: string, taskId: string) => {
+    setHistoryCell({ propId, taskId });
+    const { data } = await supabase
+      .from('workflow_entry_history')
+      .select('*')
+      .eq('property_id', propId)
+      .eq('task_id', taskId)
+      .order('changed_at', { ascending: false });
+    setHistoryEntries(data || []);
+    setIsHistoryModalOpen(true);
   };
 
   const getStatus = (id: string | null) => statuses.find(s => s.id === id);
@@ -288,6 +398,7 @@ export const WorkflowView: React.FC = () => {
             </button>
             <button onClick={() => setIsPropertyModalOpen(true)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm flex items-center gap-2 border border-slate-700 transition-colors"><Plus size={16} /> Obiekt</button>
             <button onClick={() => setIsStatusModalOpen(true)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm flex items-center gap-2 border border-slate-700 transition-colors"><Settings size={16} /> Statusy</button>
+            <button onClick={() => setIsPersonsModalOpen(true)} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-sm flex items-center gap-2 border border-slate-700 transition-colors"><Settings size={16} /> Osoby</button>
             <button onClick={() => setIsTaskModalOpen(true)} className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm flex items-center gap-2 transition-all"><Plus size={16} /> Kolumna</button>
         </div>
       </div>
@@ -340,19 +451,32 @@ export const WorkflowView: React.FC = () => {
                   onDrop={(e) => handleDrop(e, property.id)}
                   className={`hover:bg-slate-800/30 transition-all ${!rowIsActive ? 'opacity-30 grayscale bg-slate-900/50' : ''} ${isTarget ? 'bg-indigo-500/20 shadow-[inset_0_4px_0_0_#818cf8,inset_0_-4px_0_0_#818cf8]' : ''} ${isSource ? 'opacity-20 bg-indigo-500/10' : ''}`}
                 >
-                  <td className={`p-4 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)]`}>
-                    <div className="flex justify-between items-center gap-2">
-                        <div className="flex items-center gap-3 flex-grow truncate">
+                  <td className={`p-3 bg-surface sticky left-0 z-20 border-r border-border border-b border-border h-[80px] group shadow-[2px_0_5px_-2px_rgba(0,0,0,0.5)]`}>
+                    <div className="flex justify-between items-start gap-2 h-full">
+                        <div className="flex items-start gap-2 flex-grow min-w-0">
                             {isReorderMode && (
-                                <div 
-                                  draggable 
+                                <div
+                                  draggable
                                   onDragStart={() => handleDragStart(property.id, 'property')}
-                                  className="cursor-grab active:cursor-grabbing p-1.5 bg-indigo-500/20 hover:bg-indigo-500/40 rounded transition-colors"
+                                  className="cursor-grab active:cursor-grabbing p-1.5 bg-indigo-500/20 hover:bg-indigo-500/40 rounded transition-colors mt-0.5"
                                 >
                                     <GripVertical size={16} className="text-indigo-400" />
                                 </div>
                             )}
-                            <div className="truncate font-medium text-white text-sm">{property.name}</div>
+                            <div className="flex flex-col gap-1 flex-grow min-w-0">
+                                <div className="truncate font-medium text-white text-sm">{property.name}</div>
+                                <select
+                                  value={property.workflow_assigned_to || ''}
+                                  onChange={(e) => handleUpdatePropertyAssignedTo(property.id, e.target.value)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-xs bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-slate-300 outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer hover:bg-slate-700 transition-colors"
+                                >
+                                  <option value="">Opiekun: —</option>
+                                  {persons.map(p => (
+                                    <option key={p.id} value={p.name}>{p.name}</option>
+                                  ))}
+                                </select>
+                            </div>
                         </div>
                         <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button onClick={() => handleTogglePropertyActive(property.id, rowIsActive)} className="text-slate-500 hover:text-indigo-400 p-1"><Eye size={14}/></button>
@@ -364,13 +488,31 @@ export const WorkflowView: React.FC = () => {
                     const status = entry ? getStatus(entry.status_id) : null;
                     const hasComment = entry?.comment && entry.comment.trim().length > 0;
                     return (
-                      <td key={task.id} className="p-1 border-r border-b border-slate-800 cursor-pointer align-middle h-[80px] w-[250px]" onClick={() => !isReorderMode && openCellModal(property.id, task.id)}>
+                      <td key={task.id} className="p-1 border-r border-b border-slate-800 cursor-pointer align-middle h-[80px] w-[250px] relative group" onClick={() => !isReorderMode && openCellModal(property.id, task.id)}>
                         <div className={`w-full h-full rounded flex flex-col justify-center px-4 py-2 transition-all border-2 ${status ? status.color + ' border-transparent shadow-lg shadow-black/40' : 'bg-transparent border-transparent hover:border-slate-700 hover:bg-slate-800'} ${status ? 'text-white font-bold' : 'text-slate-500'} ${isReorderMode ? 'opacity-40 pointer-events-none' : ''}`}>
                            <div className="flex items-center justify-between gap-2">
                                <span className="text-sm truncate">{status ? status.label : ''}</span>
-                               {hasComment && <MessageSquare size={14} className={status ? 'text-white/80' : 'text-indigo-400'} />}
+                               <div className="flex items-center gap-1">
+                                 {hasComment && <MessageSquare size={14} className={status ? 'text-white/80' : 'text-indigo-400'} />}
+                               </div>
                            </div>
+                           {entry?.assigned_to && (
+                             <div className={`mt-1 flex items-center gap-1 text-[11px] font-normal ${status ? 'text-white/70' : 'text-slate-400'}`}>
+                               <span className="truncate">👤 {entry.assigned_to}</span>
+                             </div>
+                           )}
                         </div>
+                        {/* History button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openHistoryModal(property.id, task.id);
+                          }}
+                          className="absolute top-2 right-2 p-1 rounded bg-slate-900/70 hover:bg-indigo-600/80 text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-all"
+                          title="Zobacz historię zmian"
+                        >
+                          <History size={14} />
+                        </button>
                       </td>
                     );
                   })}
@@ -382,6 +524,107 @@ export const WorkflowView: React.FC = () => {
       </div>
 
       {/* MODALE */}
+      {/* Confirmation Modal */}
+      {isConfirmChangeModalOpen && pendingCellData && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm">
+          <div className="bg-surface w-full max-w-md rounded-xl border border-border shadow-2xl p-6 space-y-5">
+            <div className="flex justify-between items-start">
+              <h3 className="font-bold text-white text-lg">Potwierdź zmianę</h3>
+              <button
+                onClick={() => {
+                  setIsConfirmChangeModalOpen(false);
+                  setPendingCellData(null);
+                }}
+                className="text-slate-500 hover:text-white transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-sm">
+              <p className="text-slate-400 font-semibold">Podsumowanie zmian:</p>
+
+              {/* Status change */}
+              {(pendingCellData.oldEntry?.status_id || '') !== pendingCellData.newData.statusId && (
+                <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-700">
+                  <div className="text-xs text-slate-500 uppercase font-bold mb-1">Status</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-300">
+                      {pendingCellData.oldEntry?.status_id
+                        ? getStatus(pendingCellData.oldEntry.status_id)?.label || 'Brak'
+                        : 'Brak'}
+                    </span>
+                    <span className="text-indigo-400">→</span>
+                    <span className="text-white font-bold">
+                      {pendingCellData.newData.statusId
+                        ? getStatus(pendingCellData.newData.statusId)?.label || 'Brak'
+                        : 'Brak'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Comment change */}
+              {(pendingCellData.oldEntry?.comment || '') !== pendingCellData.newData.comment && (
+                <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-700">
+                  <div className="text-xs text-slate-500 uppercase font-bold mb-1">Komentarz</div>
+                  <div className="text-slate-400 text-xs">Zmieniono notatki</div>
+                </div>
+              )}
+
+              {/* Assignment change */}
+              {(pendingCellData.oldEntry?.assigned_to || '') !== pendingCellData.newData.assignedTo && (
+                <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-700">
+                  <div className="text-xs text-slate-500 uppercase font-bold mb-1">Osoba</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-300">
+                      {pendingCellData.oldEntry?.assigned_to || 'Brak'}
+                    </span>
+                    <span className="text-indigo-400">→</span>
+                    <span className="text-white font-bold">
+                      {pendingCellData.newData.assignedTo || 'Brak'}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-400 uppercase">
+                Powód zmiany: <span className="text-red-400">*</span>
+              </label>
+              <textarea
+                autoFocus
+                rows={3}
+                value={changeReason}
+                onChange={(e) => setChangeReason(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                placeholder="Opisz dlaczego ta zmiana została dokonana..."
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setIsConfirmChangeModalOpen(false);
+                  setPendingCellData(null);
+                }}
+                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors"
+              >
+                Anuluj
+              </button>
+              <button
+                onClick={saveCellWithHistory}
+                disabled={!changeReason.trim()}
+                className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white rounded-lg font-bold transition-all flex items-center justify-center gap-2"
+              >
+                <Save size={18} /> Potwierdź
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isCellModalOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
           <div className="bg-surface w-full max-w-sm rounded-xl border border-border shadow-2xl p-6 space-y-5">
@@ -399,6 +642,22 @@ export const WorkflowView: React.FC = () => {
                          </button>
                      ))}
                  </div>
+             </div>
+             <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-400 uppercase">Osoba odpowiedzialna:</label>
+                <select
+                  value={cellForm.assignedTo}
+                  onChange={e => setCellForm({...cellForm, assignedTo: e.target.value})}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                >
+                  <option value="">— Brak —</option>
+                  {persons.map(p => (
+                    <option key={p.id} value={p.name}>{p.name}</option>
+                  ))}
+                </select>
+                {persons.length === 0 && (
+                  <p className="text-xs text-slate-500">Dodaj osoby w sekcji "Osoby" w nagłówku.</p>
+                )}
              </div>
              <div className="space-y-2">
                 <label className="block text-xs font-bold text-slate-400 uppercase">Notatki:</label>
@@ -462,6 +721,117 @@ export const WorkflowView: React.FC = () => {
                     </div>
                 </div>
              </div>
+          </div>
+        </div>
+      )}
+
+      {isPersonsModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="bg-surface w-full max-w-lg rounded-xl border border-border shadow-2xl overflow-hidden">
+             <div className="p-4 border-b border-border flex justify-between items-center bg-slate-900/50">
+                <h3 className="font-bold text-white">Zarządzaj Osobami</h3>
+                <button onClick={() => setIsPersonsModalOpen(false)}><X className="text-slate-400 hover:text-white" /></button>
+             </div>
+             <div className="p-6 space-y-6">
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                    {persons.length === 0 && (
+                      <p className="text-slate-500 text-sm text-center py-4">Brak osób. Dodaj pierwszą osobę poniżej.</p>
+                    )}
+                    {persons.map(p => (
+                        <div key={p.id} className="flex items-center justify-between bg-slate-900 p-2 rounded border border-border group">
+                            <span className="text-white text-sm">{p.name}</span>
+                            <button onClick={async () => { if(confirm("Usunąć osobę?")) { await supabase.from('workflow_persons').delete().eq('id', p.id); fetchPersons(); }}} className="text-slate-500 hover:text-red-400"><Trash2 size={16}/></button>
+                        </div>
+                    ))}
+                </div>
+                <div className="border-t border-border pt-4 space-y-3">
+                    <p className="text-xs font-bold text-slate-400 uppercase">Nowa osoba</p>
+                    <div className="flex gap-2">
+                         <input
+                           value={newPersonName}
+                           onChange={e => setNewPersonName(e.target.value)}
+                           onKeyDown={e => { if (e.key === 'Enter') handleAddPerson(); }}
+                           placeholder="Imię i nazwisko"
+                           className="flex-1 bg-slate-900 border border-slate-700 rounded-lg p-2 text-white text-sm outline-none focus:ring-1 focus:ring-indigo-500"
+                         />
+                         <button onClick={handleAddPerson} className="px-3 bg-indigo-600 text-white rounded-lg text-sm"><Plus /></button>
+                    </div>
+                </div>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {/* History Modal */}
+      {isHistoryModalOpen && historyCell && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="bg-surface w-full max-w-2xl rounded-xl border border-border shadow-2xl overflow-hidden">
+            <div className="p-4 border-b border-border flex justify-between items-center bg-slate-900/50">
+              <div className="flex items-center gap-2">
+                <History className="text-indigo-400" size={20} />
+                <h3 className="font-bold text-white">Historia zmian</h3>
+              </div>
+              <button onClick={() => setIsHistoryModalOpen(false)}>
+                <X className="text-slate-400 hover:text-white" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4 max-h-[500px] overflow-y-auto custom-scrollbar">
+              {historyEntries.length === 0 && (
+                <p className="text-slate-500 text-sm text-center py-8">Brak historii zmian dla tej komórki.</p>
+              )}
+              {historyEntries.map((h) => (
+                <div key={h.id} className="bg-slate-900/50 p-4 rounded-lg border border-slate-700 space-y-3">
+                  <div className="flex justify-between items-start">
+                    <div className="text-xs text-slate-400">
+                      <div className="font-bold">{h.changed_by_email}</div>
+                      <div>{new Date(h.changed_at).toLocaleString('pl-PL')}</div>
+                    </div>
+                  </div>
+
+                  {/* Status change */}
+                  {h.old_status_id !== h.new_status_id && (
+                    <div className="bg-slate-800/50 p-2 rounded border border-slate-600">
+                      <div className="text-xs text-slate-500 uppercase font-bold mb-1">Status</div>
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-slate-300">
+                          {h.old_status_id ? getStatus(h.old_status_id)?.label || 'Brak' : 'Brak'}
+                        </span>
+                        <span className="text-indigo-400">→</span>
+                        <span className="text-white font-bold">
+                          {h.new_status_id ? getStatus(h.new_status_id)?.label || 'Brak' : 'Brak'}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Comment change */}
+                  {h.old_comment !== h.new_comment && (
+                    <div className="bg-slate-800/50 p-2 rounded border border-slate-600">
+                      <div className="text-xs text-slate-500 uppercase font-bold mb-1">Komentarz</div>
+                      <div className="text-xs text-slate-400">Zmieniono notatki</div>
+                    </div>
+                  )}
+
+                  {/* Assignment change */}
+                  {h.old_assigned_to !== h.new_assigned_to && (
+                    <div className="bg-slate-800/50 p-2 rounded border border-slate-600">
+                      <div className="text-xs text-slate-500 uppercase font-bold mb-1">Osoba</div>
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="text-slate-300">{h.old_assigned_to || 'Brak'}</span>
+                        <span className="text-indigo-400">→</span>
+                        <span className="text-white font-bold">{h.new_assigned_to || 'Brak'}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Reason */}
+                  <div className="bg-indigo-500/10 p-3 rounded border border-indigo-500/30">
+                    <div className="text-xs text-indigo-400 uppercase font-bold mb-1">Powód</div>
+                    <div className="text-sm text-white">{h.change_reason}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
