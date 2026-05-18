@@ -571,6 +571,155 @@ export const CalendarView: React.FC = () => {
     }
   };
 
+  const handlePushDBToHotres = async () => {
+    if (!property) return;
+
+    const currentData = getHotresSyncCount(property.id);
+    if (currentData.count >= 10) {
+      alert('Osiągnięto limit 10 synchronizacji na godzinę dla tego obiektu. Spróbuj ponownie za chwilę.');
+      return;
+    }
+
+    const startDateStr = dates[0].toISOString().split('T')[0];
+    const endDateStr = dates[dates.length - 1].toISOString().split('T')[0];
+
+    if (!confirm(
+      `Wyślij wszystkie aktualne wartości CTA/CTD/MIN z bazy do Hotresa?\n\n` +
+      `Zakres dat: ${startDateStr} – ${endDateStr}\n` +
+      `Jednostki: ${units.filter(u => u.external_type_id).length}\n\n` +
+      `Nadpisze bieżące wartości restrykcji w Hotresie.`
+    )) return;
+
+    try {
+      const { data: allRatePlansRaw, error: rpError } = await supabase
+        .from('rate_plans')
+        .select('id, name, external_id')
+        .eq('property_id', property.id);
+
+      if (rpError || !allRatePlansRaw || allRatePlansRaw.length === 0) {
+        throw new Error('Brak cenników dla tego obiektu.');
+      }
+
+      const allRatePlans = allRatePlansRaw.filter(rp => rp.external_id !== null && rp.external_id !== undefined);
+      if (allRatePlans.length === 0) {
+        throw new Error('Cenniki nie mają external_id. Pobierz cenniki z Hotres w zakładce Cenniki.');
+      }
+
+      const unitIds = units.map(u => u.id);
+
+      const { data: allPrices, error: pricesError } = await supabase
+        .from('prices')
+        .select('unit_id, date, cta, ctd, min')
+        .in('unit_id', unitIds)
+        .gte('date', startDateStr)
+        .lte('date', endDateStr);
+
+      if (pricesError) throw new Error(`Błąd pobierania danych: ${pricesError.message}`);
+      if (!allPrices || allPrices.length === 0) {
+        throw new Error('Brak danych w bazie dla tego zakresu. Zsynchronizuj dane z Hotres najpierw.');
+      }
+
+      // Group by type_id, include all fields
+      const pricesByTypeId = new Map<string, Array<{ date: string; cta: number | null; ctd: number | null; min: number | null }>>();
+
+      allPrices.forEach(price => {
+        const unit = units.find(u => u.id === price.unit_id);
+        if (!unit || !unit.external_type_id) return;
+
+        const typeId = unit.external_type_id;
+        if (!pricesByTypeId.has(typeId)) pricesByTypeId.set(typeId, []);
+
+        pricesByTypeId.get(typeId)!.push({
+          date: price.date,
+          cta: price.cta,
+          ctd: price.ctd,
+          min: price.min
+        });
+      });
+
+      const isNextDay = (d1: string, d2: string) => {
+        const a = new Date(d1), b = new Date(d2);
+        a.setHours(12); b.setHours(12);
+        return Math.ceil(Math.abs(b.getTime() - a.getTime()) / 86400000) === 1 && b > a;
+      };
+
+      const payloadArray: Array<{ type_id: number; rate_id: number; mode: string; prices: any[] }> = [];
+
+      for (const [typeIdStr, prices] of pricesByTypeId) {
+        const currentTypeId = parseInt(typeIdStr, 10);
+        prices.sort((a, b) => a.date.localeCompare(b.date));
+
+        const ranges: Array<{ from: string; till: string; cta?: number | null; ctd?: number | null; min?: number | null }> = [];
+        let cur: any = null;
+
+        for (const price of prices) {
+          const sameVals = cur &&
+            cur.cta === price.cta &&
+            cur.ctd === price.ctd &&
+            cur.min === price.min;
+
+          if (sameVals && isNextDay(cur.till, price.date)) {
+            cur.till = price.date;
+          } else {
+            if (cur) ranges.push(cur);
+            cur = { from: price.date, till: price.date, cta: price.cta, ctd: price.ctd, min: price.min };
+          }
+        }
+        if (cur) ranges.push(cur);
+
+        for (const ratePlan of allRatePlans) {
+          payloadArray.push({
+            type_id: currentTypeId,
+            rate_id: parseInt(ratePlan.external_id!, 10),
+            mode: 'delta',
+            prices: ranges
+          });
+        }
+      }
+
+      if (payloadArray.length === 0) {
+        throw new Error('Brak danych do wysłania. Sprawdź czy jednostki mają ustawiony external_type_id.');
+      }
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Musisz być zalogowany');
+
+      const response = await fetch(
+        'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/update-hotres-prices',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ property_id: property.id, payload: payloadArray })
+        }
+      );
+
+      const responseData = await response.json();
+      if (!response.ok) {
+        throw new Error(`Błąd Hotres (${response.status}): ${responseData?.error || JSON.stringify(responseData)}`);
+      }
+
+      console.log('✅ Push DB→Hotres OK:', responseData.hotres_response);
+
+      const newCount = currentData.count + 1;
+      const newData = { count: newCount, hourStart: currentData.hourStart };
+      localStorage.setItem(`hotres_sync_count_${property.id}`, JSON.stringify(newData));
+      setHotresSyncCount(newData);
+
+      alert(
+        `✓ Wysłano do Hotresa:\n` +
+        `• ${allPrices.length} rekordów (CTA + CTD + MIN)\n` +
+        `• Zakres: ${startDateStr} – ${endDateStr}\n\n` +
+        `Pozostało ${10 - newCount} synchronizacji w tej godzinie.`
+      );
+    } catch (error: any) {
+      alert(`✗ Błąd push DB→Hotres: ${error.message}`);
+      console.error('Push DB→Hotres error:', error);
+    }
+  };
+
   const sendPriceChangesToHotres = async () => {
     if (!property) throw new Error('Brak informacji o obiekcie');
 
@@ -1817,6 +1966,17 @@ export const CalendarView: React.FC = () => {
               </div>
             )}
 
+            {/* Push DB → Hotres Button */}
+            <div className="mt-3">
+              <button
+                onClick={handlePushDBToHotres}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+              >
+                <span className="text-xs sm:text-sm">📤 Push DB → Hotres</span>
+              </button>
+              <p className="text-[10px] text-slate-500 text-center mt-1">Wyślij CTA/CTD/MIN z bazy do Hotresa (aktualny widok)</p>
+            </div>
+
             {/* OVERRIDE Button - Always Visible */}
             <div className="mt-3">
               <button
@@ -1856,6 +2016,19 @@ export const CalendarView: React.FC = () => {
             <div className="text-xs text-slate-400 whitespace-nowrap">
               Pozostało: <span className="font-bold text-yellow-400">{10 - hotresSyncCount.count}</span>/10
             </div>
+          </div>
+        )}
+
+        {/* Push DB → Hotres Button for Full View */}
+        {viewMode === 'full' && (
+          <div className="mb-2 sm:mb-3">
+            <button
+              onClick={handlePushDBToHotres}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+            >
+              <span className="text-xs sm:text-sm">📤 Push DB → Hotres</span>
+            </button>
+            <p className="text-[10px] text-slate-500 text-center mt-1">Wyślij CTA/CTD/MIN z bazy do Hotresa (aktualny widok)</p>
           </div>
         )}
 
