@@ -261,7 +261,7 @@ export const CalendarView: React.FC = () => {
     // Fetch prices directly - no JOIN needed, we only use CTA/CTD/MIN from prices table
     // Use range pagination to bypass Supabase's default 1000-row limit
     const allData: any[] = [];
-    const PAGE_SIZE = 1000;
+    const PAGE_SIZE = 10000;
     let from = 0;
     while (true) {
       const { data: page, error: pageError } = await supabase
@@ -395,6 +395,10 @@ export const CalendarView: React.FC = () => {
   const handleDateChange = (dateStr: string) => {
     setSelectedDate(new Date(dateStr));
   };
+
+  // Timezone-safe date formatter — avoids UTC shift on toISOString() in UTC+N zones
+  const toLocalDateStr = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
   // Generate ~90 days (quarter): 30 days before, selected date, 60 days after
   const generateQuarterDates = () => {
@@ -709,8 +713,8 @@ export const CalendarView: React.FC = () => {
       return;
     }
 
-    const startDateStr = dates[0].toISOString().split('T')[0];
-    const endDateStr = dates[dates.length - 1].toISOString().split('T')[0];
+    const startDateStr = toLocalDateStr(dates[0]);
+    const endDateStr = toLocalDateStr(dates[dates.length - 1]);
 
     if (!confirm(
       `Wyślij wszystkie aktualne wartości CTA/CTD/MIN z bazy do Hotresa?\n\n` +
@@ -1232,8 +1236,8 @@ export const CalendarView: React.FC = () => {
   const handleCompareSync = async () => {
     if (!property || syncing) return;
 
-    const startDateStr = dates[0].toISOString().split('T')[0];
-    const endDateStr = dates[dates.length - 1].toISOString().split('T')[0];
+    const startDateStr = toLocalDateStr(dates[0]);
+    const endDateStr = toLocalDateStr(dates[dates.length - 1]);
 
     if (!confirm(
       `Porównaj stan bazy z Hotresem?\n\n` +
@@ -2073,7 +2077,7 @@ export const CalendarView: React.FC = () => {
     if (currentNotifs.length === 0) return null;
 
     // Check if any of current notifications also cover previous day
-    const prevDateStr = dateIndex > 0 ? dates[dateIndex - 1].toISOString().split('T')[0] : null;
+    const prevDateStr = dateIndex > 0 ? toLocalDateStr(dates[dateIndex - 1]) : null;
     const prevDate = prevDateStr ? new Date(prevDateStr) : null;
     const hasPrevSharedNotif = prevDate ? currentNotifs.some(notif => {
       const notifStart = new Date(notif.start_date);
@@ -2082,7 +2086,7 @@ export const CalendarView: React.FC = () => {
     }) : false;
 
     // Check if any of current notifications also cover next day
-    const nextDateStr = dateIndex < dates.length - 1 ? dates[dateIndex + 1].toISOString().split('T')[0] : null;
+    const nextDateStr = dateIndex < dates.length - 1 ? toLocalDateStr(dates[dateIndex + 1]) : null;
     const nextDate = nextDateStr ? new Date(nextDateStr) : null;
     const hasNextSharedNotif = nextDate ? currentNotifs.some(notif => {
       const notifStart = new Date(notif.start_date);
@@ -2113,7 +2117,7 @@ export const CalendarView: React.FC = () => {
     );
   }
 
-  const selectedDateStr = selectedDate.toISOString().split('T')[0];
+  const selectedDateStr = toLocalDateStr(selectedDate);
   const startDateStr = dates[0].toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' });
   const endDateStr = dates[dates.length - 1].toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -2641,7 +2645,7 @@ export const CalendarView: React.FC = () => {
                 </th>
                 {dates.map((date, idx) => {
                   const isToday = date.toDateString() === new Date().toDateString();
-                  const isSelected = date.toISOString().split('T')[0] === selectedDateStr;
+                  const isSelected = toLocalDateStr(date) === selectedDateStr;
                   return (
                     <th
                       key={idx}
@@ -2669,7 +2673,7 @@ export const CalendarView: React.FC = () => {
                       {unit.name}
                     </td>
                     {dates.map((date, idx) => {
-                      const dateStr = date.toISOString().split('T')[0];
+                      const dateStr = toLocalDateStr(date);
                       const status = unitAvailability?.get(dateStr);
                       const isToday = date.toDateString() === new Date().toDateString();
                       const isSelected = dateStr === selectedDateStr;
