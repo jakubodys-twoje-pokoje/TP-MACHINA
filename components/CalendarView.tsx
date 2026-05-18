@@ -1132,11 +1132,6 @@ export const CalendarView: React.FC = () => {
 
       diffs.sort((a, b) => a.date.localeCompare(b.date) || a.unitName.localeCompare(b.unitName));
 
-      if (diffs.length === 0) {
-        alert(`✓ Baza i Hotres są zsynchronizowane.\nBrak różnic w zakresie ${startDateStr} – ${endDateStr}.`);
-        return;
-      }
-
       // Build per-cell sync status map for calendar color coding
       const infoMap = new Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }>();
       for (const [key] of snapshot) {
@@ -1150,6 +1145,11 @@ export const CalendarView: React.FC = () => {
         });
       }
       setCellCompareInfo(infoMap);
+
+      if (diffs.length === 0) {
+        alert(`✓ Baza i Hotres są zsynchronizowane.\nBrak różnic w zakresie ${startDateStr} – ${endDateStr}.`);
+        return;
+      }
 
       setCompareSnapshotRef(snapshot);
       setCompareDiff(diffs);
