@@ -290,8 +290,11 @@ export const CalendarView: React.FC = () => {
 
     const withMin = allData.filter(p => p.min !== null && p.min !== undefined);
     console.log(`🔍 fetchPricesData: allData=${allData.length}, withMin=${withMin.length}, pricesMap=${pricesMap.size}`);
-    if (withMin.length > 0) console.log('🔍 sample MIN records:', withMin.slice(0, 3));
-    if (allData.length > 0) console.log('🔍 first record:', allData[0]);
+    if (allData.length > 0) {
+      const r = allData[0];
+      console.log(`🔍 first record date="${r.date}" min=${r.min} unit_id=${r.unit_id}`);
+      console.log(`🔍 first pricesMap key sample:`, [...pricesMap.keys()].slice(0, 2));
+    }
 
     setPricesData(pricesMap);
 
