@@ -198,64 +198,77 @@ export const CalendarView: React.FC = () => {
 
     setLoadingAvailability(true);
 
-    // Calculate date range: 1 month before, 2 months after (~90 days total)
-    const startDate = new Date(selectedDate);
-    startDate.setDate(startDate.getDate() - 30);
+    try {
+      const startDate = new Date(selectedDate);
+      startDate.setDate(startDate.getDate() - 30);
+      const endDate = new Date(selectedDate);
+      endDate.setDate(endDate.getDate() + 60);
 
-    const endDate = new Date(selectedDate);
-    endDate.setDate(endDate.getDate() + 60);
+      const unitIds = units.map(u => u.id);
 
-    const unitIds = units.map(u => u.id);
-    const { data } = await supabase
-      .from('availability')
-      .select('unit_id, date, status')
-      .in('unit_id', unitIds)
-      .gte('date', startDate.toISOString().split('T')[0])
-      .lte('date', endDate.toISOString().split('T')[0]);
-
-    const availabilityMap = new Map<string, Map<string, Availability['status']>>();
-
-    units.forEach(unit => {
-      availabilityMap.set(unit.id, new Map());
-    });
-
-    data?.forEach((record: any) => {
-      const unitMap = availabilityMap.get(record.unit_id);
-      if (unitMap) {
-        unitMap.set(record.date, record.status);
+      // Chunk .in() queries — PostgREST URL limit breaks with 87+ UUIDs in one request
+      const CHUNK = 50;
+      const allRecords: any[] = [];
+      for (let i = 0; i < unitIds.length; i += CHUNK) {
+        const chunk = unitIds.slice(i, i + CHUNK);
+        const { data } = await supabase
+          .from('availability')
+          .select('unit_id, date, status')
+          .in('unit_id', chunk)
+          .gte('date', startDate.toISOString().split('T')[0])
+          .lte('date', endDate.toISOString().split('T')[0]);
+        if (data) allRecords.push(...data);
       }
-    });
 
-    setAllUnitsAvailability(availabilityMap);
-    setLoadingAvailability(false);
+      const availabilityMap = new Map<string, Map<string, Availability['status']>>();
+      units.forEach(unit => { availabilityMap.set(unit.id, new Map()); });
+      allRecords.forEach((record: any) => {
+        const unitMap = availabilityMap.get(record.unit_id);
+        if (unitMap) unitMap.set(record.date, record.status);
+      });
+
+      setAllUnitsAvailability(availabilityMap);
+    } catch (err) {
+      console.error('❌ fetchQuarterAvailability error:', err);
+    } finally {
+      setLoadingAvailability(false);
+    }
   };
 
   const fetchPricesData = async () => {
     if (units.length === 0) return;
 
+    try {
     const startDate = new Date('2026-01-20');
     const endDate = new Date('2026-12-31');
     const unitIds = units.map(u => u.id);
+    const startStr = startDate.toISOString().split('T')[0];
+    const endStr = endDate.toISOString().split('T')[0];
 
-    // Paginate to bypass row limits — 10k per page covers even large properties
-    const allData: any[] = [];
+    // Chunk .in() + paginate — handles 87+ units without URL-length errors
+    const CHUNK = 50;
     const PAGE_SIZE = 10000;
-    let from = 0;
-    while (true) {
-      const { data: page, error: pageError } = await supabase
-        .from('prices')
-        .select('*')
-        .in('unit_id', unitIds)
-        .gte('date', startDate.toISOString().split('T')[0])
-        .lte('date', endDate.toISOString().split('T')[0])
-        .order('date', { ascending: true })
-        .range(from, from + PAGE_SIZE - 1);
+    const allData: any[] = [];
 
-      if (pageError) { console.error('❌ Error fetching prices:', pageError); return; }
-      if (!page || page.length === 0) break;
-      allData.push(...page);
-      if (page.length < PAGE_SIZE) break;
-      from += PAGE_SIZE;
+    for (let ci = 0; ci < unitIds.length; ci += CHUNK) {
+      const chunk = unitIds.slice(ci, ci + CHUNK);
+      let from = 0;
+      while (true) {
+        const { data: page, error: pageError } = await supabase
+          .from('prices')
+          .select('id, unit_id, date, rate_id, cta, ctd, min, cta_synced, ctd_synced')
+          .in('unit_id', chunk)
+          .gte('date', startStr)
+          .lte('date', endStr)
+          .order('date', { ascending: true })
+          .range(from, from + PAGE_SIZE - 1);
+
+        if (pageError) { console.error('❌ Error fetching prices:', pageError); break; }
+        if (!page || page.length === 0) break;
+        allData.push(...page);
+        if (page.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
     }
 
     // Multiple rate_plans can exist for same unit+date — merge, preferring non-null values
@@ -291,6 +304,9 @@ export const CalendarView: React.FC = () => {
     if (infoFromDb.size > 0) setCellCompareInfo(infoFromDb);
 
     return pricesMap;
+    } catch (err) {
+      console.error('❌ fetchPricesData error:', err);
+    }
   };
 
   const fetchUnreadNotifications = async () => {
