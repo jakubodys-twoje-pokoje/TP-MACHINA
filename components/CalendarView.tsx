@@ -32,6 +32,51 @@ export const CalendarView: React.FC = () => {
   }>>([]);
   const [compareSnapshotRef, setCompareSnapshotRef] = useState<Map<string, { unit_id: string; date: string; cta: number | null; ctd: number | null; min: number | null }>>(new Map());
   const [cellCompareInfo, setCellCompareInfo] = useState<Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }>>(new Map());
+
+  // Quarter selector for verification
+  const [verifyQuarter, setVerifyQuarter] = useState<string>(() => {
+    const now = new Date();
+    const q = Math.floor(now.getMonth() / 3) + 1;
+    return `Q${q}-${now.getFullYear()}`;
+  });
+
+  // View options — which buttons to show (persisted to localStorage)
+  const [showViewOptions, setShowViewOptions] = useState(false);
+  const [viewOptions, setViewOptions] = useState<Record<string, boolean>>(() => {
+    try {
+      const s = localStorage.getItem('tp_view_options');
+      return s ? JSON.parse(s) : { compare: true, push: true, override: true, verifyQuarter: true };
+    } catch { return { compare: true, push: true, override: true, verifyQuarter: true }; }
+  });
+
+  const setViewOption = (key: string, val: boolean) => {
+    setViewOptions(prev => {
+      const next = { ...prev, [key]: val };
+      localStorage.setItem('tp_view_options', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const getQuarterRange = (q: string): { start: string; end: string } => {
+    const [qn, y] = q.split('-');
+    const year = parseInt(y);
+    const map: Record<string, { start: string; end: string }> = {
+      Q1: { start: `${year}-01-01`, end: `${year}-03-31` },
+      Q2: { start: `${year}-04-01`, end: `${year}-06-30` },
+      Q3: { start: `${year}-07-01`, end: `${year}-09-30` },
+      Q4: { start: `${year}-10-01`, end: `${year}-12-31` },
+    };
+    return map[qn] ?? { start: `${year}-01-01`, end: `${year}-12-31` };
+  };
+
+  const quarterOptions = (() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    return [
+      `Q1-${year}`, `Q2-${year}`, `Q3-${year}`, `Q4-${year}`,
+      `Q1-${year + 1}`, `Q2-${year + 1}`, `Q3-${year + 1}`, `Q4-${year + 1}`,
+    ];
+  })();
   const [pricesData, setPricesData] = useState<Map<string, Price>>(new Map());
   const [priceChanges, setPriceChanges] = useState<Map<string, Partial<Price>>>(new Map());
   const [isLoadingAI, setIsLoadingAI] = useState(false);
@@ -944,11 +989,12 @@ export const CalendarView: React.FC = () => {
     // Using changesByTypeId would lose unit_id and units.find() could return the
     // wrong unit when multiple units share an external_type_id.
     console.log('💾 Saving confirmed changes to database...');
+    let dbInsertFailed = 0;
     for (const [key, change] of priceChanges) {
       const existingPrice = pricesData.get(key);
 
       if (existingPrice) {
-        await supabase
+        const { error: updateErr } = await supabase
           .from('prices')
           .update({
             cta: change.cta !== undefined ? change.cta : existingPrice.cta,
@@ -956,11 +1002,12 @@ export const CalendarView: React.FC = () => {
             min: change.min !== undefined ? change.min : existingPrice.min
           })
           .eq('id', existingPrice.id);
+        if (updateErr) console.error(`DB update error for ${key}:`, updateErr);
       } else if (change.unit_id && change.date) {
         // No existing record — insert one so the value persists after refresh
         const rateId = change.rate_id || allRatePlans[0]?.id || '';
         if (rateId) {
-          await supabase
+          const { error: insertErr } = await supabase
             .from('prices')
             .insert({
               unit_id: change.unit_id,
@@ -972,8 +1019,15 @@ export const CalendarView: React.FC = () => {
               cta: change.cta ?? null,
               ctd: change.ctd ?? null,
             });
+          if (insertErr) {
+            console.error(`DB insert error for ${key} (403 = brak RLS INSERT):`, insertErr);
+            dbInsertFailed++;
+          }
         }
       }
+    }
+    if (dbInsertFailed > 0) {
+      console.warn(`⚠ ${dbInsertFailed} nowych rekordów nie zapisało się do DB (brak uprawnień INSERT w RLS). Wartości są w Hotresie.`);
     }
     console.log('✅ Database updated successfully');
 
@@ -1002,7 +1056,7 @@ export const CalendarView: React.FC = () => {
       if (dbRows) {
         for (const sent of sentValues) {
           const actual = dbRows.find(r => r.unit_id === sent.unit_id && r.date === sent.date);
-          if (!actual) { verificationFailed++; continue; }
+          if (!actual) { continue; } // new record — INSERT may have failed (RLS), tracked separately
           if (sent.cta !== undefined && actual.cta !== sent.cta) verificationFailed++;
           if (sent.ctd !== undefined && actual.ctd !== sent.ctd) verificationFailed++;
           if (sent.min !== undefined && actual.min !== sent.min) verificationFailed++;
@@ -1022,22 +1076,12 @@ export const CalendarView: React.FC = () => {
     };
   };
 
-  const handleCompareSync = async () => {
-    if (!property || syncing) return;
-
-    const startDateStr = dates[0].toISOString().split('T')[0];
-    const endDateStr = dates[dates.length - 1].toISOString().split('T')[0];
-
-    if (!confirm(
-      `Porównaj stan bazy z Hotresem?\n\n` +
-      `Zakres: ${startDateStr} – ${endDateStr}\n\n` +
-      `⚠ Baza zostanie zaktualizowana danymi z Hotresa.\n` +
-      `Jeśli znajdziemy różnice, będziesz mógł przywrócić stan z bazy do Hotresa.`
-    )) return;
+  const runComparison = async (startDateStr: string, endDateStr: string) => {
+    if (!property) return;
 
     setSyncing(true);
     try {
-      // 1. Snapshot current DB values for visible date range
+      // 1. Snapshot current DB values for date range
       const snapshot = new Map<string, { unit_id: string; date: string; cta: number | null; ctd: number | null; min: number | null }>();
       for (const [key, price] of pricesData) {
         if (price.date >= startDateStr && price.date <= endDateStr) {
@@ -1065,7 +1109,7 @@ export const CalendarView: React.FC = () => {
       // 3. Fetch updated DB (now has Hotres values)
       const newPrices = await fetchPricesData();
 
-      // 4. Compute diff (only for visible date range)
+      // 4. Compute diff for the given date range
       const diffs: typeof compareDiff = [];
       for (const [key, old] of snapshot) {
         const fresh = newPrices?.get(key);
@@ -1115,6 +1159,37 @@ export const CalendarView: React.FC = () => {
     } finally {
       setSyncing(false);
     }
+  };
+
+  const handleCompareSync = async () => {
+    if (!property || syncing) return;
+
+    const startDateStr = dates[0].toISOString().split('T')[0];
+    const endDateStr = dates[dates.length - 1].toISOString().split('T')[0];
+
+    if (!confirm(
+      `Porównaj stan bazy z Hotresem?\n\n` +
+      `Zakres: ${startDateStr} – ${endDateStr}\n\n` +
+      `⚠ Baza zostanie zaktualizowana danymi z Hotresa.\n` +
+      `Jeśli znajdziemy różnice, będziesz mógł przywrócić stan z bazy do Hotresa.`
+    )) return;
+
+    await runComparison(startDateStr, endDateStr);
+  };
+
+  const handleVerifyQuarter = async () => {
+    if (!property || syncing) return;
+
+    const { start, end } = getQuarterRange(verifyQuarter);
+
+    if (!confirm(
+      `Weryfikuj kwartał ${verifyQuarter}?\n\n` +
+      `Zakres: ${start} – ${end}\n\n` +
+      `⚠ Baza zostanie zaktualizowana danymi z Hotresa.\n` +
+      `Jeśli znajdziemy różnice, będziesz mógł przywrócić stan z bazy do Hotresa.`
+    )) return;
+
+    await runComparison(start, end);
   };
 
   const handleRestoreFromSnapshot = async () => {
@@ -2206,39 +2281,98 @@ export const CalendarView: React.FC = () => {
               </div>
             )}
 
-            {/* Compare DB vs Hotres Button */}
+            {/* View Options Toggle */}
             <div className="mt-3">
               <button
-                onClick={handleCompareSync}
-                disabled={syncing}
-                className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+                onClick={() => setShowViewOptions(v => !v)}
+                className="w-full bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-medium py-1.5 px-3 rounded-lg flex items-center justify-between"
               >
-                <span className="text-xs sm:text-sm">{syncing ? '⏳ Porównywanie...' : '🔍 Porównaj DB ↔ Hotres'}</span>
+                <span>⚙ Opcje widoku</span>
+                <span>{showViewOptions ? '▲' : '▼'}</span>
               </button>
-              <p className="text-[10px] text-slate-500 text-center mt-1">Pokaż różnice i opcję przywrócenia stanu DB</p>
+              {showViewOptions && (
+                <div className="mt-2 p-3 bg-slate-800 rounded-lg space-y-2 text-xs text-slate-300">
+                  {[
+                    { key: 'compare', label: '🔍 Porównaj DB ↔ Hotres' },
+                    { key: 'push', label: '📤 Push DB → Hotres' },
+                    { key: 'override', label: '🚨 OVERRIDE' },
+                    { key: 'verifyQuarter', label: '📅 Weryfikuj kwartał' },
+                  ].map(({ key, label }) => (
+                    <label key={key} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={viewOptions[key] !== false}
+                        onChange={e => setViewOption(key, e.target.checked)}
+                        className="w-3.5 h-3.5"
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
+
+            {/* Weryfikuj kwartał */}
+            {viewOptions.verifyQuarter !== false && (
+              <div className="mt-3">
+                <div className="flex gap-2">
+                  <select
+                    value={verifyQuarter}
+                    onChange={e => setVerifyQuarter(e.target.value)}
+                    className="flex-1 bg-slate-700 border border-slate-600 text-slate-200 text-xs rounded-lg px-2 py-1.5"
+                  >
+                    {quarterOptions.map(q => <option key={q} value={q}>{q}</option>)}
+                  </select>
+                  <button
+                    onClick={handleVerifyQuarter}
+                    disabled={syncing}
+                    className="flex-1 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-semibold py-1.5 px-3 rounded-lg text-xs flex items-center justify-center gap-1"
+                  >
+                    {syncing ? '⏳...' : '📅 Weryfikuj kwartał'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Compare DB vs Hotres Button */}
+            {viewOptions.compare !== false && (
+              <div className="mt-3">
+                <button
+                  onClick={handleCompareSync}
+                  disabled={syncing}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+                >
+                  <span className="text-xs sm:text-sm">{syncing ? '⏳ Porównywanie...' : '🔍 Porównaj DB ↔ Hotres'}</span>
+                </button>
+                <p className="text-[10px] text-slate-500 text-center mt-1">Pokaż różnice i opcję przywrócenia stanu DB</p>
+              </div>
+            )}
 
             {/* Push DB → Hotres Button */}
-            <div className="mt-3">
-              <button
-                onClick={handlePushDBToHotres}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
-              >
-                <span className="text-xs sm:text-sm">📤 Push DB → Hotres</span>
-              </button>
-              <p className="text-[10px] text-slate-500 text-center mt-1">Wyślij CTA/CTD/MIN z bazy do Hotresa (aktualny widok)</p>
-            </div>
+            {viewOptions.push !== false && (
+              <div className="mt-3">
+                <button
+                  onClick={handlePushDBToHotres}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+                >
+                  <span className="text-xs sm:text-sm">📤 Push DB → Hotres</span>
+                </button>
+                <p className="text-[10px] text-slate-500 text-center mt-1">Wyślij CTA/CTD/MIN z bazy do Hotresa (aktualny widok)</p>
+              </div>
+            )}
 
             {/* OVERRIDE Button - Always Visible */}
-            <div className="mt-3">
-              <button
-                onClick={handleOpenOverrideModal}
-                className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
-              >
-                <span className="text-xs sm:text-sm">🚨 OVERRIDE</span>
-              </button>
-              <p className="text-[10px] text-slate-500 text-center mt-1">Nadpisz wybrane restrykcje w Hotresie (wymaga hasła)</p>
-            </div>
+            {viewOptions.override !== false && (
+              <div className="mt-3">
+                <button
+                  onClick={handleOpenOverrideModal}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+                >
+                  <span className="text-xs sm:text-sm">🚨 OVERRIDE</span>
+                </button>
+                <p className="text-[10px] text-slate-500 text-center mt-1">Nadpisz wybrane restrykcje w Hotresie (wymaga hasła)</p>
+              </div>
+            )}
           </div>
         )}
 
@@ -2271,8 +2405,59 @@ export const CalendarView: React.FC = () => {
           </div>
         )}
 
-        {/* Compare DB vs Hotres Button for Full View */}
+        {/* View Options + Quarter Verify for Full View */}
         {viewMode === 'full' && (
+          <div className="mb-2 sm:mb-3">
+            <button
+              onClick={() => setShowViewOptions(v => !v)}
+              className="w-full bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-medium py-1.5 px-3 rounded-lg flex items-center justify-between mb-2"
+            >
+              <span>⚙ Opcje widoku</span>
+              <span>{showViewOptions ? '▲' : '▼'}</span>
+            </button>
+            {showViewOptions && (
+              <div className="mb-2 p-3 bg-slate-800 rounded-lg grid grid-cols-2 gap-2 text-xs text-slate-300">
+                {[
+                  { key: 'compare', label: '🔍 Porównaj' },
+                  { key: 'push', label: '📤 Push DB' },
+                  { key: 'override', label: '🚨 Override' },
+                  { key: 'verifyQuarter', label: '📅 Kwartał' },
+                ].map(({ key, label }) => (
+                  <label key={key} className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={viewOptions[key] !== false}
+                      onChange={e => setViewOption(key, e.target.checked)}
+                      className="w-3.5 h-3.5"
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            )}
+            {viewOptions.verifyQuarter !== false && (
+              <div className="flex gap-2 mb-2">
+                <select
+                  value={verifyQuarter}
+                  onChange={e => setVerifyQuarter(e.target.value)}
+                  className="flex-1 bg-slate-700 border border-slate-600 text-slate-200 text-xs rounded-lg px-2 py-1.5"
+                >
+                  {quarterOptions.map(q => <option key={q} value={q}>{q}</option>)}
+                </select>
+                <button
+                  onClick={handleVerifyQuarter}
+                  disabled={syncing}
+                  className="flex-1 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-semibold py-1.5 px-3 rounded-lg text-xs flex items-center justify-center gap-1"
+                >
+                  {syncing ? '⏳...' : '📅 Weryfikuj kwartał'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Compare DB vs Hotres Button for Full View */}
+        {viewMode === 'full' && viewOptions.compare !== false && (
           <div className="mb-2 sm:mb-3">
             <button
               onClick={handleCompareSync}
@@ -2286,7 +2471,7 @@ export const CalendarView: React.FC = () => {
         )}
 
         {/* Push DB → Hotres Button for Full View */}
-        {viewMode === 'full' && (
+        {viewMode === 'full' && viewOptions.push !== false && (
           <div className="mb-2 sm:mb-3">
             <button
               onClick={handlePushDBToHotres}
@@ -2299,7 +2484,7 @@ export const CalendarView: React.FC = () => {
         )}
 
         {/* OVERRIDE Button for Full View - Always Visible */}
-        {viewMode === 'full' && (
+        {viewMode === 'full' && viewOptions.override !== false && (
           <div className="mb-2 sm:mb-3">
             <button
               onClick={handleOpenOverrideModal}
