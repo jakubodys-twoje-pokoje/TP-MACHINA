@@ -31,7 +31,20 @@ export const CalendarView: React.FC = () => {
     hotresMin: number | null;
   }>>([]);
   const [compareSnapshotRef, setCompareSnapshotRef] = useState<Map<string, { unit_id: string; date: string; cta: number | null; ctd: number | null; min: number | null }>>(new Map());
-  const [cellCompareInfo, setCellCompareInfo] = useState<Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }>>(new Map());
+  const [cellCompareInfo, setCellCompareInfoRaw] = useState<Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }>>(() => {
+    try {
+      const saved = localStorage.getItem(`tp_compare_info_${propertyId}`);
+      if (!saved) return new Map();
+      return new Map(JSON.parse(saved));
+    } catch { return new Map(); }
+  });
+  const setCellCompareInfo = (val: Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }> | ((prev: Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }>) => Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }>)) => {
+    setCellCompareInfoRaw(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      try { localStorage.setItem(`tp_compare_info_${propertyId}`, JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
 
   // Quarter selector for verification
   const [verifyQuarter, setVerifyQuarter] = useState<string>(() => {
