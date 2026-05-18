@@ -31,20 +31,7 @@ export const CalendarView: React.FC = () => {
     hotresMin: number | null;
   }>>([]);
   const [compareSnapshotRef, setCompareSnapshotRef] = useState<Map<string, { unit_id: string; date: string; cta: number | null; ctd: number | null; min: number | null }>>(new Map());
-  const [cellCompareInfo, setCellCompareInfoRaw] = useState<Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }>>(() => {
-    try {
-      const saved = localStorage.getItem(`tp_compare_info_${propertyId}`);
-      if (!saved) return new Map();
-      return new Map(JSON.parse(saved));
-    } catch { return new Map(); }
-  });
-  const setCellCompareInfo = (val: Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }> | ((prev: Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }>) => Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }>)) => {
-    setCellCompareInfoRaw(prev => {
-      const next = typeof val === 'function' ? val(prev) : val;
-      try { localStorage.setItem(`tp_compare_info_${propertyId}`, JSON.stringify([...next])); } catch {}
-      return next;
-    });
-  };
+  const [cellCompareInfo, setCellCompareInfo] = useState<Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }>>(new Map());
 
   // Quarter selector for verification
   const [verifyQuarter, setVerifyQuarter] = useState<string>(() => {
@@ -345,6 +332,20 @@ export const CalendarView: React.FC = () => {
     }
 
     setPricesData(pricesMap);
+
+    // Rebuild cellCompareInfo from DB columns (persists across devices)
+    const infoFromDb = new Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }>();
+    pricesMap.forEach((price, key) => {
+      if (price.cta_synced !== null && price.cta_synced !== undefined) {
+        infoFromDb.set(key, {
+          ctaDiffers: price.cta_synced === false,
+          ctdDiffers: price.ctd_synced === false,
+          minDiffers: false,
+        });
+      }
+    });
+    if (infoFromDb.size > 0) setCellCompareInfo(infoFromDb);
+
     return pricesMap;
   };
 
@@ -614,7 +615,7 @@ export const CalendarView: React.FC = () => {
         setReadNotificationIds(new Set());
       }
 
-      // Clear price changes and mark sent cells as synced in calendar
+      // Clear price changes and mark sent cells as synced in calendar + DB
       if (hasPriceChanges) {
         setCellCompareInfo(prev => {
           type CellInfo = { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean };
@@ -626,6 +627,18 @@ export const CalendarView: React.FC = () => {
               ctdDiffers: change.ctd !== undefined ? false : existing.ctdDiffers,
               minDiffers: change.min !== undefined ? false : existing.minDiffers,
             });
+          });
+          // Persist to DB
+          priceChanges.forEach((change, key) => {
+            const price = pricesData.get(key);
+            if (price?.id) {
+              const dbUpdate: Record<string, boolean> = {};
+              if (change.cta !== undefined) dbUpdate.cta_synced = true;
+              if (change.ctd !== undefined) dbUpdate.ctd_synced = true;
+              if (Object.keys(dbUpdate).length > 0) {
+                supabase.from('prices').update(dbUpdate).eq('id', price.id);
+              }
+            }
           });
           return updated;
         });
@@ -1158,6 +1171,17 @@ export const CalendarView: React.FC = () => {
         });
       }
       setCellCompareInfo(infoMap);
+
+      // Persist sync status to DB so colors survive across devices
+      for (const [key, info] of infoMap) {
+        const price = newPrices?.get(key);
+        if (price?.id) {
+          await supabase.from('prices').update({
+            cta_synced: !info.ctaDiffers,
+            ctd_synced: !info.ctdDiffers,
+          }).eq('id', price.id);
+        }
+      }
 
       if (diffs.length === 0) {
         alert(`✓ Baza i Hotres są zsynchronizowane.\nBrak różnic w zakresie ${startDateStr} – ${endDateStr}.`);

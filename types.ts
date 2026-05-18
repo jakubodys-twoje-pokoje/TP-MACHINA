@@ -152,6 +152,8 @@ export interface Price {
   cta: 0 | 1 | null;
   ctd: 0 | 1 | null;
   synced_at?: string;
+  cta_synced?: boolean | null;
+  ctd_synced?: boolean | null;
 }
 
 export interface AISuggestion {
