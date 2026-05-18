@@ -565,6 +565,21 @@ export const CalendarView: React.FC = () => {
     alert(`✓ Zastosowano zmiany dla ${selectedCells.size} komórek`);
   };
 
+  const handleDismissAllNotifications = async () => {
+    if (unreadNotifications.length === 0) return;
+    if (!confirm(`Odrzucić wszystkie ${unreadNotifications.length} powiadomień?\n\nZostaną oznaczone jako przeczytane bez wysyłania do Hotresa.`)) return;
+
+    const ids = unreadNotifications.map(n => n.id);
+    const { data: { user } } = await supabase.auth.getUser();
+    const now = new Date().toISOString();
+    await supabase.from('notifications')
+      .update({ is_read: true, read_by_email: user?.email ?? null, read_at: now })
+      .in('id', ids);
+
+    setUnreadNotifications([]);
+    setReadNotificationIds(new Set());
+  };
+
   const handleSyncToHotres = async () => {
     if (!property) return;
 
@@ -2138,6 +2153,15 @@ export const CalendarView: React.FC = () => {
             </div>
 
             {/* AI Optimization Button - only in notifications view */}
+            {viewMode === 'notifications' && unreadNotifications.length > 0 && (
+              <button
+                onClick={handleDismissAllNotifications}
+                className="flex items-center gap-1 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors font-medium whitespace-nowrap"
+                title="Odrzuć wszystkie powiadomienia"
+              >
+                <span>✕ Wyczyść</span>
+              </button>
+            )}
             {viewMode === 'notifications' && unreadNotifications.length > 0 && (
               <button
                 onClick={handleAIOptimization}
