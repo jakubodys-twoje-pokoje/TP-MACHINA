@@ -187,32 +187,14 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       return { recordsCompared: 0, changesDetected: 0 }
     }
 
-    // Prefer "Booking" rate plan, but use first available if "Booking" doesn't exist
-    const bookingPlan = allRatePlans.find(rp => rp.name.toLowerCase().includes('booking'))
-    const targetRatePlan = bookingPlan || allRatePlans[0]
-
-    console.log(`  📋 Rate plans for ${property.name}:`, {
-      total: allRatePlans.length,
-      using: `"${targetRatePlan.name}" (id: ${targetRatePlan.id}, ext_id: ${targetRatePlan.external_id})`,
-      all: allRatePlans.map(rp => rp.name)
-    })
+    console.log(`  📋 Rate plans for ${property.name}: ${allRatePlans.length} total — syncing ALL`)
+    console.log(`  📋 Plans:`, allRatePlans.map(rp => `"${rp.name}" (ext_id: ${rp.external_id})`))
 
     // Fetch prices from Hotres - split into two ranges (180 day API limit)
-    // Range 1: 2026-01-20 to 2026-07-18 (180 days)
-    // Range 2: 2026-07-19 to 2026-12-31 (165 days)
     const dateRanges = [
       { from: '2026-01-20', till: '2026-07-18', label: 'first half' },
       { from: '2026-07-19', till: '2026-12-31', label: 'second half' }
     ]
-
-    const targetRatePlanId = targetRatePlan.id
-    const targetRateExternalId = targetRatePlan.external_id
-
-    console.log(`  📅 Fetching prices in 2 ranges (180 day API limit)`)
-    console.log(`  🔄 Will fetch prices for ${units.length} units (rate_id: ${targetRateExternalId})`)
-
-    // Collect all price records
-    const pricesByUnitDate = new Map<string, any>()
 
     // Create mapping of type_id to unit for lookup
     const unitMapByTypeId = new Map<string, any>()
@@ -222,76 +204,63 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       }
     })
 
-    let totalProcessedUnits = 0
+    // Collect all price records keyed by unit_id:date:rate_id (one row per rate plan)
+    const pricesByKey = new Map<string, any>()
+
     let totalDates = 0
 
-    // Fetch prices for each date range (TWO requests total instead of 2 × units)
-    for (const range of dateRanges) {
-      console.log(`  📆 Fetching ${range.label}: ${range.from} to ${range.till}`)
+    // Fetch prices for ALL rate plans × both date ranges
+    for (const ratePlan of allRatePlans) {
+      for (const range of dateRanges) {
+        console.log(`  📆 Fetching "${ratePlan.name}" ${range.label}: ${range.from} to ${range.till}`)
 
-      try {
-        // Fetch prices for entire property (ONE request per range)
-        const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&rate_id=${targetRateExternalId}&from=${range.from}&till=${range.till}`
+        try {
+          const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&rate_id=${ratePlan.external_id}&from=${range.from}&till=${range.till}`
 
-        const rawResponse = await fetchFromHotres(pricesUrl)
-        let pricesData = JSON.parse(rawResponse)
+          const rawResponse = await fetchFromHotres(pricesUrl)
+          let pricesData = JSON.parse(rawResponse)
 
-        // Hotres returns array: [{rate_id, type_id, dates: [...]}, ...]
-        if (!Array.isArray(pricesData)) {
-          pricesData = [pricesData]
-        }
-
-        console.log(`  📥 Received ${pricesData.length} items from Hotres API (${range.label})`)
-
-        let rangeProcessedUnits = 0
-        let rangeDates = 0
-
-        // Process all items in array (one per unit type)
-        for (const item of pricesData) {
-          if (!item || !item.type_id) continue
-
-          const typeId = String(item.type_id)
-          const unit = unitMapByTypeId.get(typeId)
-
-          if (!unit) {
-            console.warn(`  ⚠️  No unit found for type_id ${typeId}`)
-            continue
+          if (!Array.isArray(pricesData)) {
+            pricesData = [pricesData]
           }
 
-          if (item.dates && Array.isArray(item.dates)) {
-            for (const d of item.dates) {
-              const key = `${unit.id}:${d.date}`
+          console.log(`  📥 "${ratePlan.name}" ${range.label}: ${pricesData.length} items`)
 
-              // Store price data (keep first occurrence only)
-              if (!pricesByUnitDate.has(key)) {
-                pricesByUnitDate.set(key, {
-                  unit_id: unit.id,
-                  rate_id: targetRatePlanId,
-                  date: d.date,
-                  price: d.price ? parseFloat(d.price) : null,
-                  min: d.min ? parseInt(d.min) : null,
-                  max: d.max ? parseInt(d.max) : null,
-                  cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
-                  ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
-                })
-                rangeDates++
-                totalDates++
+          for (const item of pricesData) {
+            if (!item || !item.type_id) continue
+
+            const typeId = String(item.type_id)
+            const unit = unitMapByTypeId.get(typeId)
+            if (!unit) continue
+
+            if (item.dates && Array.isArray(item.dates)) {
+              for (const d of item.dates) {
+                const key = `${unit.id}:${d.date}:${ratePlan.id}`
+                if (!pricesByKey.has(key)) {
+                  pricesByKey.set(key, {
+                    unit_id: unit.id,
+                    rate_id: ratePlan.id,
+                    date: d.date,
+                    price: d.price ? parseFloat(d.price) : null,
+                    min: d.min ? parseInt(d.min) : null,
+                    max: d.max ? parseInt(d.max) : null,
+                    cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
+                    ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
+                  })
+                  totalDates++
+                }
               }
             }
-            rangeProcessedUnits++
           }
+        } catch (error: any) {
+          console.error(`  ❌ Failed "${ratePlan.name}" ${range.label}:`, error.message)
         }
-
-        console.log(`  ✓ Processed ${rangeProcessedUnits} units with ${rangeDates} date records (${range.label})`)
-        totalProcessedUnits += rangeProcessedUnits
-      } catch (error: any) {
-        console.error(`  ❌ Failed to fetch ${range.label}:`, error.message)
       }
     }
 
-    console.log(`  📊 Total: ${totalProcessedUnits} units processed, ${totalDates} total date records`)
+    console.log(`  📊 Total: ${totalDates} unique price records across all rate plans`)
 
-    const pricesToUpsert = Array.from(pricesByUnitDate.values())
+    const pricesToUpsert = Array.from(pricesByKey.values())
     console.log(`  📦 Collected ${pricesToUpsert.length} unique price records (unit+date combinations)`)
 
     // Show sample records with CTA/CTD/MIN
