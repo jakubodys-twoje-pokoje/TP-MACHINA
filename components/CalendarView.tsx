@@ -31,6 +31,7 @@ export const CalendarView: React.FC = () => {
     hotresMin: number | null;
   }>>([]);
   const [compareSnapshotRef, setCompareSnapshotRef] = useState<Map<string, { unit_id: string; date: string; cta: number | null; ctd: number | null; min: number | null }>>(new Map());
+  const [cellCompareInfo, setCellCompareInfo] = useState<Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }>>(new Map());
   const [pricesData, setPricesData] = useState<Map<string, Price>>(new Map());
   const [priceChanges, setPriceChanges] = useState<Map<string, Partial<Price>>>(new Map());
   const [isLoadingAI, setIsLoadingAI] = useState(false);
@@ -555,10 +556,22 @@ export const CalendarView: React.FC = () => {
         setReadNotificationIds(new Set());
       }
 
-      // Clear price changes
+      // Clear price changes and mark sent cells as synced in calendar
       if (hasPriceChanges) {
+        setCellCompareInfo(prev => {
+          type CellInfo = { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean };
+          const updated = new Map<string, CellInfo>(prev);
+          priceChanges.forEach((change, key) => {
+            const existing: CellInfo = updated.get(key) ?? { ctaDiffers: false, ctdDiffers: false, minDiffers: false };
+            updated.set(key, {
+              ctaDiffers: change.cta !== undefined ? false : existing.ctaDiffers,
+              ctdDiffers: change.ctd !== undefined ? false : existing.ctdDiffers,
+              minDiffers: change.min !== undefined ? false : existing.minDiffers,
+            });
+          });
+          return updated;
+        });
         setPriceChanges(new Map());
-        // Refresh prices data to get updated values from DB
         await fetchPricesData();
       }
 
@@ -1068,6 +1081,20 @@ export const CalendarView: React.FC = () => {
         return;
       }
 
+      // Build per-cell sync status map for calendar color coding
+      const infoMap = new Map<string, { ctaDiffers: boolean; ctdDiffers: boolean; minDiffers: boolean }>();
+      for (const [key] of snapshot) {
+        infoMap.set(key, { ctaDiffers: false, ctdDiffers: false, minDiffers: false });
+      }
+      for (const diff of diffs) {
+        infoMap.set(`${diff.unitId}_${diff.date}`, {
+          ctaDiffers: diff.dbCta !== diff.hotresCta,
+          ctdDiffers: diff.dbCtd !== diff.hotresCtd,
+          minDiffers: diff.dbMin !== diff.hotresMin,
+        });
+      }
+      setCellCompareInfo(infoMap);
+
       setCompareSnapshotRef(snapshot);
       setCompareDiff(diffs);
       setShowCompareModal(true);
@@ -1162,6 +1189,15 @@ export const CalendarView: React.FC = () => {
           throw new Error(`Błąd Hotres: ${err?.error ?? res.status}`);
         }
       }
+
+      // Mark restored cells as synced in the calendar
+      setCellCompareInfo(prev => {
+        const updated = new Map(prev);
+        for (const diff of compareDiff) {
+          updated.set(`${diff.unitId}_${diff.date}`, { ctaDiffers: false, ctdDiffers: false, minDiffers: false });
+        }
+        return updated;
+      });
 
       setShowCompareModal(false);
       setCompareDiff([]);
@@ -2404,11 +2440,42 @@ export const CalendarView: React.FC = () => {
                             const priceKey = cellKey;
                             const priceData = pricesData.get(priceKey);
                             const changeData = priceChanges.get(priceKey);
+                            const compareInfo = cellCompareInfo.get(priceKey);
 
                             // Use change data if available, otherwise use price data
                             const ctaValue = changeData?.cta !== undefined ? changeData.cta === 1 : priceData?.cta === 1;
                             const ctdValue = changeData?.ctd !== undefined ? changeData.ctd === 1 : priceData?.ctd === 1;
                             const minValue = changeData?.min !== undefined ? (changeData.min || '') : (priceData?.min || '');
+
+                            // Color logic per field:
+                            // pending change → yellow | differs from Hotres → yellow | synced → green | unknown → gray
+                            const ctaColor = changeData?.cta !== undefined
+                              ? 'bg-yellow-500/35 rounded'
+                              : compareInfo
+                                ? compareInfo.ctaDiffers ? 'bg-yellow-500/30 rounded' : 'bg-green-500/20 rounded'
+                                : '';
+                            const ctaTextColor = changeData?.cta !== undefined || compareInfo?.ctaDiffers
+                              ? 'text-yellow-400'
+                              : compareInfo
+                                ? 'text-green-400'
+                                : 'text-slate-400';
+
+                            const ctdColor = changeData?.ctd !== undefined
+                              ? 'bg-yellow-500/35 rounded'
+                              : compareInfo
+                                ? compareInfo.ctdDiffers ? 'bg-yellow-500/30 rounded' : 'bg-green-500/20 rounded'
+                                : '';
+                            const ctdTextColor = changeData?.ctd !== undefined || compareInfo?.ctdDiffers
+                              ? 'text-yellow-400'
+                              : compareInfo
+                                ? 'text-green-400'
+                                : 'text-slate-400';
+
+                            const minBorderColor = changeData?.min !== undefined
+                              ? 'border-yellow-500'
+                              : compareInfo
+                                ? compareInfo.minDiffers ? 'border-yellow-500' : 'border-green-700'
+                                : 'border-slate-700';
 
                             return (
                               <div className="flex flex-col gap-1">
@@ -2423,31 +2490,31 @@ export const CalendarView: React.FC = () => {
 
                                 {/* Checkboxes in one line - vertical labels */}
                                 <div className="flex items-center justify-center gap-1 sm:gap-1.5 lg:gap-2">
-                                  <label className="flex flex-col items-center gap-0.5 cursor-pointer">
+                                  <label className={`flex flex-col items-center gap-0.5 cursor-pointer px-0.5 ${ctaColor}`}>
                                     <input
                                       type="checkbox"
                                       className="w-4 h-4 sm:w-4 sm:h-4 lg:w-5 lg:h-5 cursor-pointer"
                                       checked={ctaValue}
                                       onChange={(e) => handleCtaChange(unit.id, dateStr, e.target.checked)}
                                     />
-                                    <span className="text-slate-400 text-[8px] sm:text-[9px] font-semibold">CTA</span>
+                                    <span className={`text-[8px] sm:text-[9px] font-semibold ${ctaTextColor}`}>CTA</span>
                                   </label>
-                                  <label className="flex flex-col items-center gap-0.5 cursor-pointer">
+                                  <label className={`flex flex-col items-center gap-0.5 cursor-pointer px-0.5 ${ctdColor}`}>
                                     <input
                                       type="checkbox"
                                       className="w-4 h-4 sm:w-4 sm:h-4 lg:w-5 lg:h-5 cursor-pointer"
                                       checked={ctdValue}
                                       onChange={(e) => handleCtdChange(unit.id, dateStr, e.target.checked)}
                                     />
-                                    <span className="text-slate-400 text-[8px] sm:text-[9px] font-semibold">CTD</span>
+                                    <span className={`text-[8px] sm:text-[9px] font-semibold ${ctdTextColor}`}>CTD</span>
                                   </label>
                                 </div>
 
-                                {/* MIN input - centered with label below */}
+                                {/* MIN input - colored border */}
                                 <div className="flex flex-col gap-0.5 items-center">
                                   <input
                                     type="text"
-                                    className="w-full px-1 py-1 sm:px-1 sm:py-1 lg:px-1.5 lg:py-1 text-center text-[10px] sm:text-[10px] lg:text-[11px] bg-slate-800 border border-slate-700 rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                    className={`w-full px-1 py-1 sm:px-1 sm:py-1 lg:px-1.5 lg:py-1 text-center text-[10px] sm:text-[10px] lg:text-[11px] bg-slate-800 border rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 ${minBorderColor}`}
                                     placeholder="000"
                                     value={minValue}
                                     onChange={(e) => handleMinChange(unit.id, dateStr, e.target.value)}
