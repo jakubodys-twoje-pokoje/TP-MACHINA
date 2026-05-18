@@ -146,6 +146,15 @@ export const CalendarView: React.FC = () => {
     }
   }, [selectedDate, units]);
 
+  // Auto-refresh prices from DB every 3 minutes (DB is already synced with Hotres by background job)
+  useEffect(() => {
+    if (units.length === 0) return;
+    const interval = setInterval(() => {
+      fetchPricesData();
+    }, 3 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [units]);
+
   // Auto-scroll to position selected date at 1/3 of viewport
   useEffect(() => {
     if (scrollContainerRef.current && !loadingAvailability) {
