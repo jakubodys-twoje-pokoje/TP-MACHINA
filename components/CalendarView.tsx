@@ -2055,7 +2055,7 @@ export const CalendarView: React.FC = () => {
       </div>
 
       <div className="bg-surface rounded-lg sm:rounded-xl border border-border p-2 sm:p-3 shadow-lg relative w-full">
-        {loadingAvailability && (
+        {loadingAvailability && allUnitsAvailability.size === 0 && (
           <div className="absolute inset-0 bg-surface/50 backdrop-blur-sm flex items-center justify-center z-10 rounded-xl">
             <Loader2 className="animate-spin text-indigo-400" size={32} />
           </div>
