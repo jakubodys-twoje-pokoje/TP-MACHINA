@@ -347,7 +347,7 @@ Deno.serve(async (req) => {
 
   try {
     // Parse request body
-    const { property_id } = await req.json()
+    const { property_id, prices_only } = await req.json()
 
     if (!property_id) {
       return new Response(
@@ -388,9 +388,9 @@ Deno.serve(async (req) => {
 
     console.log(`📋 Property found: ${property.name} (hotres_id: ${property.hotres_id})`)
 
-    // Sync both availability and prices
+    // Sync prices always; skip availability when prices_only flag is set
     const [availResult, pricesResult] = await Promise.allSettled([
-      syncPropertyAvailability(property, supabaseClient),
+      prices_only ? Promise.resolve({ recordsCompared: 0, changesDetected: 0 }) : syncPropertyAvailability(property, supabaseClient),
       syncPropertyPrices(property, supabaseClient)
     ])
 

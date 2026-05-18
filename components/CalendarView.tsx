@@ -1124,7 +1124,7 @@ export const CalendarView: React.FC = () => {
         {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ property_id: property.id })
+          body: JSON.stringify({ property_id: property.id, prices_only: true })
         }
       );
       if (!response.ok) {
