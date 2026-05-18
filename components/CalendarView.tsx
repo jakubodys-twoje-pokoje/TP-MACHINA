@@ -2447,35 +2447,44 @@ export const CalendarView: React.FC = () => {
                             const ctdValue = changeData?.ctd !== undefined ? changeData.ctd === 1 : priceData?.ctd === 1;
                             const minValue = changeData?.min !== undefined ? (changeData.min || '') : (priceData?.min || '');
 
-                            // Color logic per field:
-                            // pending change → yellow | differs from Hotres → yellow | synced → green | unknown → gray
+                            // Sync status per field: pending > compared > value-based default
+                            // If value is 1 (set/active) and status unknown → yellow (assume not in Hotres yet)
+                            // If value is 1 and confirmed synced → green
+                            // If value is 0 and no pending change → no color
+                            const ctaSynced = compareInfo && !compareInfo.ctaDiffers;
                             const ctaColor = changeData?.cta !== undefined
-                              ? 'bg-yellow-500/35 rounded'
+                              ? 'bg-yellow-500/35 rounded'       // pending unsent change
                               : compareInfo
-                                ? compareInfo.ctaDiffers ? 'bg-yellow-500/30 rounded' : 'bg-green-500/20 rounded'
-                                : '';
-                            const ctaTextColor = changeData?.cta !== undefined || compareInfo?.ctaDiffers
-                              ? 'text-yellow-400'
-                              : compareInfo
-                                ? 'text-green-400'
-                                : 'text-slate-400';
+                                ? compareInfo.ctaDiffers
+                                  ? 'bg-yellow-500/30 rounded'   // differs from Hotres
+                                  : ctaValue ? 'bg-green-500/20 rounded' : ''  // synced (only color when checked)
+                                : ctaValue
+                                  ? 'bg-yellow-500/20 rounded'   // checked but no comparison → assume DB-only
+                                  : '';
+                            const ctaTextColor = ctaColor.includes('green') ? 'text-green-400'
+                              : ctaColor ? 'text-yellow-400' : 'text-slate-400';
 
+                            const ctdSynced = compareInfo && !compareInfo.ctdDiffers;
                             const ctdColor = changeData?.ctd !== undefined
                               ? 'bg-yellow-500/35 rounded'
                               : compareInfo
-                                ? compareInfo.ctdDiffers ? 'bg-yellow-500/30 rounded' : 'bg-green-500/20 rounded'
-                                : '';
-                            const ctdTextColor = changeData?.ctd !== undefined || compareInfo?.ctdDiffers
-                              ? 'text-yellow-400'
-                              : compareInfo
-                                ? 'text-green-400'
-                                : 'text-slate-400';
+                                ? compareInfo.ctdDiffers
+                                  ? 'bg-yellow-500/30 rounded'
+                                  : ctdValue ? 'bg-green-500/20 rounded' : ''
+                                : ctdValue
+                                  ? 'bg-yellow-500/20 rounded'
+                                  : '';
+                            const ctdTextColor = ctdColor.includes('green') ? 'text-green-400'
+                              : ctdColor ? 'text-yellow-400' : 'text-slate-400';
 
+                            const minIsSet = !!(priceData?.min || changeData?.min);
                             const minBorderColor = changeData?.min !== undefined
                               ? 'border-yellow-500'
                               : compareInfo
-                                ? compareInfo.minDiffers ? 'border-yellow-500' : 'border-green-700'
-                                : 'border-slate-700';
+                                ? compareInfo.minDiffers ? 'border-yellow-500' : minIsSet ? 'border-green-700' : 'border-slate-700'
+                                : minIsSet ? 'border-yellow-500' : 'border-slate-700';
+
+                            void ctaSynced; void ctdSynced;
 
                             return (
                               <div className="flex flex-col gap-1">
