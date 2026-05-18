@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo, useCallback, memo } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { Property, Availability, Unit, Notification, Price, AISuggestion } from '../types';
@@ -233,33 +233,11 @@ export const CalendarView: React.FC = () => {
   const fetchPricesData = async () => {
     if (units.length === 0) return;
 
-    // Fixed date range: 20.01.2026 to 31.12.2026
     const startDate = new Date('2026-01-20');
     const endDate = new Date('2026-12-31');
-
     const unitIds = units.map(u => u.id);
 
-    console.log('📊 Fetching prices for property:', property?.name, `(${property?.id})`);
-    console.log('📊 Date range:', startDate.toISOString().split('T')[0], 'to', endDate.toISOString().split('T')[0]);
-    console.log('📊 Unit IDs:', unitIds);
-
-    // Check if rate_plans exist for this property
-    if (property) {
-      const { data: ratePlans, error: rpError } = await supabase
-        .from('rate_plans')
-        .select('id, name, external_id')
-        .eq('property_id', property.id);
-
-      console.log('📊 Rate plans for property:', ratePlans);
-
-      if (!ratePlans || ratePlans.length === 0) {
-        console.error('❌ No rate_plans found for this property! Run sync to import rate plans from Hotres.');
-      }
-      // We accept any rate plan now (not just "Booking")
-    }
-
-    // Fetch prices directly - no JOIN needed, we only use CTA/CTD/MIN from prices table
-    // Use range pagination to bypass Supabase's default 1000-row limit
+    // Paginate to bypass row limits — 10k per page covers even large properties
     const allData: any[] = [];
     const PAGE_SIZE = 10000;
     let from = 0;
@@ -273,44 +251,16 @@ export const CalendarView: React.FC = () => {
         .order('date', { ascending: true })
         .range(from, from + PAGE_SIZE - 1);
 
-      if (pageError) {
-        console.error('❌ Error fetching prices:', pageError);
-        return;
-      }
+      if (pageError) { console.error('❌ Error fetching prices:', pageError); return; }
       if (!page || page.length === 0) break;
       allData.push(...page);
       if (page.length < PAGE_SIZE) break;
       from += PAGE_SIZE;
     }
-    const data = allData;
-    const error = null;
 
-    console.log('📊 Prices data fetched:', data?.length || 0, 'records');
-    if (data && data.length > 0) {
-      console.log('📊 Sample price records:', data.slice(0, 3));
-      console.log('📊 First record keys:', Object.keys(data[0]));
-      console.log('📊 First record cta/ctd/min:', {
-        cta: data[0].cta,
-        ctd: data[0].ctd,
-        min: data[0].min,
-        date: data[0].date
-      });
-    } else {
-      console.warn('⚠️ NO PRICES DATA RETURNED FROM DATABASE');
-      console.warn('⚠️ Check if data exists in prices table for these unit_ids and date range');
-    }
-
-    // Show sample with CTA/CTD/MIN values
-    const withRestrictions = data?.filter(p => p.cta !== null || p.ctd !== null || p.min !== null) || [];
-    console.log('📊 Records with CTA/CTD/MIN:', withRestrictions.length);
-    if (withRestrictions.length > 0) {
-      console.log('📊 Sample with restrictions:', withRestrictions.slice(0, 3));
-    }
-
-    // Create map keyed by unit_id + date.
-    // Multiple rate_plans can exist for same unit+date — merge them, preferring non-null values.
+    // Multiple rate_plans can exist for same unit+date — merge, preferring non-null values
     const pricesMap = new Map<string, Price>();
-    data?.forEach(price => {
+    allData.forEach(price => {
       const key = `${price.unit_id}_${price.date}`;
       const existing = pricesMap.get(key);
       if (!existing) {
@@ -324,28 +274,6 @@ export const CalendarView: React.FC = () => {
         });
       }
     });
-
-    console.log('📊 Prices map size:', pricesMap.size);
-
-    // Debug: Check if we have data for visible dates
-    const today = new Date().toISOString().split('T')[0];
-    const sampleKey = unitIds.length > 0 ? `${unitIds[0]}_${today}` : null;
-    if (sampleKey) {
-      const samplePrice = pricesMap.get(sampleKey);
-      console.log(`📊 Sample price for today (${today}):`, samplePrice);
-    }
-
-    // Debug: Check if data issue is about date range
-    if (data && data.length > 0) {
-      const dates = data.map(p => p.date).sort();
-      console.log(`📊 Date range in fetched data: ${dates[0]} to ${dates[dates.length - 1]}`);
-      console.log(`📊 Today (${today}) is in range:`, dates.includes(today));
-    } else if (unitIds.length > 0) {
-      console.warn(`⚠️ No prices data for this property! Check:`);
-      console.warn(`   - Does this property have rate_plans in database?`);
-      console.warn(`   - Did sync-all-availability log "No rate plans for ${property?.name}"?`);
-      console.warn(`   - Check Supabase Edge Function logs for this property`);
-    }
 
     setPricesData(pricesMap);
 
@@ -400,35 +328,25 @@ export const CalendarView: React.FC = () => {
   const toLocalDateStr = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-  // Generate ~90 days (quarter): 30 days before, selected date, 60 days after
-  const generateQuarterDates = () => {
-    const dates: Date[] = [];
+  // Generate ~90 days — memoized so it only recomputes when selectedDate changes
+  const dates = useMemo(() => {
+    const result: Date[] = [];
     const startDate = new Date(selectedDate);
     startDate.setDate(startDate.getDate() - 30);
-
     for (let i = 0; i < 91; i++) {
       const date = new Date(startDate);
       date.setDate(date.getDate() + i);
-      dates.push(date);
+      result.push(date);
     }
+    return result;
+  }, [selectedDate.toDateString()]);
 
-    return dates;
-  };
-
-  const dates = generateQuarterDates();
-
-  // Filter units based on view mode
-  const getFilteredUnits = (): Unit[] => {
+  // Memoized so it only recomputes when units/viewMode/notifications change
+  const filteredUnits = useMemo(() => {
     if (viewMode === 'full') return units;
-
-    // Filter to only units with unread notifications
-    const unitsWithNotifications = new Set(
-      unreadNotifications.map(n => n.unit_id)
-    );
+    const unitsWithNotifications = new Set(unreadNotifications.map(n => n.unit_id));
     return units.filter(u => unitsWithNotifications.has(u.id));
-  };
-
-  const filteredUnits = getFilteredUnits();
+  }, [units, viewMode, unreadNotifications]);
 
   // Get notification summary for tags
   const getNotificationSummary = () => {
@@ -520,9 +438,8 @@ export const CalendarView: React.FC = () => {
     setBulkEditMode(!bulkEditMode);
   };
 
-  const handleCellClick = (unitId: string, dateStr: string) => {
+  const handleCellClick = useCallback((unitId: string, dateStr: string) => {
     if (bulkEditMode) {
-      // In bulk edit mode - toggle selection
       const key = `${unitId}_${dateStr}`;
       setSelectedCells(prev => {
         const newSet = new Set(prev);
@@ -537,7 +454,7 @@ export const CalendarView: React.FC = () => {
       // Normal mode - open modal (existing behavior)
       // This will be handled in the cell onClick
     }
-  };
+  }, [bulkEditMode]);
 
   const handleOpenBulkEditModal = () => {
     if (selectedCells.size === 0) {
@@ -1624,7 +1541,7 @@ export const CalendarView: React.FC = () => {
     console.log('📥 Hotres raw response:', responseData.hotres_response);
   };
 
-  const handleCtaChange = (unitId: string, dateStr: string, checked: boolean) => {
+  const handleCtaChange = useCallback((unitId: string, dateStr: string, checked: boolean) => {
     const key = `${unitId}_${dateStr}`;
     const currentPrice = pricesData.get(key);
     const currentChange = priceChanges.get(key);
@@ -1647,17 +1564,14 @@ export const CalendarView: React.FC = () => {
 
       if (ctaMatches && ctdMatches && minMatches) {
         updated.delete(key);
-        console.log('CTA: Removed change for', key, '- matches original');
       } else {
         updated.set(key, updatedChange);
-        console.log('CTA: Added/updated change for', key, '- total changes:', updated.size);
       }
-
       return updated;
     });
-  };
+  }, [pricesData, priceChanges]);
 
-  const handleCtdChange = (unitId: string, dateStr: string, checked: boolean) => {
+  const handleCtdChange = useCallback((unitId: string, dateStr: string, checked: boolean) => {
     const key = `${unitId}_${dateStr}`;
     const currentPrice = pricesData.get(key);
     const currentChange = priceChanges.get(key);
@@ -1680,17 +1594,14 @@ export const CalendarView: React.FC = () => {
 
       if (ctaMatches && ctdMatches && minMatches) {
         updated.delete(key);
-        console.log('CTD: Removed change for', key, '- matches original');
       } else {
         updated.set(key, updatedChange);
-        console.log('CTD: Added/updated change for', key, '- total changes:', updated.size);
       }
-
       return updated;
     });
-  };
+  }, [pricesData, priceChanges]);
 
-  const handleMinChange = (unitId: string, dateStr: string, value: string) => {
+  const handleMinChange = useCallback((unitId: string, dateStr: string, value: string) => {
     const key = `${unitId}_${dateStr}`;
     const currentPrice = pricesData.get(key);
     const currentChange = priceChanges.get(key);
@@ -1713,15 +1624,12 @@ export const CalendarView: React.FC = () => {
 
       if (ctaMatches && ctdMatches && minMatches) {
         updated.delete(key);
-        console.log('MIN: Removed change for', key, '- matches original');
       } else {
         updated.set(key, updatedChange);
-        console.log('MIN: Added/updated change for', key, '- total changes:', updated.size);
       }
-
       return updated;
     });
-  };
+  }, [pricesData, priceChanges]);
 
   const triggerAvailabilitySync = async () => {
     if (syncing) return;
