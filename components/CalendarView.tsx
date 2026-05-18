@@ -940,24 +940,38 @@ export const CalendarView: React.FC = () => {
     console.log('📥 Hotres raw response:', responseData.hotres_response);
 
     // THEN: Save to database (only after confirmed Hotres success)
+    // Iterate priceChanges directly to preserve the correct unit_id per change.
+    // Using changesByTypeId would lose unit_id and units.find() could return the
+    // wrong unit when multiple units share an external_type_id.
     console.log('💾 Saving confirmed changes to database...');
-    for (const [typeId, group] of changesByTypeId) {
-      const unit = units.find(u => u.external_type_id === typeId);
-      if (!unit) continue;
+    for (const [key, change] of priceChanges) {
+      const existingPrice = pricesData.get(key);
 
-      for (const change of group) {
-        const priceKey = `${unit.id}_${change.date}`;
-        const existingPrice = pricesData.get(priceKey);
-
-        if (existingPrice) {
+      if (existingPrice) {
+        await supabase
+          .from('prices')
+          .update({
+            cta: change.cta !== undefined ? change.cta : existingPrice.cta,
+            ctd: change.ctd !== undefined ? change.ctd : existingPrice.ctd,
+            min: change.min !== undefined ? change.min : existingPrice.min
+          })
+          .eq('id', existingPrice.id);
+      } else if (change.unit_id && change.date) {
+        // No existing record — insert one so the value persists after refresh
+        const rateId = change.rate_id || allRatePlans[0]?.id || '';
+        if (rateId) {
           await supabase
             .from('prices')
-            .update({
-              cta: change.cta !== undefined ? change.cta : existingPrice.cta,
-              ctd: change.ctd !== undefined ? change.ctd : existingPrice.ctd,
-              min: change.min !== undefined ? change.min : existingPrice.min
-            })
-            .eq('id', existingPrice.id);
+            .insert({
+              unit_id: change.unit_id,
+              date: change.date,
+              rate_id: rateId,
+              price: null,
+              min: change.min ?? null,
+              max: null,
+              cta: change.cta ?? null,
+              ctd: change.ctd ?? null,
+            });
         }
       }
     }
@@ -969,13 +983,11 @@ export const CalendarView: React.FC = () => {
     const verifyDates: string[] = [];
     const sentValues: Array<{ unit_id: string; date: string; cta?: number; ctd?: number; min?: number | null }> = [];
 
-    for (const [typeId, group] of changesByTypeId) {
-      const unit = units.find(u => u.external_type_id === typeId);
-      if (!unit) continue;
-      for (const change of group) {
-        verifyUnitIds.push(unit.id);
+    for (const [, change] of priceChanges) {
+      if (change.unit_id && change.date) {
+        verifyUnitIds.push(change.unit_id);
         verifyDates.push(change.date);
-        sentValues.push({ unit_id: unit.id, date: change.date, cta: change.cta, ctd: change.ctd, min: change.min });
+        sentValues.push({ unit_id: change.unit_id, date: change.date, cta: change.cta, ctd: change.ctd, min: change.min });
       }
     }
 
