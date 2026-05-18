@@ -18,6 +18,19 @@ export const CalendarView: React.FC = () => {
   const [loadingUnits, setLoadingUnits] = useState(true);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [showCompareModal, setShowCompareModal] = useState(false);
+  const [compareDiff, setCompareDiff] = useState<Array<{
+    unitId: string;
+    unitName: string;
+    date: string;
+    dbCta: number | null;
+    hotresCta: number | null;
+    dbCtd: number | null;
+    hotresCtd: number | null;
+    dbMin: number | null;
+    hotresMin: number | null;
+  }>>([]);
+  const [compareSnapshotRef, setCompareSnapshotRef] = useState<Map<string, { unit_id: string; date: string; cta: number | null; ctd: number | null; min: number | null }>>(new Map());
   const [pricesData, setPricesData] = useState<Map<string, Price>>(new Map());
   const [priceChanges, setPriceChanges] = useState<Map<string, Partial<Price>>>(new Map());
   const [isLoadingAI, setIsLoadingAI] = useState(false);
@@ -273,6 +286,7 @@ export const CalendarView: React.FC = () => {
     }
 
     setPricesData(pricesMap);
+    return pricesMap;
   };
 
   const fetchUnreadNotifications = async () => {
@@ -981,6 +995,184 @@ export const CalendarView: React.FC = () => {
       verificationFailed,
       hotresResponse: responseData.hotres_response
     };
+  };
+
+  const handleCompareSync = async () => {
+    if (!property || syncing) return;
+
+    const startDateStr = dates[0].toISOString().split('T')[0];
+    const endDateStr = dates[dates.length - 1].toISOString().split('T')[0];
+
+    if (!confirm(
+      `Porównaj stan bazy z Hotresem?\n\n` +
+      `Zakres: ${startDateStr} – ${endDateStr}\n\n` +
+      `⚠ Baza zostanie zaktualizowana danymi z Hotresa.\n` +
+      `Jeśli znajdziemy różnice, będziesz mógł przywrócić stan z bazy do Hotresa.`
+    )) return;
+
+    setSyncing(true);
+    try {
+      // 1. Snapshot current DB values for visible date range
+      const snapshot = new Map<string, { unit_id: string; date: string; cta: number | null; ctd: number | null; min: number | null }>();
+      for (const [key, price] of pricesData) {
+        if (price.date >= startDateStr && price.date <= endDateStr) {
+          snapshot.set(key, { unit_id: price.unit_id, date: price.date, cta: price.cta, ctd: price.ctd, min: price.min });
+        }
+      }
+
+      // 2. Sync Hotres → DB
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Musisz być zalogowany');
+
+      const response = await fetch(
+        'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/sync-single-property',
+        {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ property_id: property.id })
+        }
+      );
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Sync failed: ${response.status} ${errorText}`);
+      }
+
+      // 3. Fetch updated DB (now has Hotres values)
+      const newPrices = await fetchPricesData();
+
+      // 4. Compute diff (only for visible date range)
+      const diffs: typeof compareDiff = [];
+      for (const [key, old] of snapshot) {
+        const fresh = newPrices?.get(key);
+        if (!fresh) continue;
+        if (old.cta !== fresh.cta || old.ctd !== fresh.ctd || old.min !== fresh.min) {
+          const unit = units.find(u => u.id === old.unit_id);
+          diffs.push({
+            unitId: old.unit_id,
+            unitName: unit?.name ?? old.unit_id,
+            date: old.date,
+            dbCta: old.cta,
+            hotresCta: fresh.cta,
+            dbCtd: old.ctd,
+            hotresCtd: fresh.ctd,
+            dbMin: old.min,
+            hotresMin: fresh.min,
+          });
+        }
+      }
+
+      diffs.sort((a, b) => a.date.localeCompare(b.date) || a.unitName.localeCompare(b.unitName));
+
+      if (diffs.length === 0) {
+        alert(`✓ Baza i Hotres są zsynchronizowane.\nBrak różnic w zakresie ${startDateStr} – ${endDateStr}.`);
+        return;
+      }
+
+      setCompareSnapshotRef(snapshot);
+      setCompareDiff(diffs);
+      setShowCompareModal(true);
+    } catch (error: any) {
+      alert(`✗ Błąd porównania: ${error.message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleRestoreFromSnapshot = async () => {
+    if (!property || compareSnapshotRef.size === 0) return;
+
+    const diffCount = compareDiff.length;
+    if (!confirm(
+      `Przywróć ${diffCount} różnych wartości z bazy do Hotresa?\n\n` +
+      `• DB zostanie cofnięta do stanu sprzed synchronizacji\n` +
+      `• Wartości z DB zostaną wysłane do Hotresa\n\n` +
+      `Ta operacja nadpisze aktualny stan Hotresa.`
+    )) return;
+
+    setSyncing(true);
+    try {
+      // 1. Restore snapshot values back into DB
+      for (const diff of compareDiff) {
+        const snap = compareSnapshotRef.get(`${diff.unitId}_${diff.date}`);
+        if (!snap) continue;
+        await supabase
+          .from('prices')
+          .update({ cta: snap.cta, ctd: snap.ctd, min: snap.min })
+          .eq('unit_id', diff.unitId)
+          .eq('date', diff.date);
+      }
+
+      // 2. Build Hotres payload from snapshot diff records
+      const { data: allRatePlansRaw } = await supabase
+        .from('rate_plans')
+        .select('id, name, external_id')
+        .eq('property_id', property.id);
+
+      const allRatePlans = (allRatePlansRaw ?? []).filter(rp => rp.external_id);
+      if (allRatePlans.length === 0) throw new Error('Brak cenników z external_id.');
+
+      const byTypeId = new Map<string, Array<{ date: string; cta: number | null; ctd: number | null; min: number | null }>>();
+      for (const diff of compareDiff) {
+        const unit = units.find(u => u.id === diff.unitId);
+        if (!unit?.external_type_id) continue;
+        const snap = compareSnapshotRef.get(`${diff.unitId}_${diff.date}`);
+        if (!snap) continue;
+        if (!byTypeId.has(unit.external_type_id)) byTypeId.set(unit.external_type_id, []);
+        byTypeId.get(unit.external_type_id)!.push({ date: diff.date, cta: snap.cta, ctd: snap.ctd, min: snap.min });
+      }
+
+      const isNextDay = (d1: string, d2: string) => {
+        const a = new Date(d1), b = new Date(d2);
+        a.setHours(12); b.setHours(12);
+        return Math.ceil(Math.abs(b.getTime() - a.getTime()) / 86400000) === 1 && b > a;
+      };
+
+      const payloadArray: Array<{ type_id: number; rate_id: number; mode: string; prices: any[] }> = [];
+      for (const [typeIdStr, items] of byTypeId) {
+        items.sort((a, b) => a.date.localeCompare(b.date));
+        const ranges: any[] = [];
+        let cur: any = null;
+        for (const item of items) {
+          if (cur && cur.cta === item.cta && cur.ctd === item.ctd && cur.min === item.min && isNextDay(cur.till, item.date)) {
+            cur.till = item.date;
+          } else {
+            if (cur) ranges.push(cur);
+            cur = { from: item.date, till: item.date, cta: item.cta, ctd: item.ctd, min: item.min };
+          }
+        }
+        if (cur) ranges.push(cur);
+        for (const rp of allRatePlans) {
+          payloadArray.push({ type_id: parseInt(typeIdStr, 10), rate_id: parseInt(rp.external_id!, 10), mode: 'delta', prices: ranges });
+        }
+      }
+
+      if (payloadArray.length > 0) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) throw new Error('Musisz być zalogowany');
+        const res = await fetch(
+          'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/update-hotres-prices',
+          {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ property_id: property.id, payload: payloadArray })
+          }
+        );
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(`Błąd Hotres: ${err?.error ?? res.status}`);
+        }
+      }
+
+      setShowCompareModal(false);
+      setCompareDiff([]);
+      setCompareSnapshotRef(new Map());
+      await fetchPricesData();
+      alert(`✓ Przywrócono ${diffCount} rekordów z bazy do Hotresa.`);
+    } catch (error: any) {
+      alert(`✗ Błąd przywracania: ${error.message}`);
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const handleOpenOverrideModal = () => {
@@ -1966,6 +2158,18 @@ export const CalendarView: React.FC = () => {
               </div>
             )}
 
+            {/* Compare DB vs Hotres Button */}
+            <div className="mt-3">
+              <button
+                onClick={handleCompareSync}
+                disabled={syncing}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+              >
+                <span className="text-xs sm:text-sm">{syncing ? '⏳ Porównywanie...' : '🔍 Porównaj DB ↔ Hotres'}</span>
+              </button>
+              <p className="text-[10px] text-slate-500 text-center mt-1">Pokaż różnice i opcję przywrócenia stanu DB</p>
+            </div>
+
             {/* Push DB → Hotres Button */}
             <div className="mt-3">
               <button
@@ -2016,6 +2220,20 @@ export const CalendarView: React.FC = () => {
             <div className="text-xs text-slate-400 whitespace-nowrap">
               Pozostało: <span className="font-bold text-yellow-400">{10 - hotresSyncCount.count}</span>/10
             </div>
+          </div>
+        )}
+
+        {/* Compare DB vs Hotres Button for Full View */}
+        {viewMode === 'full' && (
+          <div className="mb-2 sm:mb-3">
+            <button
+              onClick={handleCompareSync}
+              disabled={syncing}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+            >
+              <span className="text-xs sm:text-sm">{syncing ? '⏳ Porównywanie...' : '🔍 Porównaj DB ↔ Hotres'}</span>
+            </button>
+            <p className="text-[10px] text-slate-500 text-center mt-1">Pokaż różnice i opcję przywrócenia stanu DB</p>
           </div>
         )}
 
@@ -2560,6 +2778,84 @@ export const CalendarView: React.FC = () => {
                 className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 px-4 rounded-lg transition"
               >
                 Zastosuj zmiany
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Compare DB ↔ Hotres Modal */}
+      {showCompareModal && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl">
+            <div className="p-4 border-b border-slate-700 flex items-center justify-between flex-shrink-0">
+              <div>
+                <h2 className="text-white font-bold text-lg">🔍 Różnice DB ↔ Hotres</h2>
+                <p className="text-slate-400 text-sm mt-0.5">
+                  Znaleziono <span className="text-yellow-400 font-bold">{compareDiff.length}</span> różnic —
+                  <span className="text-yellow-400"> żółty</span> = tylko w DB &nbsp;|&nbsp;
+                  <span className="text-green-400"> zielony</span> = Hotres (aktualny)
+                </p>
+              </div>
+              <button onClick={() => setShowCompareModal(false)} className="text-slate-400 hover:text-white text-2xl leading-none">×</button>
+            </div>
+
+            <div className="overflow-auto flex-1 p-4">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-800 text-slate-300 text-left">
+                    <th className="p-2 border border-slate-700 whitespace-nowrap">Jednostka</th>
+                    <th className="p-2 border border-slate-700">Data</th>
+                    <th className="p-2 border border-slate-700 text-center">CTA DB</th>
+                    <th className="p-2 border border-slate-700 text-center">CTA Hotres</th>
+                    <th className="p-2 border border-slate-700 text-center">CTD DB</th>
+                    <th className="p-2 border border-slate-700 text-center">CTD Hotres</th>
+                    <th className="p-2 border border-slate-700 text-center">MIN DB</th>
+                    <th className="p-2 border border-slate-700 text-center">MIN Hotres</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {compareDiff.map((row, i) => (
+                    <tr key={i} className="border-b border-slate-800 hover:bg-slate-800/40">
+                      <td className="p-2 border border-slate-700 text-white font-medium">{row.unitName}</td>
+                      <td className="p-2 border border-slate-700 text-slate-300">{row.date}</td>
+                      <td className={`p-2 border border-slate-700 text-center font-bold ${row.dbCta !== row.hotresCta ? 'bg-yellow-900/40 text-yellow-300' : 'text-slate-400'}`}>
+                        {row.dbCta ?? '–'}
+                      </td>
+                      <td className={`p-2 border border-slate-700 text-center font-bold ${row.dbCta !== row.hotresCta ? 'bg-green-900/40 text-green-300' : 'text-slate-400'}`}>
+                        {row.hotresCta ?? '–'}
+                      </td>
+                      <td className={`p-2 border border-slate-700 text-center font-bold ${row.dbCtd !== row.hotresCtd ? 'bg-yellow-900/40 text-yellow-300' : 'text-slate-400'}`}>
+                        {row.dbCtd ?? '–'}
+                      </td>
+                      <td className={`p-2 border border-slate-700 text-center font-bold ${row.dbCtd !== row.hotresCtd ? 'bg-green-900/40 text-green-300' : 'text-slate-400'}`}>
+                        {row.hotresCtd ?? '–'}
+                      </td>
+                      <td className={`p-2 border border-slate-700 text-center font-bold ${row.dbMin !== row.hotresMin ? 'bg-yellow-900/40 text-yellow-300' : 'text-slate-400'}`}>
+                        {row.dbMin ?? '–'}
+                      </td>
+                      <td className={`p-2 border border-slate-700 text-center font-bold ${row.dbMin !== row.hotresMin ? 'bg-green-900/40 text-green-300' : 'text-slate-400'}`}>
+                        {row.hotresMin ?? '–'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="p-4 border-t border-slate-700 flex gap-3 flex-shrink-0">
+              <button
+                onClick={() => { setShowCompareModal(false); setCompareDiff([]); setCompareSnapshotRef(new Map()); }}
+                className="flex-1 bg-green-700 hover:bg-green-600 text-white font-semibold py-2.5 px-4 rounded-lg transition"
+              >
+                ✓ Hotres ma rację — zachowaj aktualny stan
+              </button>
+              <button
+                onClick={handleRestoreFromSnapshot}
+                disabled={syncing}
+                className="flex-1 bg-yellow-700 hover:bg-yellow-600 disabled:opacity-50 text-white font-semibold py-2.5 px-4 rounded-lg transition"
+              >
+                ↩ Przywróć DB do Hotresa ({compareDiff.length} rekordów)
               </button>
             </div>
           </div>
