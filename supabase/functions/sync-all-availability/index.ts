@@ -911,27 +911,22 @@ Deno.serve(async (req) => {
       )
     }
 
-    console.log(`🔄 Starting sync for ${properties.length} properties...`)
+    console.log(`🔄 Starting sync for ${properties.length} properties (availability only)...`)
 
-    // Sync availability and prices for all properties in parallel
+    // Sync availability only — prices are synced manually via sync-single-property
     const results = await Promise.allSettled(
-      properties.flatMap(property => [
-        syncPropertyAvailability(property, supabaseClient),
-        syncPropertyPrices(property, supabaseClient)
-      ])
+      properties.map(property => syncPropertyAvailability(property, supabaseClient))
     )
 
     // Collect successes, errors, and aggregate metrics
-    // Track success/error per property (we have 2 tasks per property)
     const propertyResults = new Map<string, { success: number; errors: string[] }>()
     let totalRecordsCompared = 0
     let totalChangesDetected = 0
     let totalNotificationsSent = 0
 
-    // Process results - we have 2 results per property (availability + prices)
+    // One result per property (availability only)
     results.forEach((result, index) => {
-      const propertyIndex = Math.floor(index / 2)
-      const property = properties[propertyIndex]
+      const property = properties[index]
 
       if (!propertyResults.has(property.id)) {
         propertyResults.set(property.id, { success: 0, errors: [] })
