@@ -2675,11 +2675,7 @@ export const CalendarView: React.FC = () => {
                               : ctdColor ? 'text-yellow-400' : 'text-slate-400';
 
                             const minIsSet = !!(priceData?.min || changeData?.min);
-                            const minBorderColor = changeData?.min !== undefined
-                              ? 'border-yellow-500'
-                              : compareInfo
-                                ? compareInfo.minDiffers ? 'border-yellow-500' : minIsSet ? 'border-green-700' : 'border-slate-700'
-                                : minIsSet ? 'border-yellow-500' : 'border-slate-700';
+                            const minPending = changeData?.min !== undefined;
 
                             void ctaSynced; void ctdSynced;
 
@@ -2716,15 +2712,20 @@ export const CalendarView: React.FC = () => {
                                   </label>
                                 </div>
 
-                                {/* MIN input - colored border */}
+                                {/* MIN input - no color coding, green tick when set */}
                                 <div className="flex flex-col gap-0.5 items-center">
-                                  <input
-                                    type="text"
-                                    className={`w-full px-1 py-1 sm:px-1 sm:py-1 lg:px-1.5 lg:py-1 text-center text-[10px] sm:text-[10px] lg:text-[11px] bg-slate-800 border rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 ${minBorderColor}`}
-                                    placeholder="000"
-                                    value={minValue}
-                                    onChange={(e) => handleMinChange(unit.id, dateStr, e.target.value)}
-                                  />
+                                  <div className="relative w-full flex items-center">
+                                    <input
+                                      type="text"
+                                      className={`w-full px-1 py-1 sm:px-1 sm:py-1 lg:px-1.5 lg:py-1 text-center text-[10px] sm:text-[10px] lg:text-[11px] bg-slate-800 border rounded text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 ${minPending ? 'border-yellow-500' : 'border-slate-700'}`}
+                                      placeholder="000"
+                                      value={minValue}
+                                      onChange={(e) => handleMinChange(unit.id, dateStr, e.target.value)}
+                                    />
+                                    {minIsSet && !minPending && (
+                                      <span className="absolute -right-1 -top-1 text-green-400 text-[8px] leading-none">✓</span>
+                                    )}
+                                  </div>
                                   <label className="text-[8px] sm:text-[9px] text-slate-500 uppercase">MIN</label>
                                 </div>
                               </div>
