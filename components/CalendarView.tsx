@@ -2340,6 +2340,18 @@ export const CalendarView: React.FC = () => {
               </div>
             )}
 
+            {/* Sync DB ← Hotres Button */}
+            <div className="mt-3">
+              <button
+                onClick={triggerAvailabilitySync}
+                disabled={syncing}
+                className="w-full bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+              >
+                <span className="text-xs sm:text-sm">{syncing ? '⏳ Synchronizacja...' : '⬇️ Pobierz z Hotres'}</span>
+              </button>
+              <p className="text-[10px] text-slate-500 text-center mt-1">Pobiera świeże ceny i dostępność z Hotres do DB</p>
+            </div>
+
             {/* Compare DB vs Hotres Button */}
             {viewOptions.compare !== false && (
               <div className="mt-3">
@@ -2459,6 +2471,20 @@ export const CalendarView: React.FC = () => {
                 </button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Sync DB ← Hotres Button for Full View */}
+        {viewMode === 'full' && (
+          <div className="mb-2 sm:mb-3">
+            <button
+              onClick={triggerAvailabilitySync}
+              disabled={syncing}
+              className="w-full bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
+            >
+              <span className="text-xs sm:text-sm">{syncing ? '⏳ Synchronizacja...' : '⬇️ Pobierz z Hotres'}</span>
+            </button>
+            <p className="text-[10px] text-slate-500 text-center mt-1">Pobiera świeże ceny i dostępność z Hotres do DB</p>
           </div>
         )}
 
