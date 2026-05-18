@@ -289,12 +289,13 @@ export const CalendarView: React.FC = () => {
     });
 
     const withMin = allData.filter(p => p.min !== null && p.min !== undefined);
+    const allDates = allData.map(p => p.date).sort();
+    const minDate = allDates[0];
+    const maxDate = allDates[allDates.length - 1];
+    const novEntries = allData.filter(p => p.date.startsWith('2026-11'));
     console.log(`🔍 fetchPricesData: allData=${allData.length}, withMin=${withMin.length}, pricesMap=${pricesMap.size}`);
-    if (allData.length > 0) {
-      const r = allData[0];
-      console.log(`🔍 first record date="${r.date}" min=${r.min} unit_id=${r.unit_id}`);
-      console.log(`🔍 first pricesMap key sample:`, [...pricesMap.keys()].slice(0, 2));
-    }
+    console.log(`🔍 date range in DB: ${minDate} → ${maxDate}`);
+    console.log(`🔍 November 2026 records: ${novEntries.length}`);
 
     setPricesData(pricesMap);
 
