@@ -288,6 +288,11 @@ export const CalendarView: React.FC = () => {
       }
     });
 
+    const withMin = allData.filter(p => p.min !== null && p.min !== undefined);
+    console.log(`🔍 fetchPricesData: allData=${allData.length}, withMin=${withMin.length}, pricesMap=${pricesMap.size}`);
+    if (withMin.length > 0) console.log('🔍 sample MIN records:', withMin.slice(0, 3));
+    if (allData.length > 0) console.log('🔍 first record:', allData[0]);
+
     setPricesData(pricesMap);
 
     // Rebuild cellCompareInfo from DB columns (persists across devices)
