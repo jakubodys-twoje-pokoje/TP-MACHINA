@@ -521,8 +521,9 @@ export const CalendarView: React.FC = () => {
 
     try {
       // Send price changes to Hotres if any
+      let syncResult: { cellsAffected: number; ctaChanges: number; ctdChanges: number; minChanges: number; verificationFailed: number; hotresResponse: any } | undefined;
       if (hasPriceChanges) {
-        await sendPriceChangesToHotres();
+        syncResult = await sendPriceChangesToHotres();
       }
 
       // Update counter for this property
@@ -547,7 +548,24 @@ export const CalendarView: React.FC = () => {
         await fetchPricesData();
       }
 
-      alert(`✓ Wysłano na Hotres.\nPozostało ${10 - newCount} synchronizacji w tej godzinie.`);
+      // Build detailed success message with validation result
+      let successMsg = `✓ Wysłano na Hotres.\n`;
+      if (syncResult) {
+        const parts: string[] = [];
+        if (syncResult.ctaChanges > 0) parts.push(`CTA: ${syncResult.ctaChanges} komórek`);
+        if (syncResult.ctdChanges > 0) parts.push(`CTD: ${syncResult.ctdChanges} komórek`);
+        if (syncResult.minChanges > 0) parts.push(`MIN: ${syncResult.minChanges} komórek`);
+        if (parts.length > 0) successMsg += `Zmiany: ${parts.join(', ')}\n`;
+
+        if (syncResult.verificationFailed === 0) {
+          successMsg += `✓ Weryfikacja DB: wszystkie wartości zapisane poprawnie\n`;
+        } else {
+          successMsg += `⚠ Weryfikacja DB: ${syncResult.verificationFailed} rekordów nie zgadza się — sprawdź konsolę\n`;
+        }
+      }
+      successMsg += `\nPozostało ${10 - newCount} synchronizacji w tej godzinie.`;
+
+      alert(successMsg);
     } catch (error: any) {
       alert(`✗ Błąd synchronizacji: ${error.message}`);
     }
@@ -694,40 +712,26 @@ export const CalendarView: React.FC = () => {
     }
 
     if (payloadArray.length === 0) {
-       console.error('❌ payloadArray is EMPTY - no entries to send!');
-       console.log('Debug: allRatePlans:', allRatePlans);
-       console.log('Debug: changesByTypeId:', changesByTypeId);
-       return;
+      console.error('❌ payloadArray is EMPTY - no entries to send!');
+      console.log('Debug: allRatePlans:', allRatePlans);
+      console.log('Debug: changesByTypeId:', changesByTypeId);
+      throw new Error('Brak danych do wysłania. Sprawdź czy jednostki mają ustawiony external_type_id.');
     }
 
     console.log(`📦 FINAL PAYLOAD (${payloadArray.length} entries):`);
     console.log(JSON.stringify(payloadArray, null, 2));
 
-    // FIRST: Save changes to database (before sending to Hotres)
-    console.log('💾 Saving changes to database first...');
-    for (const [typeId, group] of changesByTypeId) {
-      const unit = units.find(u => u.external_type_id === typeId);
-      if (!unit) continue;
+    // Count changes for summary
+    let ctaChangeCount = 0;
+    let ctdChangeCount = 0;
+    let minChangeCount = 0;
+    priceChanges.forEach(change => {
+      if (change.cta !== undefined) ctaChangeCount++;
+      if (change.ctd !== undefined) ctdChangeCount++;
+      if (change.min !== undefined) minChangeCount++;
+    });
 
-      for (const change of group) {
-        const priceKey = `${unit.id}_${change.date}`;
-        const existingPrice = pricesData.get(priceKey);
-
-        if (existingPrice) {
-          await supabase
-            .from('prices')
-            .update({
-              cta: change.cta !== undefined ? change.cta : existingPrice.cta,
-              ctd: change.ctd !== undefined ? change.ctd : existingPrice.ctd,
-              min: change.min !== undefined ? change.min : existingPrice.min
-            })
-            .eq('id', existingPrice.id);
-        }
-      }
-    }
-    console.log('✅ Database updated successfully');
-
-    // THEN: Send all changes to Hotres
+    // FIRST: Send to Hotres (DB is saved only after Hotres confirms success)
     console.log('📤 Sending changes to Hotres...');
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Musisz być zalogowany');
@@ -758,6 +762,76 @@ export const CalendarView: React.FC = () => {
 
     console.log('✅ Hotres API responded successfully');
     console.log('📥 Hotres raw response:', responseData.hotres_response);
+
+    // THEN: Save to database (only after confirmed Hotres success)
+    console.log('💾 Saving confirmed changes to database...');
+    for (const [typeId, group] of changesByTypeId) {
+      const unit = units.find(u => u.external_type_id === typeId);
+      if (!unit) continue;
+
+      for (const change of group) {
+        const priceKey = `${unit.id}_${change.date}`;
+        const existingPrice = pricesData.get(priceKey);
+
+        if (existingPrice) {
+          await supabase
+            .from('prices')
+            .update({
+              cta: change.cta !== undefined ? change.cta : existingPrice.cta,
+              ctd: change.ctd !== undefined ? change.ctd : existingPrice.ctd,
+              min: change.min !== undefined ? change.min : existingPrice.min
+            })
+            .eq('id', existingPrice.id);
+        }
+      }
+    }
+    console.log('✅ Database updated successfully');
+
+    // Verify: re-read changed records from DB and compare with sent values
+    console.log('🔍 Verifying DB values after save...');
+    const verifyUnitIds: string[] = [];
+    const verifyDates: string[] = [];
+    const sentValues: Array<{ unit_id: string; date: string; cta?: number; ctd?: number; min?: number | null }> = [];
+
+    for (const [typeId, group] of changesByTypeId) {
+      const unit = units.find(u => u.external_type_id === typeId);
+      if (!unit) continue;
+      for (const change of group) {
+        verifyUnitIds.push(unit.id);
+        verifyDates.push(change.date);
+        sentValues.push({ unit_id: unit.id, date: change.date, cta: change.cta, ctd: change.ctd, min: change.min });
+      }
+    }
+
+    let verificationFailed = 0;
+    if (sentValues.length > 0) {
+      const { data: dbRows } = await supabase
+        .from('prices')
+        .select('unit_id, date, cta, ctd, min')
+        .in('unit_id', verifyUnitIds)
+        .in('date', verifyDates);
+
+      if (dbRows) {
+        for (const sent of sentValues) {
+          const actual = dbRows.find(r => r.unit_id === sent.unit_id && r.date === sent.date);
+          if (!actual) { verificationFailed++; continue; }
+          if (sent.cta !== undefined && actual.cta !== sent.cta) verificationFailed++;
+          if (sent.ctd !== undefined && actual.ctd !== sent.ctd) verificationFailed++;
+          if (sent.min !== undefined && actual.min !== sent.min) verificationFailed++;
+        }
+      }
+    }
+
+    console.log(`🔍 Verification: ${sentValues.length} records checked, ${verificationFailed} mismatches`);
+
+    return {
+      cellsAffected: priceChanges.size,
+      ctaChanges: ctaChangeCount,
+      ctdChanges: ctdChangeCount,
+      minChanges: minChangeCount,
+      verificationFailed,
+      hotresResponse: responseData.hotres_response
+    };
   };
 
   const handleOpenOverrideModal = () => {
@@ -1032,8 +1106,8 @@ export const CalendarView: React.FC = () => {
 
       // Check if all values match original - if so, remove from changes
       const ctaMatches = (currentPrice?.cta === 1) === checked;
-      const ctdMatches = updatedChange.ctd === undefined || updatedChange.ctd === (currentPrice?.ctd === 1 ? 1 : 0);
-      const minMatches = updatedChange.min === undefined || updatedChange.min === (currentPrice?.min || null);
+      const ctdMatches = updatedChange.ctd === undefined || updatedChange.ctd === currentPrice?.ctd;
+      const minMatches = updatedChange.min === undefined || updatedChange.min === (currentPrice?.min ?? null);
 
       if (ctaMatches && ctdMatches && minMatches) {
         updated.delete(key);
@@ -1064,9 +1138,9 @@ export const CalendarView: React.FC = () => {
       };
 
       // Check if all values match original - if so, remove from changes
-      const ctaMatches = updatedChange.cta === undefined || updatedChange.cta === (currentPrice?.cta === 1 ? 1 : 0);
+      const ctaMatches = updatedChange.cta === undefined || updatedChange.cta === currentPrice?.cta;
       const ctdMatches = (currentPrice?.ctd === 1) === checked;
-      const minMatches = updatedChange.min === undefined || updatedChange.min === (currentPrice?.min || null);
+      const minMatches = updatedChange.min === undefined || updatedChange.min === (currentPrice?.min ?? null);
 
       if (ctaMatches && ctdMatches && minMatches) {
         updated.delete(key);
@@ -1097,9 +1171,9 @@ export const CalendarView: React.FC = () => {
       };
 
       // Check if all values match original - if so, remove from changes
-      const ctaMatches = updatedChange.cta === undefined || updatedChange.cta === (currentPrice?.cta === 1 ? 1 : 0);
-      const ctdMatches = updatedChange.ctd === undefined || updatedChange.ctd === (currentPrice?.ctd === 1 ? 1 : 0);
-      const minMatches = (currentPrice?.min || null) === minValue;
+      const ctaMatches = updatedChange.cta === undefined || updatedChange.cta === currentPrice?.cta;
+      const ctdMatches = updatedChange.ctd === undefined || updatedChange.ctd === currentPrice?.ctd;
+      const minMatches = (currentPrice?.min ?? null) === minValue;
 
       if (ctaMatches && ctdMatches && minMatches) {
         updated.delete(key);
