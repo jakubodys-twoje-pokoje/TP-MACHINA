@@ -259,23 +259,31 @@ export const CalendarView: React.FC = () => {
     }
 
     // Fetch prices directly - no JOIN needed, we only use CTA/CTD/MIN from prices table
-    const { data, error } = await supabase
-      .from('prices')
-      .select('*')
-      .in('unit_id', unitIds)
-      .gte('date', startDate.toISOString().split('T')[0])
-      .lte('date', endDate.toISOString().split('T')[0]);
+    // Use range pagination to bypass Supabase's default 1000-row limit
+    const allData: any[] = [];
+    const PAGE_SIZE = 1000;
+    let from = 0;
+    while (true) {
+      const { data: page, error: pageError } = await supabase
+        .from('prices')
+        .select('*')
+        .in('unit_id', unitIds)
+        .gte('date', startDate.toISOString().split('T')[0])
+        .lte('date', endDate.toISOString().split('T')[0])
+        .order('date', { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
 
-    console.log('📊 Query params:', {
-      unitIds,
-      startDate: startDate.toISOString().split('T')[0],
-      endDate: endDate.toISOString().split('T')[0]
-    });
-
-    if (error) {
-      console.error('❌ Error fetching prices:', error);
-      return;
+      if (pageError) {
+        console.error('❌ Error fetching prices:', pageError);
+        return;
+      }
+      if (!page || page.length === 0) break;
+      allData.push(...page);
+      if (page.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
     }
+    const data = allData;
+    const error = null;
 
     console.log('📊 Prices data fetched:', data?.length || 0, 'records');
     if (data && data.length > 0) {
@@ -299,13 +307,21 @@ export const CalendarView: React.FC = () => {
       console.log('📊 Sample with restrictions:', withRestrictions.slice(0, 3));
     }
 
-    // Create map keyed by unit_id + date
-    // NOTE: If multiple rate_plans exist for same unit+date, use first one found
+    // Create map keyed by unit_id + date.
+    // Multiple rate_plans can exist for same unit+date — merge them, preferring non-null values.
     const pricesMap = new Map<string, Price>();
     data?.forEach(price => {
       const key = `${price.unit_id}_${price.date}`;
-      if (!pricesMap.has(key)) {
+      const existing = pricesMap.get(key);
+      if (!existing) {
         pricesMap.set(key, price);
+      } else {
+        pricesMap.set(key, {
+          ...existing,
+          min: existing.min !== null ? existing.min : price.min,
+          cta: existing.cta !== null ? existing.cta : price.cta,
+          ctd: existing.ctd !== null ? existing.ctd : price.ctd,
+        });
       }
     });
 
