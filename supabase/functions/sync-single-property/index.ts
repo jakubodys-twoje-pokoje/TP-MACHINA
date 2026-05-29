@@ -226,6 +226,12 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
 
           console.log(`  📥 "${ratePlan.name}" ${range.label}: ${pricesData.length} items`)
 
+          // Log first date record to verify field names from Hotres
+          if (pricesData.length > 0 && pricesData[0].dates?.length > 0) {
+            console.log(`  🔬 Sample date record keys:`, Object.keys(pricesData[0].dates[0]))
+            console.log(`  🔬 Sample date record:`, JSON.stringify(pricesData[0].dates[0]))
+          }
+
           for (const item of pricesData) {
             if (!item || !item.type_id) continue
 
