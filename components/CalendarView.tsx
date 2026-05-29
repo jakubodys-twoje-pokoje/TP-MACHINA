@@ -271,7 +271,9 @@ export const CalendarView: React.FC = () => {
       }
     }
 
-    // Multiple rate_plans can exist for same unit+date — merge, preferring non-null values
+    // Multiple rate_plans can exist for same unit+date — merge with correct precedence:
+    // CTA/CTD: 1 (closed) wins over 0 (open) — restriction takes priority across plans
+    // MIN: take highest value (most restrictive)
     const pricesMap = new Map<string, Price>();
     allData.forEach(price => {
       const key = `${price.unit_id}_${price.date}`;
@@ -281,9 +283,9 @@ export const CalendarView: React.FC = () => {
       } else {
         pricesMap.set(key, {
           ...existing,
-          min: existing.min !== null ? existing.min : price.min,
-          cta: existing.cta !== null ? existing.cta : price.cta,
-          ctd: existing.ctd !== null ? existing.ctd : price.ctd,
+          min: Math.max(existing.min ?? 0, price.min ?? 0) || (existing.min ?? price.min),
+          cta: existing.cta === 1 || price.cta === 1 ? 1 : (existing.cta ?? price.cta),
+          ctd: existing.ctd === 1 || price.ctd === 1 ? 1 : (existing.ctd ?? price.ctd),
         });
       }
     });
