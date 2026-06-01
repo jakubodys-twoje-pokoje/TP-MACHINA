@@ -78,7 +78,8 @@ export const CalendarView: React.FC = () => {
     ];
   })();
   const [ratePlans, setRatePlans] = useState<RatePlan[]>([]);
-  // per-unit selected rate plan: unit_id -> rate_plan_id (null = merge all)
+  const [defaultRatePlanId, setDefaultRatePlanId] = useState<string | null>(null);
+  // per-unit selected rate plan: unit_id -> rate_plan_id
   const [unitRatePlan, setUnitRatePlan] = useState<Map<string, string>>(new Map());
   // raw prices keyed by `${unit_id}_${date}_${rate_id}`
   const [allPricesRaw, setAllPricesRaw] = useState<Price[]>([]);
@@ -153,6 +154,13 @@ export const CalendarView: React.FC = () => {
     }
   }, [selectedDate, units]);
 
+  // Rebuild pricesData when defaultRatePlanId becomes available (async after units load)
+  useEffect(() => {
+    if (defaultRatePlanId && allPricesRaw.length > 0) {
+      setPricesData(buildPricesMap(allPricesRaw, unitRatePlan, defaultRatePlanId));
+    }
+  }, [defaultRatePlanId]);
+
   // Auto-scroll to position selected date at 1/3 of viewport
   useEffect(() => {
     if (scrollContainerRef.current && !loadingAvailability) {
@@ -211,22 +219,31 @@ export const CalendarView: React.FC = () => {
       .from('rate_plans')
       .select('id, name, external_id')
       .eq('property_id', propertyId)
-      .order('name');
-    if (data) setRatePlans(data as RatePlan[]);
+      .order('created_at', { ascending: true });
+    if (!data || data.length === 0) return;
+    const plans = data as RatePlan[];
+    setRatePlans(plans);
+    // For units without a saved selection, default to the first (main) rate plan
+    setUnitRatePlan(prev => {
+      const next = new Map(prev);
+      // We'll apply defaults when prices are built — just ensure state is ready
+      return next;
+    });
+    setDefaultRatePlanId(plans[0].id);
   };
 
-  // Build pricesData map from raw prices + current per-unit selections
-  const buildPricesMap = (raw: Price[], selections: Map<string, string>): Map<string, Price> => {
+  // Build pricesData map from raw prices + per-unit selections
+  // Uses unit's saved plan, or falls back to defaultRatePlanId (first/main plan)
+  const buildPricesMap = (raw: Price[], selections: Map<string, string>, defaultPlanId: string | null): Map<string, Price> => {
     const result = new Map<string, Price>();
     raw.forEach(price => {
       const key = `${price.unit_id}_${price.date}`;
-      const chosenPlanId = selections.get(price.unit_id);
+      const chosenPlanId = selections.get(price.unit_id) || defaultPlanId;
       if (chosenPlanId) {
-        // Only use rows matching the chosen plan for this unit
         if (price.rate_id !== chosenPlanId) return;
         result.set(key, price);
       } else {
-        // Merge all plans (most restrictive wins)
+        // No plans defined yet — merge all (fallback)
         const existing = result.get(key);
         if (!existing) {
           result.set(key, price);
@@ -243,12 +260,11 @@ export const CalendarView: React.FC = () => {
     return result;
   };
 
-  const handleUnitRatePlanChange = async (unitId: string, ratePlanId: string | null) => {
+  const handleUnitRatePlanChange = async (unitId: string, ratePlanId: string) => {
     const next = new Map(unitRatePlan);
-    if (ratePlanId) next.set(unitId, ratePlanId);
-    else next.delete(unitId);
+    next.set(unitId, ratePlanId);
     setUnitRatePlan(next);
-    setPricesData(buildPricesMap(allPricesRaw, next));
+    setPricesData(buildPricesMap(allPricesRaw, next, defaultRatePlanId));
     await supabase.from('units').update({ selected_rate_plan_id: ratePlanId }).eq('id', unitId);
   };
 
@@ -331,7 +347,7 @@ export const CalendarView: React.FC = () => {
     }
 
     setAllPricesRaw(allData as Price[]);
-    const pricesMap = buildPricesMap(allData as Price[], unitRatePlan);
+    const pricesMap = buildPricesMap(allData as Price[], unitRatePlan, defaultRatePlanId);
 
 
     setPricesData(pricesMap);
@@ -2669,11 +2685,10 @@ export const CalendarView: React.FC = () => {
                       <div className="text-[10px] sm:text-[11px] lg:text-xs font-medium text-white">{unit.name}</div>
                       {ratePlans.length > 0 && (
                         <select
-                          value={unitRatePlan.get(unit.id) ?? ''}
-                          onChange={e => handleUnitRatePlanChange(unit.id, e.target.value || null)}
+                          value={unitRatePlan.get(unit.id) ?? defaultRatePlanId ?? ''}
+                          onChange={e => handleUnitRatePlanChange(unit.id, e.target.value)}
                           className="mt-1 w-full bg-slate-700 border border-slate-600 text-slate-300 text-[8px] sm:text-[9px] rounded px-1 py-0.5 outline-none"
                         >
-                          <option value="">Wszystkie</option>
                           {ratePlans.map(rp => (
                             <option key={rp.id} value={rp.id}>{rp.name}</option>
                           ))}
