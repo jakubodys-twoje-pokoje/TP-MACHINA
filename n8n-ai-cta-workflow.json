@@ -1,0 +1,420 @@
+{
+  "name": "AI CTA/CTD Optimization v7",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "181df836-8c89-47d2-b611-07cd556473f8",
+        "responseMode": "responseNode",
+        "options": {
+          "responseData": "allEntries"
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "181df836-8c89-47d2-b611-07cd556473f8",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Debug webhook input\nconst webhookData = $input.first().json;\nconsole.log('=== WEBHOOK RECEIVED ===');\nconsole.log('notification_ids:', webhookData.notification_ids);\nconsole.log('count:', webhookData.notification_ids?.length);\n\nif (!webhookData.notification_ids || !Array.isArray(webhookData.notification_ids)) {\n  throw new Error('Missing or invalid notification_ids in webhook payload');\n}\n\nif (webhookData.notification_ids.length === 0) {\n  throw new Error('Empty notification_ids array');\n}\n\nreturn [$input.first()];"
+      },
+      "id": "validate-webhook",
+      "name": "Validate Webhook Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [360, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/notifications?id=in.({{ $json.notification_ids.join(',') }})&order=start_date.asc&select=id,property_id,unit_id,property_name,unit_name,change_type,start_date,end_date,created_at",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {}
+      },
+      "id": "fetch-notifications",
+      "name": "Fetch Notifications",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [560, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "YOUR_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract notifications and calculate date range\nconst input = $input.first().json;\n\nconsole.log('DEBUG: Input from Fetch Notifications:', JSON.stringify(input).substring(0, 500));\n\nlet notifications = input;\n\n// Handle case where Supabase returns single object instead of array\nif (!Array.isArray(notifications)) {\n  if (notifications && typeof notifications === 'object') {\n    notifications = [notifications];\n  } else {\n    throw new Error(`Invalid notifications format. Expected array or object, got: ${typeof notifications}`);\n  }\n}\n\nif (notifications.length === 0) {\n  throw new Error('No notifications found in database for provided IDs');\n}\n\nconst unitIds = [...new Set(notifications.map(n => n.unit_id))];\nconst propertyIds = [...new Set(notifications.map(n => n.property_id))];\n\n// Calculate dynamic date range: ±21 days from earliest/latest notification\nconst notifDates = notifications.map(n => new Date(n.start_date));\nconst notifEndDates = notifications.map(n => new Date(n.end_date));\n\nconst minDate = new Date(Math.min(...notifDates));\nminDate.setDate(minDate.getDate() - 21); // 3 weeks before\n\nconst maxDate = new Date(Math.max(...notifEndDates));\nmaxDate.setDate(maxDate.getDate() + 21); // 3 weeks after\n\nreturn [{\n  json: {\n    notifications: notifications,\n    unit_ids: unitIds,\n    property_ids: propertyIds,\n    date_range: {\n      from: minDate.toISOString().split('T')[0],\n      to: maxDate.toISOString().split('T')[0]\n    }\n  }\n}];"
+      },
+      "id": "extract-ids",
+      "name": "Extract IDs & Date Range",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/availability?unit_id=in.({{ $json.unit_ids.join(',') }})&date=gte.{{ $json.date_range.from }}&date=lte.{{ $json.date_range.to }}&select=unit_id,date,status",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {}
+      },
+      "id": "fetch-availability",
+      "name": "Fetch Availability",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "YOUR_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/prices?unit_id=in.({{ $node[\"Extract IDs & Date Range\"].json.unit_ids.join(',') }})&date=gte.{{ $node[\"Extract IDs & Date Range\"].json.date_range.from }}&date=lte.{{ $node[\"Extract IDs & Date Range\"].json.date_range.to }}&select=unit_id,date,cta,ctd,min",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {}
+      },
+      "id": "fetch-prices",
+      "name": "Fetch Prices",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 420],
+      "credentials": {
+        "supabaseApi": {
+          "id": "YOUR_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/units?id=in.({{ $node[\"Extract IDs & Date Range\"].json.unit_ids.join(',') }})&select=id,name,property_id",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "options": {}
+      },
+      "id": "fetch-units",
+      "name": "Fetch Units",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 540],
+      "credentials": {
+        "supabaseApi": {
+          "id": "YOUR_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "merge-fetch-data",
+      "name": "Wait for All Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1010, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect all data from merged inputs\nconst extractNode = $node[\"Extract IDs & Date Range\"];\nif (!extractNode || !extractNode.json) {\n  throw new Error('Extract IDs & Date Range node failed or has no data');\n}\n\nconst notifications = extractNode.json.notifications;\nif (!notifications || notifications.length === 0) {\n  throw new Error('No notifications data from Extract node');\n}\n\n// Merge node gives us 3 items: [availability_data, prices_data, units_data]\nconst mergedInputs = $input.all();\nif (mergedInputs.length !== 3) {\n  throw new Error(`Expected 3 inputs from Merge, got ${mergedInputs.length}`);\n}\n\n// Get data from each merged input\nconst availabilityData = mergedInputs[0].json;\nconst pricesData = mergedInputs[1].json;\nconst unitsData = mergedInputs[2].json;\n\nconst availability = Array.isArray(availabilityData) ? availabilityData : [availabilityData];\nconst prices = Array.isArray(pricesData) ? pricesData : [pricesData];\nconst units = Array.isArray(unitsData) ? unitsData : [unitsData];\n\n// Enrich notifications with context\nconst enrichedNotifications = notifications.map(notif => {\n  // Calculate gap size\n  const gapStart = new Date(notif.start_date);\n  const gapEnd = new Date(notif.end_date);\n  const gapDays = Math.floor((gapEnd - gapStart) / (1000 * 60 * 60 * 24)) + 1;\n\n  // Get surrounding availability (±21 days)\n  const notifDate = new Date(notif.start_date);\n  const before21 = new Date(notifDate);\n  before21.setDate(before21.getDate() - 21);\n  const after21 = new Date(notifDate);\n  after21.setDate(after21.getDate() + 21);\n\n  const surroundingAvail = availability\n    .filter(a => {\n      const aDate = new Date(a.date);\n      return a.unit_id === notif.unit_id && aDate >= before21 && aDate <= after21;\n    })\n    .sort((a, b) => a.date.localeCompare(b.date))\n    .map(a => `${a.date}: ${a.status}`);\n\n  // Current restrictions for this date range\n  const currentRestrictions = prices\n    .filter(p =>\n      p.unit_id === notif.unit_id &&\n      p.date >= notif.start_date &&\n      p.date <= notif.end_date\n    );\n\n  return {\n    ...notif,\n    gap_days: gapDays,\n    surrounding_availability: surroundingAvail,\n    current_cta: currentRestrictions[0]?.cta || 'brak',\n    current_ctd: currentRestrictions[0]?.ctd || 'brak',\n    current_min: currentRestrictions[0]?.min || 'brak'\n  };\n});\n\n// Build Gemini prompt - SIMPLE strategy\nconst prompt = `Jesteś ekspertem od revenue management dla wynajmu krótkoterminowego w Polsce.\n\nZADANIE: Zaproponuj ustawienia CTA/CTD/MIN dla ${notifications.length} luk w dostępności.\n\nSTRATEGIA MIN-FIRST:\nCelem jest wypełnienie luk DŁUŻSZYMI pobytami, nie blokowanie krótkich.\n\nZASADA:\n1. Dzień 1 po rezerwacji → pusty (MIN=1, CTA=0, CTD=0)\n   Pozwala przedłużyć poprzednią rezerwację\n\n2. Dni 2-3 → restrykcje (MIN=3, CTA=7-14, CTD=0)\n   Blokuje 1-2 dniowe bookings, wymusza minimum 3 noce\n\n3. Reszta dni → flexible (MIN=2, CTA=0, CTD=0)\n   Pozwala na długie pobyty\n\nPRZYKŁAD (luka 5 dni):\n[REZ] | Dzień 1: pusty | Dzień 2-3: MIN=3 | Dzień 4-5: MIN=2 | [REZ]\n\nEFEKT:\n❌ 1-2 dni: NIE (MIN=3 na dniach 2-3)\n✅ Przedłużenie: TAK (dzień 1 pusty)\n✅ 3+ dni: TAK (wypełnia lukę)\n✅ Tydzień: TAK (zabiera całą lukę)\n\nDANE O LUKACH:\n${enrichedNotifications.map((n, i) => `\n${i + 1}. ${n.property_name} - ${n.unit_name}\n   Luka: ${n.start_date} do ${n.end_date} (${n.gap_days} dni)\n   Obecne: CTA=${n.current_cta}, CTD=${n.current_ctd}, MIN=${n.current_min}\n   \n   Dostępność wokół (±21 dni):\n   ${n.surrounding_availability.slice(0, 42).join('\\n   ')}\n`).join('\\n')}\n\nINSTRUKCJE:\n\nDLA LUKI 1 DZIEŃ:\n→ 1 suggestion: MIN=1, CTA=0, CTD=0\n→ reasoning: \"Pusty dzień pozwala przedłużyć poprzednią rezerwację o 1 dzień\"\n\nDLA LUKI 2 DNI:\n→ Dzień 1: MIN=1, CTA=0, CTD=0 (pusty)\n→ Dzień 2: MIN=3, CTA=10, CTD=0\n→ reasoning: \"Dzień 1 pusty na przedłużenie. Dzień 2 z MIN=3 blokuje dwudniówki ale pozwala na 3+\"\n\nDLA LUKI 3+ DNI:\n→ Dzień 1: MIN=1, CTA=0, CTD=0 (pusty)\n→ Dni 2-3: MIN=3, CTA=10, CTD=0 (restrykcje)\n→ Reszta (jeśli jest): MIN=2, CTA=0, CTD=0 (flexible)\n→ reasoning: \"Strategiczne MIN wypełnia lukę dłuższymi pobytami, nie blokuje całkowicie\"\n\nWAŻNE:\n- Zawsze 1 pusty dzień po rezerwacji\n- MIN=3 na dniach 2-3 (główny mechanizm)\n- Reszta flexible (MIN=2)\n- CTA wspiera MIN (7-14 dni)\n- Generuj OSOBNY suggestion dla KAŻDEGO dnia w luce\n\nOUTPUT: TYLKO VALID JSON, BEZ MARKDOWN\n{\n  \"suggestions\": [\n    {\n      \"notification_id\": \"uuid\",\n      \"unit_id\": \"uuid\",\n      \"unit_name\": \"Domek 4D\",\n      \"property_name\": \"DW Maryla\",\n      \"date_start\": \"2026-06-15\",\n      \"date_end\": \"2026-06-15\",\n      \"suggested_cta\": 0,\n      \"suggested_ctd\": 0,\n      \"suggested_min\": 1,\n      \"confidence\": 95,\n      \"reasoning\": \"Dzień 1 luki: pusty na przedłużenie poprzedniej rezerwacji\",\n      \"expected_impact\": \"Możliwość przedłużenia lub start dłuższej rezerwacji\"\n    },\n    {\n      \"notification_id\": \"uuid\",\n      \"unit_id\": \"uuid\",\n      \"unit_name\": \"Domek 4D\",\n      \"property_name\": \"DW Maryla\",\n      \"date_start\": \"2026-06-16\",\n      \"date_end\": \"2026-06-16\",\n      \"suggested_cta\": 10,\n      \"suggested_ctd\": 0,\n      \"suggested_min\": 3,\n      \"confidence\": 90,\n      \"reasoning\": \"Dzień 2 luki: MIN=3 blokuje 1-2 dniówki, CTA=10 daje czas na booking\",\n      \"expected_impact\": \"Wypełnienie luki rezerwacją 3+ dni\"\n    }\n  ]\n}`;\n\nreturn [{\n  json: {\n    prompt,\n    notifications: enrichedNotifications\n  }\n}];"
+      },
+      "id": "build-prompt",
+      "name": "Build Context & Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1230, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={{ $env.GEMINI_API_KEY }}",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "contents",
+              "value": "=[{\"parts\":[{\"text\":\"{{ $json.prompt }}\"}]}]"
+            },
+            {
+              "name": "generationConfig",
+              "value": "={\"temperature\":0.3,\"topK\":40,\"topP\":0.95,\"maxOutputTokens\":8192,\"responseMimeType\":\"application/json\"}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "call-gemini",
+      "name": "Call Gemini API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const geminiResponse = $input.item.json;\nconst notifications = $node[\"Build Context & Prompt\"].json.notifications;\n\n// Extract JSON from Gemini response\nconst text = geminiResponse.candidates[0].content.parts[0].text;\nlet parsed;\n\ntry {\n  parsed = JSON.parse(text);\n} catch (e) {\n  // Fallback: extract JSON from markdown\n  const jsonMatch = text.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    parsed = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error('Failed to parse Gemini response');\n  }\n}\n\n// Enrich suggestions with full notification data\nconst enrichedSuggestions = parsed.suggestions.map(s => {\n  const notif = notifications.find(n => n.id === s.notification_id);\n  return {\n    notification_id: s.notification_id,\n    property_id: notif?.property_id,\n    unit_id: s.unit_id,\n    property_name: s.property_name,\n    unit_name: s.unit_name,\n    date_start: s.date_start,\n    date_end: s.date_end,\n    suggested_cta: s.suggested_cta,\n    suggested_ctd: s.suggested_ctd,\n    suggested_min: s.suggested_min,\n    confidence: s.confidence,\n    reasoning: s.reasoning,\n    expected_impact: s.expected_impact,\n    status: 'pending'\n  };\n});\n\nreturn enrichedSuggestions.map(s => ({ json: s }));"
+      },
+      "id": "parse-response",
+      "name": "Parse Gemini Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://uopdrhgkephrtpdxicts.supabase.co/rest/v1/ai_suggestions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseApi",
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify($json) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "insert-suggestions",
+      "name": "Insert to Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 300],
+      "credentials": {
+        "supabaseApi": {
+          "id": "YOUR_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const allSuggestions = $input.all();\n\nreturn [{\n  json: {\n    success: true,\n    count: allSuggestions.length,\n    generated_at: new Date().toISOString(),\n    suggestions: allSuggestions.map(s => s.json)\n  }\n}];"
+      },
+      "id": "format-response",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "webhook-response",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const error = $input.first().json;\n\nreturn [{\n  json: {\n    success: false,\n    error: error.message || 'Unknown error',\n    error_details: error,\n    generated_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "format-error",
+      "name": "Format Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "webhook-error-response",
+      "name": "Respond with Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1560, 500]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Webhook Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Webhook Input": {
+      "main": [
+        [
+          {
+            "node": "Fetch Notifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Notifications": {
+      "main": [
+        [
+          {
+            "node": "Extract IDs & Date Range",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract IDs & Date Range": {
+      "main": [
+        [
+          {
+            "node": "Fetch Availability",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Prices",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Units",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Availability": {
+      "main": [
+        [
+          {
+            "node": "Wait for All Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Prices": {
+      "main": [
+        [
+          {
+            "node": "Wait for All Data",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Fetch Units": {
+      "main": [
+        [
+          {
+            "node": "Wait for All Data",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Wait for All Data": {
+      "main": [
+        [
+          {
+            "node": "Build Context & Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Context & Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call Gemini API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Gemini API": {
+      "main": [
+        [
+          {
+            "node": "Parse Gemini Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Gemini Response": {
+      "main": [
+        [
+          {
+            "node": "Insert to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert to Supabase": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-01-27T05:00:00.000Z",
+  "versionId": "6"
+}
