@@ -42,6 +42,7 @@ export interface Unit {
   tags?: string | null;
   photos?: any | null;
   photo_url?: string | null;
+  selected_rate_plan_id?: string | null;
 }
 
 export interface Availability {

@@ -78,7 +78,10 @@ export const CalendarView: React.FC = () => {
     ];
   })();
   const [ratePlans, setRatePlans] = useState<RatePlan[]>([]);
-  const [selectedRatePlanId, setSelectedRatePlanId] = useState<string | null>(null);
+  // per-unit selected rate plan: unit_id -> rate_plan_id (null = merge all)
+  const [unitRatePlan, setUnitRatePlan] = useState<Map<string, string>>(new Map());
+  // raw prices keyed by `${unit_id}_${date}_${rate_id}`
+  const [allPricesRaw, setAllPricesRaw] = useState<Price[]>([]);
 
   const [pricesData, setPricesData] = useState<Map<string, Price>>(new Map());
   const [priceChanges, setPriceChanges] = useState<Map<string, Partial<Price>>>(new Map());
@@ -189,13 +192,15 @@ export const CalendarView: React.FC = () => {
     setLoadingUnits(true);
     const { data: propData } = await supabase.from('properties').select('*').eq('id', propertyId).single();
     setProperty(propData);
-    if (propData?.selected_rate_plan_id) {
-      setSelectedRatePlanId(propData.selected_rate_plan_id);
-    }
 
     const { data: unitsData } = await supabase.from('units').select('*').eq('property_id', propertyId).order('name');
     if (unitsData) {
       setUnits(unitsData);
+      const map = new Map<string, string>();
+      unitsData.forEach((u: Unit) => {
+        if (u.selected_rate_plan_id) map.set(u.id, u.selected_rate_plan_id);
+      });
+      setUnitRatePlan(map);
     }
     setLoadingUnits(false);
   };
@@ -210,15 +215,41 @@ export const CalendarView: React.FC = () => {
     if (data) setRatePlans(data as RatePlan[]);
   };
 
-  const handleRatePlanChange = async (ratePlanId: string | null) => {
-    setSelectedRatePlanId(ratePlanId);
-    fetchPricesData(ratePlanId);
-    if (propertyId) {
-      await supabase
-        .from('properties')
-        .update({ selected_rate_plan_id: ratePlanId })
-        .eq('id', propertyId);
-    }
+  // Build pricesData map from raw prices + current per-unit selections
+  const buildPricesMap = (raw: Price[], selections: Map<string, string>): Map<string, Price> => {
+    const result = new Map<string, Price>();
+    raw.forEach(price => {
+      const key = `${price.unit_id}_${price.date}`;
+      const chosenPlanId = selections.get(price.unit_id);
+      if (chosenPlanId) {
+        // Only use rows matching the chosen plan for this unit
+        if (price.rate_id !== chosenPlanId) return;
+        result.set(key, price);
+      } else {
+        // Merge all plans (most restrictive wins)
+        const existing = result.get(key);
+        if (!existing) {
+          result.set(key, price);
+        } else {
+          result.set(key, {
+            ...existing,
+            min: Math.max(existing.min ?? 0, price.min ?? 0) || (existing.min ?? price.min),
+            cta: existing.cta === 1 || price.cta === 1 ? 1 : (existing.cta ?? price.cta),
+            ctd: existing.ctd === 1 || price.ctd === 1 ? 1 : (existing.ctd ?? price.ctd),
+          });
+        }
+      }
+    });
+    return result;
+  };
+
+  const handleUnitRatePlanChange = async (unitId: string, ratePlanId: string | null) => {
+    const next = new Map(unitRatePlan);
+    if (ratePlanId) next.set(unitId, ratePlanId);
+    else next.delete(unitId);
+    setUnitRatePlan(next);
+    setPricesData(buildPricesMap(allPricesRaw, next));
+    await supabase.from('units').update({ selected_rate_plan_id: ratePlanId }).eq('id', unitId);
   };
 
   const fetchQuarterAvailability = async () => {
@@ -263,9 +294,8 @@ export const CalendarView: React.FC = () => {
     }
   };
 
-  const fetchPricesData = async (ratePlanIdOverride?: string | null) => {
+  const fetchPricesData = async () => {
     if (units.length === 0) return;
-    const activePlanId = ratePlanIdOverride !== undefined ? ratePlanIdOverride : selectedRatePlanId;
 
     try {
     const startDate = new Date('2026-01-20');
@@ -283,7 +313,7 @@ export const CalendarView: React.FC = () => {
       const chunk = unitIds.slice(ci, ci + CHUNK);
       let from = 0;
       while (true) {
-        let query = supabase
+        const { data: page, error: pageError } = await supabase
           .from('prices')
           .select('id, unit_id, date, rate_id, cta, ctd, min, cta_synced, ctd_synced')
           .in('unit_id', chunk)
@@ -291,12 +321,6 @@ export const CalendarView: React.FC = () => {
           .lte('date', endStr)
           .order('date', { ascending: true })
           .range(from, from + PAGE_SIZE - 1);
-
-        if (activePlanId) {
-          query = query.eq('rate_id', activePlanId);
-        }
-
-        const { data: page, error: pageError } = await query;
 
         if (pageError) { console.error('❌ Error fetching prices:', pageError); break; }
         if (!page || page.length === 0) break;
@@ -306,23 +330,8 @@ export const CalendarView: React.FC = () => {
       }
     }
 
-    // When no specific plan selected: merge all plans (most restrictive wins)
-    // When a plan is selected: use its values directly
-    const pricesMap = new Map<string, Price>();
-    allData.forEach(price => {
-      const key = `${price.unit_id}_${price.date}`;
-      const existing = pricesMap.get(key);
-      if (!existing) {
-        pricesMap.set(key, price);
-      } else {
-        pricesMap.set(key, {
-          ...existing,
-          min: Math.max(existing.min ?? 0, price.min ?? 0) || (existing.min ?? price.min),
-          cta: existing.cta === 1 || price.cta === 1 ? 1 : (existing.cta ?? price.cta),
-          ctd: existing.ctd === 1 || price.ctd === 1 ? 1 : (existing.ctd ?? price.ctd),
-        });
-      }
-    });
+    setAllPricesRaw(allData as Price[]);
+    const pricesMap = buildPricesMap(allData as Price[], unitRatePlan);
 
 
     setPricesData(pricesMap);
@@ -2216,22 +2225,6 @@ export const CalendarView: React.FC = () => {
               </>
             )}
 
-            {ratePlans.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                <span className="text-slate-400 text-[10px] sm:text-xs whitespace-nowrap">Cennik:</span>
-                <select
-                  value={selectedRatePlanId ?? ''}
-                  onChange={e => handleRatePlanChange(e.target.value || null)}
-                  className="bg-slate-800 border border-slate-600 text-slate-200 text-[10px] sm:text-xs rounded-md px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="">Wszystkie</option>
-                  {ratePlans.map(rp => (
-                    <option key={rp.id} value={rp.id}>{rp.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
             <input
               type="date"
               value={selectedDateStr}
@@ -2672,8 +2665,20 @@ export const CalendarView: React.FC = () => {
                 const unitAvailability = allUnitsAvailability.get(unit.id);
                 return (
                   <tr key={unit.id} className="border-t border-border hover:bg-slate-800/30">
-                    <td className="sticky left-0 z-20 bg-surface p-1 sm:p-2 text-[10px] sm:text-[11px] lg:text-xs font-medium text-white border-r border-border">
-                      {unit.name}
+                    <td className="sticky left-0 z-20 bg-surface p-1 sm:p-2 border-r border-border min-w-[70px] sm:min-w-[80px] lg:min-w-[120px]">
+                      <div className="text-[10px] sm:text-[11px] lg:text-xs font-medium text-white">{unit.name}</div>
+                      {ratePlans.length > 0 && (
+                        <select
+                          value={unitRatePlan.get(unit.id) ?? ''}
+                          onChange={e => handleUnitRatePlanChange(unit.id, e.target.value || null)}
+                          className="mt-1 w-full bg-slate-700 border border-slate-600 text-slate-300 text-[8px] sm:text-[9px] rounded px-1 py-0.5 outline-none"
+                        >
+                          <option value="">Wszystkie</option>
+                          {ratePlans.map(rp => (
+                            <option key={rp.id} value={rp.id}>{rp.name}</option>
+                          ))}
+                        </select>
+                      )}
                     </td>
                     {dates.map((date, idx) => {
                       const dateStr = toLocalDateStr(date);
