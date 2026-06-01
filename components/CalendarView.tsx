@@ -2087,19 +2087,7 @@ export const CalendarView: React.FC = () => {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg sm:text-xl lg:text-2xl font-bold text-white">{property?.name}</h2>
-          <div className="flex items-center gap-2 mt-1">
-            <p className="text-slate-400 text-xs sm:text-sm">Cennik:</p>
-            <select
-              value={selectedRatePlanId ?? ''}
-              onChange={e => handleRatePlanChange(e.target.value || null)}
-              className="bg-slate-800 border border-slate-600 text-slate-200 text-xs sm:text-sm rounded-md px-2 py-0.5 outline-none focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="">Wszystkie (suma restrykcji)</option>
-              {ratePlans.map(rp => (
-                <option key={rp.id} value={rp.id}>{rp.name}</option>
-              ))}
-            </select>
-          </div>
+          <p className="text-slate-400 text-xs sm:text-sm mt-1">Widok kwartalny dostępności</p>
         </div>
       </div>
 
@@ -2226,6 +2214,22 @@ export const CalendarView: React.FC = () => {
                   </button>
                 )}
               </>
+            )}
+
+            {ratePlans.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-slate-400 text-[10px] sm:text-xs whitespace-nowrap">Cennik:</span>
+                <select
+                  value={selectedRatePlanId ?? ''}
+                  onChange={e => handleRatePlanChange(e.target.value || null)}
+                  className="bg-slate-800 border border-slate-600 text-slate-200 text-[10px] sm:text-xs rounded-md px-2 py-1 outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">Wszystkie</option>
+                  {ratePlans.map(rp => (
+                    <option key={rp.id} value={rp.id}>{rp.name}</option>
+                  ))}
+                </select>
+              </div>
             )}
 
             <input
