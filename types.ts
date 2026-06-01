@@ -17,6 +17,7 @@ export interface Property {
   workflow_is_active?: boolean; // Nowe
   workflow_position?: number;   // Nowe
   workflow_assigned_to?: string | null; // Opiekun obiektu
+  selected_rate_plan_id?: string | null;
   created_at: string;
 }
 

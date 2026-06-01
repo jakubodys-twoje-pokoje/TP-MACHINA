@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback, memo } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { Property, Availability, Unit, Notification, Price, AISuggestion } from '../types';
+import { Property, Availability, Unit, Notification, Price, AISuggestion, RatePlan } from '../types';
 import { Loader2, ChevronLeft, ChevronRight, RefreshCw, Sparkles, ArrowRight, CheckSquare, Square, X, Save } from 'lucide-react';
 
 export const CalendarView: React.FC = () => {
@@ -77,6 +77,9 @@ export const CalendarView: React.FC = () => {
       `Q1-${year + 1}`, `Q2-${year + 1}`, `Q3-${year + 1}`, `Q4-${year + 1}`,
     ];
   })();
+  const [ratePlans, setRatePlans] = useState<RatePlan[]>([]);
+  const [selectedRatePlanId, setSelectedRatePlanId] = useState<string | null>(null);
+
   const [pricesData, setPricesData] = useState<Map<string, Price>>(new Map());
   const [priceChanges, setPriceChanges] = useState<Map<string, Partial<Price>>>(new Map());
   const [isLoadingAI, setIsLoadingAI] = useState(false);
@@ -135,6 +138,7 @@ export const CalendarView: React.FC = () => {
     if (propertyId) {
       fetchPropertyAndUnits();
       fetchUnreadNotifications();
+      fetchRatePlans();
     }
   }, [propertyId]);
 
@@ -185,12 +189,36 @@ export const CalendarView: React.FC = () => {
     setLoadingUnits(true);
     const { data: propData } = await supabase.from('properties').select('*').eq('id', propertyId).single();
     setProperty(propData);
+    if (propData?.selected_rate_plan_id) {
+      setSelectedRatePlanId(propData.selected_rate_plan_id);
+    }
 
     const { data: unitsData } = await supabase.from('units').select('*').eq('property_id', propertyId).order('name');
     if (unitsData) {
       setUnits(unitsData);
     }
     setLoadingUnits(false);
+  };
+
+  const fetchRatePlans = async () => {
+    if (!propertyId) return;
+    const { data } = await supabase
+      .from('rate_plans')
+      .select('id, name, external_id')
+      .eq('property_id', propertyId)
+      .order('name');
+    if (data) setRatePlans(data as RatePlan[]);
+  };
+
+  const handleRatePlanChange = async (ratePlanId: string | null) => {
+    setSelectedRatePlanId(ratePlanId);
+    fetchPricesData(ratePlanId);
+    if (propertyId) {
+      await supabase
+        .from('properties')
+        .update({ selected_rate_plan_id: ratePlanId })
+        .eq('id', propertyId);
+    }
   };
 
   const fetchQuarterAvailability = async () => {
@@ -235,8 +263,9 @@ export const CalendarView: React.FC = () => {
     }
   };
 
-  const fetchPricesData = async () => {
+  const fetchPricesData = async (ratePlanIdOverride?: string | null) => {
     if (units.length === 0) return;
+    const activePlanId = ratePlanIdOverride !== undefined ? ratePlanIdOverride : selectedRatePlanId;
 
     try {
     const startDate = new Date('2026-01-20');
@@ -254,7 +283,7 @@ export const CalendarView: React.FC = () => {
       const chunk = unitIds.slice(ci, ci + CHUNK);
       let from = 0;
       while (true) {
-        const { data: page, error: pageError } = await supabase
+        let query = supabase
           .from('prices')
           .select('id, unit_id, date, rate_id, cta, ctd, min, cta_synced, ctd_synced')
           .in('unit_id', chunk)
@@ -262,6 +291,12 @@ export const CalendarView: React.FC = () => {
           .lte('date', endStr)
           .order('date', { ascending: true })
           .range(from, from + PAGE_SIZE - 1);
+
+        if (activePlanId) {
+          query = query.eq('rate_id', activePlanId);
+        }
+
+        const { data: page, error: pageError } = await query;
 
         if (pageError) { console.error('❌ Error fetching prices:', pageError); break; }
         if (!page || page.length === 0) break;
@@ -271,9 +306,8 @@ export const CalendarView: React.FC = () => {
       }
     }
 
-    // Multiple rate_plans can exist for same unit+date — merge with correct precedence:
-    // CTA/CTD: 1 (closed) wins over 0 (open) — restriction takes priority across plans
-    // MIN: take highest value (most restrictive)
+    // When no specific plan selected: merge all plans (most restrictive wins)
+    // When a plan is selected: use its values directly
     const pricesMap = new Map<string, Price>();
     allData.forEach(price => {
       const key = `${price.unit_id}_${price.date}`;
@@ -2053,7 +2087,19 @@ export const CalendarView: React.FC = () => {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg sm:text-xl lg:text-2xl font-bold text-white">{property?.name}</h2>
-          <p className="text-slate-400 text-xs sm:text-sm mt-1">Widok kwartalny dostępności</p>
+          <div className="flex items-center gap-2 mt-1">
+            <p className="text-slate-400 text-xs sm:text-sm">Cennik:</p>
+            <select
+              value={selectedRatePlanId ?? ''}
+              onChange={e => handleRatePlanChange(e.target.value || null)}
+              className="bg-slate-800 border border-slate-600 text-slate-200 text-xs sm:text-sm rounded-md px-2 py-0.5 outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">Wszystkie (suma restrykcji)</option>
+              {ratePlans.map(rp => (
+                <option key={rp.id} value={rp.id}>{rp.name}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
