@@ -811,8 +811,8 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
                 rate_id: targetRatePlanId,
                 date: d.date,
                 price: d.price ? parseFloat(d.price) : null,
-                min: d.min ? parseInt(d.min) : null,
-                max: d.max ? parseInt(d.max) : null,
+                min: d.min !== null && d.min !== undefined && d.min !== '' ? parseInt(d.min) : null,
+                max: d.max !== null && d.max !== undefined && d.max !== '' ? parseInt(d.max) : null,
                 cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
                 ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
               })

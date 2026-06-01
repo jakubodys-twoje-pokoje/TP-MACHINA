@@ -251,7 +251,7 @@ export const CalendarView: React.FC = () => {
         } else {
           result.set(key, {
             ...existing,
-            min: Math.max(existing.min ?? 0, price.min ?? 0) || (existing.min ?? price.min),
+            min: (() => { const v = Math.max(existing.min ?? 0, price.min ?? 0); return v !== 0 ? v : (existing.min ?? price.min ?? 0); })(),
             cta: existing.cta === 1 || price.cta === 1 ? 1 : (existing.cta ?? price.cta),
             ctd: existing.ctd === 1 || price.ctd === 1 ? 1 : (existing.ctd ?? price.ctd),
           });
@@ -2777,7 +2777,9 @@ export const CalendarView: React.FC = () => {
                             // Use change data if available, otherwise use price data
                             const ctaValue = changeData?.cta !== undefined ? changeData.cta === 1 : priceData?.cta === 1;
                             const ctdValue = changeData?.ctd !== undefined ? changeData.ctd === 1 : priceData?.ctd === 1;
-                            const minValue = changeData?.min !== undefined ? (changeData.min || '') : (priceData?.min || '');
+                            const minValue = changeData?.min !== undefined
+                              ? (changeData.min !== null ? String(changeData.min) : '')
+                              : (priceData?.min !== null && priceData?.min !== undefined ? String(priceData.min) : '');
 
                             // Sync status per field: pending > compared > value-based default
                             // If value is 1 (set/active) and status unknown → yellow (assume not in Hotres yet)
@@ -2809,7 +2811,8 @@ export const CalendarView: React.FC = () => {
                             const ctdTextColor = ctdColor.includes('green') ? 'text-green-400'
                               : ctdColor ? 'text-yellow-400' : 'text-slate-400';
 
-                            const minIsSet = !!(priceData?.min || changeData?.min);
+                            const minIsSet = (priceData?.min !== null && priceData?.min !== undefined)
+                              || (changeData?.min !== null && changeData?.min !== undefined);
                             const minPending = changeData?.min !== undefined;
 
                             void ctaSynced; void ctdSynced;
