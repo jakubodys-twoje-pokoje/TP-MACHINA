@@ -23,6 +23,46 @@ function normalizeDate(dateInput: string): string {
   }
 }
 
+// Parse an integer restriction value (min/max/cta/ctd) from the Hotres API.
+// Treats '' / null / undefined as null, parses with radix 10, rejects NaN,
+// and PRESERVES 0 (cta:0 / ctd:0 / min:0 are valid values, not "missing").
+function parseIntOrNull(value: any): number | null {
+  if (value === '' || value === null || value === undefined) return null
+  const n = parseInt(String(value), 10)
+  return Number.isNaN(n) ? null : n
+}
+
+// Parse a float price value: '' / null / undefined / NaN → null.
+function parseFloatOrNull(value: any): number | null {
+  if (value === '' || value === null || value === undefined) return null
+  const n = parseFloat(String(value))
+  return Number.isNaN(n) ? null : n
+}
+
+// Local (timezone-safe) YYYY-MM-DD formatter.
+function fmtDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// Build sub-ranges covering [start, end] in chunks no larger than maxDays
+// (Hotres api_prices is limited to ~180 days per request).
+function buildDateRanges(start: Date, end: Date, maxDays: number): Array<{ from: string; till: string; label: string }> {
+  const ranges: Array<{ from: string; till: string; label: string }> = []
+  let cursor = new Date(start)
+  let idx = 1
+  while (cursor <= end) {
+    const rangeStart = new Date(cursor)
+    const rangeEnd = new Date(cursor)
+    rangeEnd.setDate(rangeEnd.getDate() + (maxDays - 1))
+    if (rangeEnd > end) rangeEnd.setTime(end.getTime())
+    ranges.push({ from: fmtDate(rangeStart), till: fmtDate(rangeEnd), label: `range ${idx}` })
+    cursor = new Date(rangeEnd)
+    cursor.setDate(cursor.getDate() + 1)
+    idx++
+  }
+  return ranges
+}
+
 async function fetchFromHotres(targetUrl: string): Promise<string> {
   const res = await fetch(targetUrl, {
     method: 'GET',
@@ -190,17 +230,22 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     console.log(`  📋 Rate plans for ${property.name}: ${allRatePlans.length} total — syncing ALL`)
     console.log(`  📋 Plans:`, allRatePlans.map(rp => `"${rp.name}" (ext_id: ${rp.external_id})`))
 
-    // Fetch prices from Hotres - split into two ranges (180 day API limit)
-    const dateRanges = [
-      { from: '2026-01-20', till: '2026-07-18', label: 'first half' },
-      { from: '2026-07-19', till: '2026-12-31', label: 'second half' }
-    ]
+    // Fetch prices from Hotres - dynamic window relative to today, split into
+    // sub-ranges within the 180-day API limit. Covers ~30 days back to ~18 months ahead.
+    const today = new Date()
+    const windowStart = new Date(today)
+    windowStart.setDate(windowStart.getDate() - 30)
+    const windowEnd = new Date(today)
+    windowEnd.setMonth(windowEnd.getMonth() + 18)
+    const dateRanges = buildDateRanges(windowStart, windowEnd, 180)
+    console.log(`  📅 Price window ${fmtDate(windowStart)} → ${fmtDate(windowEnd)} in ${dateRanges.length} sub-ranges`)
 
-    // Create mapping of type_id to unit for lookup
+    // Create mapping of type_id to unit for lookup (trim to match availability sync
+    // and guard against stray whitespace in external_type_id / Hotres type_id)
     const unitMapByTypeId = new Map<string, any>()
     units.forEach(u => {
       if (u.external_type_id) {
-        unitMapByTypeId.set(String(u.external_type_id), u)
+        unitMapByTypeId.set(String(u.external_type_id).trim(), u)
       }
     })
 
@@ -208,6 +253,8 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     const pricesByKey = new Map<string, any>()
 
     let totalDates = 0
+    let skippedNoUnit = 0
+    const unmatchedTypeIds = new Set<string>()
 
     // Fetch prices for ALL rate plans × both date ranges
     for (const ratePlan of allRatePlans) {
@@ -235,23 +282,33 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
           for (const item of pricesData) {
             if (!item || !item.type_id) continue
 
-            const typeId = String(item.type_id)
+            const typeId = String(item.type_id).trim()
             const unit = unitMapByTypeId.get(typeId)
-            if (!unit) continue
+            if (!unit) {
+              // Record is silently dropped because no unit matches this type_id.
+              // Log once per type_id so we can detect external_type_id mismatches.
+              skippedNoUnit += Array.isArray(item.dates) ? item.dates.length : 1
+              if (!unmatchedTypeIds.has(typeId)) {
+                unmatchedTypeIds.add(typeId)
+                console.warn(`  ⚠️ No unit matched for type_id "${typeId}" — records dropped. Known type_ids: [${Array.from(unitMapByTypeId.keys()).join(', ')}]`)
+              }
+              continue
+            }
 
             if (item.dates && Array.isArray(item.dates)) {
               for (const d of item.dates) {
-                const key = `${unit.id}:${d.date}:${ratePlan.id}`
+                const dateStr = normalizeDate(d.date)
+                const key = `${unit.id}:${dateStr}:${ratePlan.id}`
                 if (!pricesByKey.has(key)) {
                   pricesByKey.set(key, {
                     unit_id: unit.id,
                     rate_id: ratePlan.id,
-                    date: d.date,
-                    price: d.price ? parseFloat(d.price) : null,
-                    min: d.min !== null && d.min !== undefined && d.min !== '' ? parseInt(d.min) : null,
-                    max: d.max !== null && d.max !== undefined && d.max !== '' ? parseInt(d.max) : null,
-                    cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
-                    ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
+                    date: dateStr,
+                    price: parseFloatOrNull(d.price),
+                    min: parseIntOrNull(d.min),
+                    max: parseIntOrNull(d.max),
+                    cta: parseIntOrNull(d.cta),
+                    ctd: parseIntOrNull(d.ctd)
                   })
                   totalDates++
                 }
@@ -265,6 +322,9 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     }
 
     console.log(`  📊 Total: ${totalDates} unique price records across all rate plans`)
+    if (skippedNoUnit > 0) {
+      console.warn(`  ⚠️ Skipped ${skippedNoUnit} records (${unmatchedTypeIds.size} unmatched type_id(s): ${Array.from(unmatchedTypeIds).join(', ')})`)
+    }
 
     const pricesToUpsert = Array.from(pricesByKey.values())
     console.log(`  📦 Collected ${pricesToUpsert.length} unique price records (unit+date combinations)`)

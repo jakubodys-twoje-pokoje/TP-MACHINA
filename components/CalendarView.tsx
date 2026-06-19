@@ -84,6 +84,11 @@ export const CalendarView: React.FC = () => {
   // which rate plan IDs have prices for each unit: unit_id -> Set<rate_plan_id>
   const [unitAvailablePlans, setUnitAvailablePlans] = useState<Map<string, Set<string>>>(new Map());
   const [allPricesRaw, setAllPricesRaw] = useState<Price[]>([]);
+  // Rate plan matrix modal (per-unit rate plan selection)
+  const [showRatePlanMatrix, setShowRatePlanMatrix] = useState(false);
+  // Which rate plans to push to Hotres (push/override/restore)
+  const [selectedPushRatePlanIds, setSelectedPushRatePlanIds] = useState<Set<string>>(new Set());
+  const pushSelectionInitialized = useRef(false);
 
   const [pricesData, setPricesData] = useState<Map<string, Price>>(new Map());
   const [priceChanges, setPriceChanges] = useState<Map<string, Partial<Price>>>(new Map());
@@ -161,6 +166,20 @@ export const CalendarView: React.FC = () => {
       setPricesData(buildPricesMap(allPricesRaw, unitRatePlan, defaultRatePlanId));
     }
   }, [defaultRatePlanId, unitRatePlan]);
+
+  // Initialize push rate-plan selection once: default to the rate plans currently
+  // displayed on the calendar (distinct unitRatePlan values), fallback to default plan.
+  useEffect(() => {
+    if (pushSelectionInitialized.current) return;
+    if (ratePlans.length === 0) return;
+    const distinct = new Set<string>();
+    unitRatePlan.forEach(planId => { if (planId) distinct.add(planId); });
+    if (distinct.size === 0 && defaultRatePlanId) distinct.add(defaultRatePlanId);
+    if (distinct.size > 0) {
+      setSelectedPushRatePlanIds(distinct);
+      pushSelectionInitialized.current = true;
+    }
+  }, [ratePlans, unitRatePlan, defaultRatePlanId]);
 
   // Auto-scroll to position selected date at 1/3 of viewport
   useEffect(() => {
@@ -757,6 +776,12 @@ export const CalendarView: React.FC = () => {
         throw new Error('Cenniki nie mają external_id. Pobierz cenniki z Hotres w zakładce Cenniki.');
       }
 
+      const plansToSend = allRatePlans.filter(rp => selectedPushRatePlanIds.has(rp.id));
+      if (plansToSend.length === 0) {
+        alert('Zaznacz przynajmniej jeden cennik do wysyłki');
+        return;
+      }
+
       const unitIds = units.map(u => u.id);
 
       const { data: allPrices, error: pricesError } = await supabase
@@ -819,7 +844,7 @@ export const CalendarView: React.FC = () => {
         }
         if (cur) ranges.push(cur);
 
-        for (const ratePlan of allRatePlans) {
+        for (const ratePlan of plansToSend) {
           payloadArray.push({
             type_id: currentTypeId,
             rate_id: parseInt(ratePlan.external_id!, 10),
@@ -899,6 +924,11 @@ export const CalendarView: React.FC = () => {
     if (allRatePlans.length === 0) {
       const names = allRatePlansRaw.map(rp => rp.name).join(', ');
       throw new Error(`Cenniki istnieją (${names}), ale nie mają external_id. Pobierz cenniki z Hotres używając przycisku "Pobierz z Hotres" w zakładce Cenniki.`);
+    }
+
+    const plansToSend = allRatePlans.filter(rp => selectedPushRatePlanIds.has(rp.id));
+    if (plansToSend.length === 0) {
+      throw new Error('Zaznacz przynajmniej jeden cennik do wysyłki');
     }
 
     // Group changes by type_id
@@ -998,9 +1028,9 @@ export const CalendarView: React.FC = () => {
 
       // Send same changes to ALL rate_plans for this property
       // CTA/CTD/MIN are shared across all rate plans for same unit type
-      console.log(`📋 Building payload for type_id ${currentTypeId} with ${allRatePlans.length} rate plans`);
+      console.log(`📋 Building payload for type_id ${currentTypeId} with ${plansToSend.length} rate plans`);
 
-      for (const ratePlan of allRatePlans) {
+      for (const ratePlan of plansToSend) {
         const entry = {
           type_id: currentTypeId, // Integer
           rate_id: parseInt(ratePlan.external_id!, 10), // Integer (API fix)
@@ -1316,6 +1346,13 @@ export const CalendarView: React.FC = () => {
       const allRatePlans = (allRatePlansRaw ?? []).filter(rp => rp.external_id);
       if (allRatePlans.length === 0) throw new Error('Brak cenników z external_id.');
 
+      const plansToSend = allRatePlans.filter(rp => selectedPushRatePlanIds.has(rp.id));
+      if (plansToSend.length === 0) {
+        // finally{} resets syncing; just stop here
+        alert('Zaznacz przynajmniej jeden cennik do wysyłki');
+        return;
+      }
+
       const byTypeId = new Map<string, Array<{ date: string; cta: number | null; ctd: number | null; min: number | null }>>();
       for (const diff of compareDiff) {
         const unit = units.find(u => u.id === diff.unitId);
@@ -1346,7 +1383,7 @@ export const CalendarView: React.FC = () => {
           }
         }
         if (cur) ranges.push(cur);
-        for (const rp of allRatePlans) {
+        for (const rp of plansToSend) {
           payloadArray.push({ type_id: parseInt(typeIdStr, 10), rate_id: parseInt(rp.external_id!, 10), mode: 'delta', prices: ranges });
         }
       }
@@ -1461,6 +1498,11 @@ export const CalendarView: React.FC = () => {
     if (allRatePlans.length === 0) {
       const names = allRatePlansRaw.map(rp => rp.name).join(', ');
       throw new Error(`Cenniki istnieją (${names}), ale nie mają external_id. Pobierz cenniki z Hotres używając przycisku "Pobierz z Hotres" w zakładce Cenniki.`);
+    }
+
+    const plansToSend = allRatePlans.filter(rp => selectedPushRatePlanIds.has(rp.id));
+    if (plansToSend.length === 0) {
+      throw new Error('Zaznacz przynajmniej jeden cennik do wysyłki');
     }
 
     // Fixed date range: 20.01.2026 to 31.12.2026
@@ -1589,9 +1631,9 @@ export const CalendarView: React.FC = () => {
       if (currentRange) ranges.push(currentRange);
 
       // Send same data to ALL rate_plans for this property
-      console.log(`📋 Building payload for type_id ${currentTypeId} with ${allRatePlans.length} rate plans`);
+      console.log(`📋 Building payload for type_id ${currentTypeId} with ${plansToSend.length} rate plans`);
 
-      for (const ratePlan of allRatePlans) {
+      for (const ratePlan of plansToSend) {
         const entry = {
           type_id: currentTypeId,
           rate_id: parseInt(ratePlan.external_id!, 10),
@@ -2131,6 +2173,70 @@ export const CalendarView: React.FC = () => {
   const startDateStr = dates[0].toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' });
   const endDateStr = dates[dates.length - 1].toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' });
 
+  // Toggle a rate plan in the push-to-Hotres selection
+  const togglePushRatePlan = (id: string) => {
+    setSelectedPushRatePlanIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  // Panel: which rate plans receive min/availability/CTA/CTD on push to Hotres
+  const renderPushRatePlanSelector = () => {
+    if (ratePlans.length === 0) return null;
+    return (
+      <div className="mt-3 p-3 bg-slate-800 rounded-lg text-xs text-slate-300">
+        <div className="flex items-center justify-between mb-2">
+          <span className="font-semibold text-slate-200">Wyślij do cenników:</span>
+          <div className="flex gap-1">
+            <button
+              onClick={() => setSelectedPushRatePlanIds(new Set(ratePlans.map(rp => rp.id)))}
+              className="bg-slate-700 hover:bg-slate-600 text-slate-200 px-2 py-0.5 rounded text-[10px]"
+            >
+              Zaznacz wszystkie
+            </button>
+            <button
+              onClick={() => setSelectedPushRatePlanIds(new Set())}
+              className="bg-slate-700 hover:bg-slate-600 text-slate-200 px-2 py-0.5 rounded text-[10px]"
+            >
+              Odznacz wszystkie
+            </button>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-40 overflow-y-auto">
+          {ratePlans.map(rp => (
+            <label key={rp.id} className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={selectedPushRatePlanIds.has(rp.id)}
+                onChange={() => togglePushRatePlan(rp.id)}
+                className="w-3.5 h-3.5 accent-indigo-500"
+              />
+              <span className="truncate">{rp.name}</span>
+            </label>
+          ))}
+        </div>
+        {selectedPushRatePlanIds.size === 0 && (
+          <p className="text-[10px] text-red-400 mt-2">Zaznacz przynajmniej jeden cennik do wysyłki.</p>
+        )}
+      </div>
+    );
+  };
+
+  // Button that opens the per-unit rate plan matrix modal
+  const renderRatePlanMatrixButton = () => (
+    <div className="mt-3">
+      <button
+        onClick={() => setShowRatePlanMatrix(true)}
+        className="w-full bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
+      >
+        <span className="text-xs sm:text-sm">🗓 Cenniki na kalendarzu</span>
+      </button>
+      <p className="text-[10px] text-slate-500 text-center mt-1">Wybierz, który cennik wyświetla się dla każdej kwatery</p>
+    </div>
+  );
+
   return (
     <div className="space-y-2 sm:space-y-4 w-full max-w-full px-2 sm:px-0">
       <div className="flex items-center justify-between">
@@ -2403,6 +2509,9 @@ export const CalendarView: React.FC = () => {
               )}
             </div>
 
+            {/* Rate plan matrix (per-unit rate plan selection) */}
+            {renderRatePlanMatrixButton()}
+
             {/* Weryfikuj kwartał */}
             {viewOptions.verifyQuarter !== false && (
               <div className="mt-3">
@@ -2450,6 +2559,9 @@ export const CalendarView: React.FC = () => {
                 <p className="text-[10px] text-slate-500 text-center mt-1">Pokaż różnice i opcję przywrócenia stanu DB</p>
               </div>
             )}
+
+            {/* Rate plans to push to Hotres */}
+            {(viewOptions.push !== false || viewOptions.override !== false) && renderPushRatePlanSelector()}
 
             {/* Push DB → Hotres Button */}
             {viewOptions.push !== false && (
@@ -2559,6 +2671,11 @@ export const CalendarView: React.FC = () => {
           </div>
         )}
 
+        {/* Rate plan matrix for Full View */}
+        {viewMode === 'full' && (
+          <div className="mb-2 sm:mb-3">{renderRatePlanMatrixButton()}</div>
+        )}
+
         {/* Sync DB ← Hotres Button for Full View */}
         {viewMode === 'full' && (
           <div className="mb-2 sm:mb-3">
@@ -2585,6 +2702,11 @@ export const CalendarView: React.FC = () => {
             </button>
             <p className="text-[10px] text-slate-500 text-center mt-1">Pokaż różnice i opcję przywrócenia stanu DB</p>
           </div>
+        )}
+
+        {/* Rate plans to push to Hotres (Full View) */}
+        {viewMode === 'full' && (viewOptions.push !== false || viewOptions.override !== false) && (
+          <div className="mb-2 sm:mb-3">{renderPushRatePlanSelector()}</div>
         )}
 
         {/* Push DB → Hotres Button for Full View */}
@@ -2707,24 +2829,6 @@ export const CalendarView: React.FC = () => {
                   <tr key={unit.id} className="border-t border-border hover:bg-slate-800/30">
                     <td className="sticky left-0 z-20 bg-surface p-1 sm:p-2 border-r border-border min-w-[70px] sm:min-w-[80px] lg:min-w-[120px]">
                       <div className="text-[10px] sm:text-[11px] lg:text-xs font-medium text-white">{unit.name}</div>
-                      {(() => {
-                        const availForUnit = unitAvailablePlans.get(unit.id);
-                        const plansForUnit = availForUnit
-                          ? ratePlans.filter(rp => availForUnit.has(rp.id))
-                          : ratePlans;
-                        if (plansForUnit.length === 0) return null;
-                        return (
-                          <select
-                            value={unitRatePlan.get(unit.id) ?? defaultRatePlanId ?? ''}
-                            onChange={e => handleUnitRatePlanChange(unit.id, e.target.value)}
-                            className="mt-1 w-full bg-slate-700 border border-slate-600 text-slate-300 text-[8px] sm:text-[9px] rounded px-1 py-0.5 outline-none"
-                          >
-                            {plansForUnit.map(rp => (
-                              <option key={rp.id} value={rp.id}>{rp.name}</option>
-                            ))}
-                          </select>
-                        );
-                      })()}
                     </td>
                     {dates.map((date, idx) => {
                       const dateStr = toLocalDateStr(date);
@@ -3118,6 +3222,100 @@ export const CalendarView: React.FC = () => {
                 Zaznacz przynajmniej jedno pole
               </p>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Rate Plan Matrix Modal — per-unit rate plan selection */}
+      {showRatePlanMatrix && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-2 sm:p-4">
+          <div className="bg-slate-800 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col border border-indigo-600">
+            <div className="flex items-center justify-between p-4 border-b border-slate-700">
+              <div>
+                <h2 className="text-lg sm:text-xl font-bold text-indigo-400 flex items-center gap-2">🗓 Cenniki na kalendarzu</h2>
+                <p className="text-xs text-slate-400 mt-1">Dla każdej kwatery wybierz jeden cennik wyświetlany na kalendarzu.</p>
+              </div>
+              <button
+                onClick={() => setShowRatePlanMatrix(false)}
+                className="text-slate-400 hover:text-white p-1"
+                aria-label="Zamknij"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="overflow-auto p-2 sm:p-4">
+              {ratePlans.length === 0 ? (
+                <p className="text-slate-400 text-sm text-center py-8">Brak cenników dla tego obiektu.</p>
+              ) : filteredUnits.length === 0 ? (
+                <p className="text-slate-400 text-sm text-center py-8">Brak kwater do wyświetlenia.</p>
+              ) : (
+                <table className="border-collapse text-xs">
+                  <thead>
+                    <tr>
+                      <th className="sticky left-0 top-0 z-30 bg-slate-800 text-left text-slate-300 font-semibold p-2 border-b border-r border-slate-700 min-w-[120px]">
+                        Kwatera
+                      </th>
+                      {ratePlans.map(rp => (
+                        <th
+                          key={rp.id}
+                          className="sticky top-0 z-20 bg-slate-800 text-slate-300 font-medium p-2 border-b border-slate-700 min-w-[80px] max-w-[120px]"
+                        >
+                          <div className="truncate" title={rp.name}>{rp.name}</div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredUnits.map(unit => {
+                      const availForUnit = unitAvailablePlans.get(unit.id);
+                      const selectedPlanId = unitRatePlan.get(unit.id) ?? defaultRatePlanId ?? '';
+                      return (
+                        <tr key={unit.id} className="hover:bg-slate-700/30">
+                          <td className="sticky left-0 z-10 bg-slate-800 text-white font-medium p-2 border-b border-r border-slate-700 min-w-[120px]">
+                            <div className="truncate" title={unit.name}>{unit.name}</div>
+                          </td>
+                          {ratePlans.map(rp => {
+                            // Preserve existing availability filtering: when we have price data
+                            // for this unit, only its plans are selectable; otherwise allow all.
+                            const isAvailable = availForUnit ? availForUnit.has(rp.id) : true;
+                            const isSelected = selectedPlanId === rp.id;
+                            return (
+                              <td key={rp.id} className="text-center p-2 border-b border-slate-700">
+                                <button
+                                  type="button"
+                                  disabled={!isAvailable}
+                                  onClick={() => handleUnitRatePlanChange(unit.id, rp.id)}
+                                  title={isAvailable ? rp.name : 'Brak danych cenowych dla tej kwatery'}
+                                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center mx-auto transition ${
+                                    !isAvailable
+                                      ? 'border-slate-700 bg-slate-700/40 cursor-not-allowed opacity-40'
+                                      : isSelected
+                                      ? 'border-indigo-400 bg-indigo-500 cursor-pointer'
+                                      : 'border-slate-500 bg-slate-800 hover:border-indigo-400 cursor-pointer'
+                                  }`}
+                                >
+                                  {isSelected && isAvailable && <span className="w-2 h-2 rounded-full bg-white" />}
+                                </button>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-700 flex justify-end">
+              <button
+                onClick={() => setShowRatePlanMatrix(false)}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-5 rounded-lg transition"
+              >
+                Gotowe
+              </button>
+            </div>
           </div>
         </div>
       )}
