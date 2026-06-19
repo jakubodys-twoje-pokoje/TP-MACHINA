@@ -39,30 +39,6 @@ function parseFloatOrNull(value: any): number | null {
   return Number.isNaN(n) ? null : n
 }
 
-// Local (timezone-safe) YYYY-MM-DD formatter.
-function fmtDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-// Build sub-ranges covering [start, end] in chunks no larger than maxDays
-// (Hotres api_prices is limited to ~180 days per request).
-function buildDateRanges(start: Date, end: Date, maxDays: number): Array<{ from: string; till: string; label: string }> {
-  const ranges: Array<{ from: string; till: string; label: string }> = []
-  let cursor = new Date(start)
-  let idx = 1
-  while (cursor <= end) {
-    const rangeStart = new Date(cursor)
-    const rangeEnd = new Date(cursor)
-    rangeEnd.setDate(rangeEnd.getDate() + (maxDays - 1))
-    if (rangeEnd > end) rangeEnd.setTime(end.getTime())
-    ranges.push({ from: fmtDate(rangeStart), till: fmtDate(rangeEnd), label: `range ${idx}` })
-    cursor = new Date(rangeEnd)
-    cursor.setDate(cursor.getDate() + 1)
-    idx++
-  }
-  return ranges
-}
-
 async function fetchFromHotres(targetUrl: string): Promise<string> {
   const res = await fetch(targetUrl, {
     method: 'GET',
@@ -230,15 +206,11 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     console.log(`  📋 Rate plans for ${property.name}: ${allRatePlans.length} total — syncing ALL`)
     console.log(`  📋 Plans:`, allRatePlans.map(rp => `"${rp.name}" (ext_id: ${rp.external_id})`))
 
-    // Fetch prices from Hotres - dynamic window relative to today, split into
-    // sub-ranges within the 180-day API limit. Covers ~30 days back to ~18 months ahead.
-    const today = new Date()
-    const windowStart = new Date(today)
-    windowStart.setDate(windowStart.getDate() - 30)
-    const windowEnd = new Date(today)
-    windowEnd.setMonth(windowEnd.getMonth() + 18)
-    const dateRanges = buildDateRanges(windowStart, windowEnd, 180)
-    console.log(`  📅 Price window ${fmtDate(windowStart)} → ${fmtDate(windowEnd)} in ${dateRanges.length} sub-ranges`)
+    // Fetch prices from Hotres - split into two ranges (180 day API limit)
+    const dateRanges = [
+      { from: '2026-01-20', till: '2026-07-18', label: 'first half' },
+      { from: '2026-07-19', till: '2026-12-31', label: 'second half' }
+    ]
 
     // Create mapping of type_id to unit for lookup (trim to match availability sync
     // and guard against stray whitespace in external_type_id / Hotres type_id)
