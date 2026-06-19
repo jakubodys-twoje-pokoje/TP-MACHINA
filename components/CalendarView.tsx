@@ -3,6 +3,7 @@ import { useParams, useLocation } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { Property, Availability, Unit, Notification, Price, AISuggestion, RatePlan } from '../types';
 import { Loader2, ChevronLeft, ChevronRight, RefreshCw, Sparkles, ArrowRight, CheckSquare, Square, X, Save } from 'lucide-react';
+import { RatePlanMatrixModal } from './RatePlanMatrixModal';
 
 export const CalendarView: React.FC = () => {
   const { id: propertyId } = useParams<{ id: string }>();
@@ -41,7 +42,8 @@ export const CalendarView: React.FC = () => {
   });
 
   // View options — which buttons to show (persisted to localStorage)
-  const [showViewOptions, setShowViewOptions] = useState(false);
+  // Single collapsible "Akcje / Ustawienia" panel that holds the push/compare/verify/matrix actions
+  const [showActions, setShowActions] = useState(false);
   const [viewOptions, setViewOptions] = useState<Record<string, boolean>>(() => {
     try {
       const s = localStorage.getItem('tp_view_options');
@@ -2261,6 +2263,116 @@ export const CalendarView: React.FC = () => {
     </div>
   );
 
+  // Single collapsible panel gathering the heavier actions so the calendar stays clean.
+  // Includes: rate plan matrix, compare, verify quarter, push (with rate-plan selector),
+  // override, plus the per-button visibility checkboxes.
+  const renderActionsPanel = () => (
+    <div className="mt-2 p-3 bg-slate-800 rounded-lg space-y-3 text-xs text-slate-300">
+      {/* Per-button visibility toggles */}
+      <div>
+        <div className="font-semibold text-slate-200 mb-1.5">Pokaż przyciski:</div>
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            { key: 'compare', label: '🔍 Porównaj' },
+            { key: 'push', label: '📤 Push DB' },
+            { key: 'override', label: '🚨 OVERRIDE' },
+            { key: 'verifyQuarter', label: '📅 Kwartał' },
+          ].map(({ key, label }) => (
+            <label key={key} className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={viewOptions[key] !== false}
+                onChange={e => setViewOption(key, e.target.checked)}
+                className="w-3.5 h-3.5"
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* Rate plan matrix (per-unit rate plan selection) */}
+      {renderRatePlanMatrixButton()}
+
+      {/* Weryfikuj kwartał */}
+      {viewOptions.verifyQuarter !== false && (
+        <div className="flex gap-2">
+          <select
+            value={verifyQuarter}
+            onChange={e => setVerifyQuarter(e.target.value)}
+            className="flex-1 bg-slate-700 border border-slate-600 text-slate-200 text-xs rounded-lg px-2 py-1.5"
+          >
+            {quarterOptions.map(q => <option key={q} value={q}>{q}</option>)}
+          </select>
+          <button
+            onClick={handleVerifyQuarter}
+            disabled={syncing}
+            className="flex-1 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-semibold py-1.5 px-3 rounded-lg text-xs flex items-center justify-center gap-1"
+          >
+            {syncing ? '⏳...' : '📅 Weryfikuj kwartał'}
+          </button>
+        </div>
+      )}
+
+      {/* Compare DB vs Hotres */}
+      {viewOptions.compare !== false && (
+        <div>
+          <button
+            onClick={handleCompareSync}
+            disabled={syncing}
+            className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold py-2 px-3 rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
+          >
+            <span className="text-xs sm:text-sm">{syncing ? '⏳ Porównywanie...' : '🔍 Porównaj DB ↔ Hotres'}</span>
+          </button>
+          <p className="text-[10px] text-slate-500 text-center mt-1">Pokaż różnice i opcję przywrócenia stanu DB</p>
+        </div>
+      )}
+
+      {/* Rate plans to push to Hotres */}
+      {(viewOptions.push !== false || viewOptions.override !== false) && renderPushRatePlanSelector()}
+
+      {/* Push DB → Hotres */}
+      {viewOptions.push !== false && (
+        <div>
+          <button
+            onClick={handlePushDBToHotres}
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-3 rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
+          >
+            <span className="text-xs sm:text-sm">📤 Push DB → Hotres</span>
+          </button>
+          <p className="text-[10px] text-slate-500 text-center mt-1">Wyślij CTA/CTD/MIN z bazy do Hotresa (aktualny widok)</p>
+        </div>
+      )}
+
+      {/* OVERRIDE */}
+      {viewOptions.override !== false && (
+        <div>
+          <button
+            onClick={handleOpenOverrideModal}
+            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-3 rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
+          >
+            <span className="text-xs sm:text-sm">🚨 OVERRIDE</span>
+          </button>
+          <p className="text-[10px] text-slate-500 text-center mt-1">Nadpisz wybrane restrykcje w Hotresie (wymaga hasła)</p>
+        </div>
+      )}
+    </div>
+  );
+
+  // The "⚙ Akcje / Ustawienia" toggle + panel (shared by both view modes)
+  const renderActionsToggle = () => (
+    <div className="mt-3">
+      <button
+        onClick={() => setShowActions(v => !v)}
+        className="w-full bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-medium py-1.5 px-3 rounded-lg flex items-center justify-between"
+      >
+        <span>⚙ Akcje / Ustawienia</span>
+        <span>{showActions ? '▲' : '▼'}</span>
+      </button>
+      {showActions && renderActionsPanel()}
+    </div>
+  );
+
   return (
     <div className="space-y-2 sm:space-y-4 w-full max-w-full px-2 sm:px-0">
       <div className="flex items-center justify-between">
@@ -2502,63 +2614,7 @@ export const CalendarView: React.FC = () => {
               </div>
             )}
 
-            {/* View Options Toggle */}
-            <div className="mt-3">
-              <button
-                onClick={() => setShowViewOptions(v => !v)}
-                className="w-full bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-medium py-1.5 px-3 rounded-lg flex items-center justify-between"
-              >
-                <span>⚙ Opcje widoku</span>
-                <span>{showViewOptions ? '▲' : '▼'}</span>
-              </button>
-              {showViewOptions && (
-                <div className="mt-2 p-3 bg-slate-800 rounded-lg space-y-2 text-xs text-slate-300">
-                  {[
-                    { key: 'compare', label: '🔍 Porównaj DB ↔ Hotres' },
-                    { key: 'push', label: '📤 Push DB → Hotres' },
-                    { key: 'override', label: '🚨 OVERRIDE' },
-                    { key: 'verifyQuarter', label: '📅 Weryfikuj kwartał' },
-                  ].map(({ key, label }) => (
-                    <label key={key} className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={viewOptions[key] !== false}
-                        onChange={e => setViewOption(key, e.target.checked)}
-                        className="w-3.5 h-3.5"
-                      />
-                      {label}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Rate plan matrix (per-unit rate plan selection) */}
-            {renderRatePlanMatrixButton()}
-
-            {/* Weryfikuj kwartał */}
-            {viewOptions.verifyQuarter !== false && (
-              <div className="mt-3">
-                <div className="flex gap-2">
-                  <select
-                    value={verifyQuarter}
-                    onChange={e => setVerifyQuarter(e.target.value)}
-                    className="flex-1 bg-slate-700 border border-slate-600 text-slate-200 text-xs rounded-lg px-2 py-1.5"
-                  >
-                    {quarterOptions.map(q => <option key={q} value={q}>{q}</option>)}
-                  </select>
-                  <button
-                    onClick={handleVerifyQuarter}
-                    disabled={syncing}
-                    className="flex-1 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-semibold py-1.5 px-3 rounded-lg text-xs flex items-center justify-center gap-1"
-                  >
-                    {syncing ? '⏳...' : '📅 Weryfikuj kwartał'}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Sync DB ← Hotres Button */}
+            {/* Sync DB ← Hotres Button — kept visible (most-used action) */}
             <div className="mt-3">
               <button
                 onClick={triggerAvailabilitySync}
@@ -2570,48 +2626,8 @@ export const CalendarView: React.FC = () => {
               <p className="text-[10px] text-slate-500 text-center mt-1">Pobiera świeże ceny i dostępność z Hotres do DB</p>
             </div>
 
-            {/* Compare DB vs Hotres Button */}
-            {viewOptions.compare !== false && (
-              <div className="mt-3">
-                <button
-                  onClick={handleCompareSync}
-                  disabled={syncing}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
-                >
-                  <span className="text-xs sm:text-sm">{syncing ? '⏳ Porównywanie...' : '🔍 Porównaj DB ↔ Hotres'}</span>
-                </button>
-                <p className="text-[10px] text-slate-500 text-center mt-1">Pokaż różnice i opcję przywrócenia stanu DB</p>
-              </div>
-            )}
-
-            {/* Rate plans to push to Hotres */}
-            {(viewOptions.push !== false || viewOptions.override !== false) && renderPushRatePlanSelector()}
-
-            {/* Push DB → Hotres Button */}
-            {viewOptions.push !== false && (
-              <div className="mt-3">
-                <button
-                  onClick={handlePushDBToHotres}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
-                >
-                  <span className="text-xs sm:text-sm">📤 Push DB → Hotres</span>
-                </button>
-                <p className="text-[10px] text-slate-500 text-center mt-1">Wyślij CTA/CTD/MIN z bazy do Hotresa (aktualny widok)</p>
-              </div>
-            )}
-
-            {/* OVERRIDE Button - Always Visible */}
-            {viewOptions.override !== false && (
-              <div className="mt-3">
-                <button
-                  onClick={handleOpenOverrideModal}
-                  className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
-                >
-                  <span className="text-xs sm:text-sm">🚨 OVERRIDE</span>
-                </button>
-                <p className="text-[10px] text-slate-500 text-center mt-1">Nadpisz wybrane restrykcje w Hotresie (wymaga hasła)</p>
-              </div>
-            )}
+            {/* All other actions live under a single ⚙ toggle to keep the calendar clean */}
+            {renderActionsToggle()}
           </div>
         )}
 
@@ -2644,63 +2660,7 @@ export const CalendarView: React.FC = () => {
           </div>
         )}
 
-        {/* View Options + Quarter Verify for Full View */}
-        {viewMode === 'full' && (
-          <div className="mb-2 sm:mb-3">
-            <button
-              onClick={() => setShowViewOptions(v => !v)}
-              className="w-full bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-medium py-1.5 px-3 rounded-lg flex items-center justify-between mb-2"
-            >
-              <span>⚙ Opcje widoku</span>
-              <span>{showViewOptions ? '▲' : '▼'}</span>
-            </button>
-            {showViewOptions && (
-              <div className="mb-2 p-3 bg-slate-800 rounded-lg grid grid-cols-2 gap-2 text-xs text-slate-300">
-                {[
-                  { key: 'compare', label: '🔍 Porównaj' },
-                  { key: 'push', label: '📤 Push DB' },
-                  { key: 'override', label: '🚨 Override' },
-                  { key: 'verifyQuarter', label: '📅 Kwartał' },
-                ].map(({ key, label }) => (
-                  <label key={key} className="flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={viewOptions[key] !== false}
-                      onChange={e => setViewOption(key, e.target.checked)}
-                      className="w-3.5 h-3.5"
-                    />
-                    {label}
-                  </label>
-                ))}
-              </div>
-            )}
-            {viewOptions.verifyQuarter !== false && (
-              <div className="flex gap-2 mb-2">
-                <select
-                  value={verifyQuarter}
-                  onChange={e => setVerifyQuarter(e.target.value)}
-                  className="flex-1 bg-slate-700 border border-slate-600 text-slate-200 text-xs rounded-lg px-2 py-1.5"
-                >
-                  {quarterOptions.map(q => <option key={q} value={q}>{q}</option>)}
-                </select>
-                <button
-                  onClick={handleVerifyQuarter}
-                  disabled={syncing}
-                  className="flex-1 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-semibold py-1.5 px-3 rounded-lg text-xs flex items-center justify-center gap-1"
-                >
-                  {syncing ? '⏳...' : '📅 Weryfikuj kwartał'}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Rate plan matrix for Full View */}
-        {viewMode === 'full' && (
-          <div className="mb-2 sm:mb-3">{renderRatePlanMatrixButton()}</div>
-        )}
-
-        {/* Sync DB ← Hotres Button for Full View */}
+        {/* Sync DB ← Hotres Button for Full View — kept visible (most-used action) */}
         {viewMode === 'full' && (
           <div className="mb-2 sm:mb-3">
             <button
@@ -2714,50 +2674,8 @@ export const CalendarView: React.FC = () => {
           </div>
         )}
 
-        {/* Compare DB vs Hotres Button for Full View */}
-        {viewMode === 'full' && viewOptions.compare !== false && (
-          <div className="mb-2 sm:mb-3">
-            <button
-              onClick={handleCompareSync}
-              disabled={syncing}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
-            >
-              <span className="text-xs sm:text-sm">{syncing ? '⏳ Porównywanie...' : '🔍 Porównaj DB ↔ Hotres'}</span>
-            </button>
-            <p className="text-[10px] text-slate-500 text-center mt-1">Pokaż różnice i opcję przywrócenia stanu DB</p>
-          </div>
-        )}
-
-        {/* Rate plans to push to Hotres (Full View) */}
-        {viewMode === 'full' && (viewOptions.push !== false || viewOptions.override !== false) && (
-          <div className="mb-2 sm:mb-3">{renderPushRatePlanSelector()}</div>
-        )}
-
-        {/* Push DB → Hotres Button for Full View */}
-        {viewMode === 'full' && viewOptions.push !== false && (
-          <div className="mb-2 sm:mb-3">
-            <button
-              onClick={handlePushDBToHotres}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
-            >
-              <span className="text-xs sm:text-sm">📤 Push DB → Hotres</span>
-            </button>
-            <p className="text-[10px] text-slate-500 text-center mt-1">Wyślij CTA/CTD/MIN z bazy do Hotresa (aktualny widok)</p>
-          </div>
-        )}
-
-        {/* OVERRIDE Button for Full View - Always Visible */}
-        {viewMode === 'full' && viewOptions.override !== false && (
-          <div className="mb-2 sm:mb-3">
-            <button
-              onClick={handleOpenOverrideModal}
-              className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all hover:shadow-lg active:scale-98 flex items-center justify-center gap-2"
-            >
-              <span className="text-xs sm:text-sm">🚨 OVERRIDE</span>
-            </button>
-            <p className="text-[10px] text-slate-500 text-center mt-1">Nadpisz wybrane restrykcje w Hotresie (wymaga hasła)</p>
-          </div>
-        )}
+        {/* All other actions under a single ⚙ toggle to keep the calendar clean */}
+        {viewMode === 'full' && renderActionsToggle()}
 
         {/* Show table only if there are units to display */}
         {filteredUnits.length > 0 && (
@@ -3252,104 +3170,16 @@ export const CalendarView: React.FC = () => {
 
       {/* Rate Plan Matrix Modal — per-unit rate plan selection */}
       {showRatePlanMatrix && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-2 sm:p-4">
-          <div className="bg-slate-800 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col border border-indigo-600">
-            <div className="flex items-center justify-between p-4 border-b border-slate-700">
-              <div>
-                <h2 className="text-lg sm:text-xl font-bold text-indigo-400 flex items-center gap-2">🗓 Cenniki na kalendarzu</h2>
-                <p className="text-xs text-slate-400 mt-1">Dla każdej kwatery wybierz jeden cennik wyświetlany na kalendarzu. Przycisk „✓ wszystkim" w nagłówku ustawia dany cennik od razu wszystkim kwaterom.</p>
-              </div>
-              <button
-                onClick={() => setShowRatePlanMatrix(false)}
-                className="text-slate-400 hover:text-white p-1"
-                aria-label="Zamknij"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="overflow-auto p-2 sm:p-4">
-              {ratePlans.length === 0 ? (
-                <p className="text-slate-400 text-sm text-center py-8">Brak cenników dla tego obiektu.</p>
-              ) : filteredUnits.length === 0 ? (
-                <p className="text-slate-400 text-sm text-center py-8">Brak kwater do wyświetlenia.</p>
-              ) : (
-                <table className="border-collapse text-xs">
-                  <thead>
-                    <tr>
-                      <th className="sticky left-0 top-0 z-30 bg-slate-800 text-left text-slate-300 font-semibold p-2 border-b border-r border-slate-700 min-w-[120px] align-bottom">
-                        Kwatera
-                      </th>
-                      {ratePlans.map(rp => (
-                        <th
-                          key={rp.id}
-                          className="sticky top-0 z-20 bg-slate-800 text-slate-300 font-medium p-2 border-b border-slate-700 min-w-[80px] max-w-[120px] align-bottom"
-                        >
-                          <div className="truncate mb-1" title={rp.name}>{rp.name}</div>
-                          <button
-                            type="button"
-                            onClick={() => handleBulkRatePlanChange(rp.id)}
-                            title={`Ustaw „${rp.name}" wszystkim kwaterom (które mają dane)`}
-                            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-[9px] font-semibold rounded px-1 py-0.5 transition"
-                          >
-                            ✓ wszystkim
-                          </button>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredUnits.map(unit => {
-                      const availForUnit = unitAvailablePlans.get(unit.id);
-                      const selectedPlanId = unitRatePlan.get(unit.id) ?? defaultRatePlanId ?? '';
-                      return (
-                        <tr key={unit.id} className="hover:bg-slate-700/30">
-                          <td className="sticky left-0 z-10 bg-slate-800 text-white font-medium p-2 border-b border-r border-slate-700 min-w-[120px]">
-                            <div className="truncate" title={unit.name}>{unit.name}</div>
-                          </td>
-                          {ratePlans.map(rp => {
-                            // Preserve existing availability filtering: when we have price data
-                            // for this unit, only its plans are selectable; otherwise allow all.
-                            const isAvailable = availForUnit ? availForUnit.has(rp.id) : true;
-                            const isSelected = selectedPlanId === rp.id;
-                            return (
-                              <td key={rp.id} className="text-center p-2 border-b border-slate-700">
-                                <button
-                                  type="button"
-                                  disabled={!isAvailable}
-                                  onClick={() => handleUnitRatePlanChange(unit.id, rp.id)}
-                                  title={isAvailable ? rp.name : 'Brak danych cenowych dla tej kwatery'}
-                                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center mx-auto transition ${
-                                    !isAvailable
-                                      ? 'border-slate-700 bg-slate-700/40 cursor-not-allowed opacity-40'
-                                      : isSelected
-                                      ? 'border-indigo-400 bg-indigo-500 cursor-pointer'
-                                      : 'border-slate-500 bg-slate-800 hover:border-indigo-400 cursor-pointer'
-                                  }`}
-                                >
-                                  {isSelected && isAvailable && <span className="w-2 h-2 rounded-full bg-white" />}
-                                </button>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
-
-            <div className="p-4 border-t border-slate-700 flex justify-end">
-              <button
-                onClick={() => setShowRatePlanMatrix(false)}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-5 rounded-lg transition"
-              >
-                Gotowe
-              </button>
-            </div>
-          </div>
-        </div>
+        <RatePlanMatrixModal
+          units={filteredUnits}
+          ratePlans={ratePlans}
+          unitAvailablePlans={unitAvailablePlans}
+          unitRatePlan={unitRatePlan}
+          defaultRatePlanId={defaultRatePlanId}
+          onSelect={handleUnitRatePlanChange}
+          onBulkSelect={handleBulkRatePlanChange}
+          onClose={() => setShowRatePlanMatrix(false)}
+        />
       )}
 
       {/* Bulk Edit Modal */}

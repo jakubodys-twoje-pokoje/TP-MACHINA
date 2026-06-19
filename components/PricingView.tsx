@@ -2,8 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { RefreshCw, Trash2, Edit2, Loader2, ImageOff, ChevronDown, Save, X, Utensils, CalendarClock } from 'lucide-react';
-import { RatePlan, Property } from '../types';
+import { RatePlan, Property, Unit } from '../types';
 import { useProperties } from '../contexts/PropertyContext';
+import { RatePlanMatrixModal } from './RatePlanMatrixModal';
 
 const BoardTypeBadge: React.FC<{ type: string | null }> = ({ type }) => {
     const map: Record<string, string> = {
@@ -33,14 +34,82 @@ export const PricingView: React.FC = () => {
   const [editingRateId, setEditingRateId] = useState<string | null>(null);
   const [editFormData, setEditFormData] = useState<Partial<RatePlan>>({});
 
+  // Rate plan matrix (same "Cenniki na kalendarzu" picker as on the calendar)
+  const [showMatrix, setShowMatrix] = useState(false);
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [unitRatePlan, setUnitRatePlan] = useState<Map<string, string>>(new Map());
+  const [unitAvailablePlans, setUnitAvailablePlans] = useState<Map<string, Set<string>>>(new Map());
+
   const { syncRates } = useProperties();
+
+  // First rate plan (by name order) is the fallback default, matching the calendar
+  const defaultRatePlanId = rates.length > 0 ? rates[0].id : null;
 
   useEffect(() => {
     if (propertyId) {
       fetchProperty();
       fetchRates();
+      fetchUnitsAndAvailablePlans();
     }
   }, [propertyId]);
+
+  // Load units + which rate plans actually have price data per unit (for the matrix)
+  const fetchUnitsAndAvailablePlans = async () => {
+    if (!propertyId) return;
+    const { data: unitsData } = await supabase
+      .from('units')
+      .select('*')
+      .eq('property_id', propertyId)
+      .order('name');
+    if (!unitsData) return;
+    setUnits(unitsData);
+
+    const sel = new Map<string, string>();
+    unitsData.forEach((u: Unit) => { if (u.selected_rate_plan_id) sel.set(u.id, u.selected_rate_plan_id); });
+    setUnitRatePlan(sel);
+
+    // Build unit_id -> Set<rate_plan_id> from prices (chunked .in() to avoid URL limits)
+    const unitIds = unitsData.map((u: Unit) => u.id);
+    const availPlans = new Map<string, Set<string>>();
+    const CHUNK = 50;
+    for (let i = 0; i < unitIds.length; i += CHUNK) {
+      const chunk = unitIds.slice(i, i + CHUNK);
+      const { data: priceRows } = await supabase
+        .from('prices')
+        .select('unit_id, rate_id')
+        .in('unit_id', chunk);
+      (priceRows || []).forEach((p: { unit_id: string; rate_id: string | null }) => {
+        if (!p.rate_id) return;
+        if (!availPlans.has(p.unit_id)) availPlans.set(p.unit_id, new Set());
+        availPlans.get(p.unit_id)!.add(p.rate_id);
+      });
+    }
+    setUnitAvailablePlans(availPlans);
+  };
+
+  // Persist the per-unit rate plan choice (platform-wide, same column as the calendar)
+  const handleUnitRatePlanChange = async (unitId: string, ratePlanId: string) => {
+    setUnitRatePlan(prev => new Map(prev).set(unitId, ratePlanId));
+    await supabase.from('units').update({ selected_rate_plan_id: ratePlanId }).eq('id', unitId);
+  };
+
+  // Assign one rate plan to every unit that has data for it
+  const handleBulkRatePlanChange = async (ratePlanId: string) => {
+    const next = new Map(unitRatePlan);
+    const affectedIds: string[] = [];
+    units.forEach(u => {
+      const avail = unitAvailablePlans.get(u.id);
+      const isAvailable = avail ? avail.has(ratePlanId) : true;
+      if (isAvailable) { next.set(u.id, ratePlanId); affectedIds.push(u.id); }
+    });
+    if (affectedIds.length === 0) return;
+    setUnitRatePlan(next);
+    const CHUNK = 50;
+    for (let i = 0; i < affectedIds.length; i += CHUNK) {
+      const chunk = affectedIds.slice(i, i + CHUNK);
+      await supabase.from('units').update({ selected_rate_plan_id: ratePlanId }).in('id', chunk);
+    }
+  };
 
   const fetchProperty = async () => {
     if (!propertyId) return;
@@ -217,9 +286,16 @@ export const PricingView: React.FC = () => {
           <h2 className="text-2xl font-bold text-white">Cenniki i Oferty</h2>
           <p className="text-slate-400 text-sm mt-1">Zarządzaj ofertami specjalnymi i planami cenowymi.</p>
         </div>
-        {isImported && (
-          <div className="flex-shrink-0">
-            <button 
+        <div className="flex-shrink-0 flex items-center gap-2">
+          <button
+            onClick={() => setShowMatrix(true)}
+            className="bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors text-sm"
+            title="Wybierz, który cennik wyświetla się na kalendarzu dla każdej kwatery"
+          >
+            <CalendarClock size={16} /> Cenniki na kalendarzu
+          </button>
+          {isImported && (
+            <button
               onClick={handleSync}
               disabled={isSyncing}
               className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-wait text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors text-sm"
@@ -227,9 +303,22 @@ export const PricingView: React.FC = () => {
               {isSyncing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
               {isSyncing ? 'Pobieram...' : 'Pobierz z Hotres'}
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
+
+      {showMatrix && (
+        <RatePlanMatrixModal
+          units={units}
+          ratePlans={rates}
+          unitAvailablePlans={unitAvailablePlans}
+          unitRatePlan={unitRatePlan}
+          defaultRatePlanId={defaultRatePlanId}
+          onSelect={handleUnitRatePlanChange}
+          onBulkSelect={handleBulkRatePlanChange}
+          onClose={() => setShowMatrix(false)}
+        />
+      )}
 
       <div className="bg-surface rounded-xl border border-border overflow-x-auto">
         <table className="w-full text-left text-sm">
