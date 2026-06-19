@@ -2237,9 +2237,9 @@ export const CalendarView: React.FC = () => {
                 type="checkbox"
                 checked={selectedPushRatePlanIds.has(rp.id)}
                 onChange={() => togglePushRatePlan(rp.id)}
-                className="w-3.5 h-3.5 accent-indigo-500"
+                className="w-3.5 h-3.5 accent-indigo-500 flex-shrink-0"
               />
-              <span className="truncate">{rp.name}</span>
+              <span className="break-words">{rp.name}</span>
             </label>
           ))}
         </div>

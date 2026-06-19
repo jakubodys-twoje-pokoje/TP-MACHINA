@@ -58,9 +58,9 @@ export const RatePlanMatrixModal: React.FC<RatePlanMatrixModalProps> = ({
                   {ratePlans.map(rp => (
                     <th
                       key={rp.id}
-                      className="sticky top-0 z-20 bg-slate-800 text-slate-300 font-medium p-2 border-b border-slate-700 min-w-[80px] max-w-[120px] align-bottom"
+                      className="sticky top-0 z-20 bg-slate-800 text-slate-300 font-medium p-2 border-b border-slate-700 min-w-[110px] w-[130px] align-bottom"
                     >
-                      <div className="truncate mb-1" title={rp.name}>{rp.name}</div>
+                      <div className="mb-1 whitespace-normal break-words leading-tight" title={rp.name}>{rp.name}</div>
                       <button
                         type="button"
                         onClick={() => onBulkSelect(rp.id)}
