@@ -98,9 +98,11 @@ export const CalendarView: React.FC = () => {
   const [aiSuggestions, setAiSuggestions] = useState<Map<string, AISuggestion>>(new Map());
   const [selectedSuggestion, setSelectedSuggestion] = useState<AISuggestion | null>(null);
 
-  // "Wyślij na Hotres" — modal asking which rate plans to push to (each time)
+  // Shared "which rate plans to push to" modal — asks every time, for all push actions
   const [showPushSendModal, setShowPushSendModal] = useState(false);
   const [pushModalSelection, setPushModalSelection] = useState<Set<string>>(new Set());
+  const [pushModalAction, setPushModalAction] = useState<'sync' | 'pushdb' | 'override'>('sync');
+  const [pushModalInfo, setPushModalInfo] = useState<string>('');
 
   // Override modal state
   const [showOverrideModal, setShowOverrideModal] = useState(false);
@@ -712,14 +714,7 @@ export const CalendarView: React.FC = () => {
     }
 
     if (hasPriceChanges) {
-      // Seed the modal from the saved push selection (or displayed plans as a default)
-      const seed = new Set<string>(selectedPushRatePlanIds);
-      if (seed.size === 0) {
-        unitRatePlan.forEach(planId => { if (planId) seed.add(planId); });
-        if (seed.size === 0 && defaultRatePlanId) seed.add(defaultRatePlanId);
-      }
-      setPushModalSelection(seed);
-      setShowPushSendModal(true);
+      openPushModal('sync', `Zmiany w cenach/restrykcjach: ${priceChanges.size}.`);
       return;
     }
 
@@ -731,13 +726,29 @@ export const CalendarView: React.FC = () => {
     executeSyncToHotres(new Set());
   };
 
-  // Confirm handler for the push-target modal
-  const confirmPushSend = () => {
+  // Open the shared push-target modal, seeding the selection from the saved push choice
+  // (or the displayed plans as a one-time default).
+  const openPushModal = (action: 'sync' | 'pushdb' | 'override', info: string) => {
+    const seed = new Set<string>(selectedPushRatePlanIds);
+    if (seed.size === 0) {
+      unitRatePlan.forEach(planId => { if (planId) seed.add(planId); });
+      if (seed.size === 0 && defaultRatePlanId) seed.add(defaultRatePlanId);
+    }
+    setPushModalSelection(seed);
+    setPushModalAction(action);
+    setPushModalInfo(info);
+    setShowPushSendModal(true);
+  };
+
+  // Confirm handler for the push-target modal — dispatches to the right action
+  const confirmPushModal = () => {
     if (pushModalSelection.size === 0) return;
-    // Remember the choice as the next default
-    setSelectedPushRatePlanIds(new Set(pushModalSelection));
+    const ids = new Set(pushModalSelection);
+    setSelectedPushRatePlanIds(ids); // remember as next default
     setShowPushSendModal(false);
-    executeSyncToHotres(pushModalSelection);
+    if (pushModalAction === 'sync') executeSyncToHotres(ids);
+    else if (pushModalAction === 'pushdb') executePushDBToHotres(ids);
+    else if (pushModalAction === 'override') executeOverride(ids);
   };
 
   // Performs the actual send using the chosen rate plan ids
@@ -824,7 +835,7 @@ export const CalendarView: React.FC = () => {
     }
   };
 
-  const handlePushDBToHotres = async () => {
+  const handlePushDBToHotres = () => {
     if (!property) return;
 
     const currentData = getHotresSyncCount(property.id);
@@ -835,13 +846,17 @@ export const CalendarView: React.FC = () => {
 
     const startDateStr = toLocalDateStr(dates[0]);
     const endDateStr = toLocalDateStr(dates[dates.length - 1]);
+    openPushModal('pushdb',
+      `Wyślę CTA/CTD/MIN z bazy.\nZakres: ${startDateStr} – ${endDateStr} · Jednostki: ${units.filter(u => u.external_type_id).length}.\nNadpisze bieżące restrykcje w Hotresie.`
+    );
+  };
 
-    if (!confirm(
-      `Wyślij wszystkie aktualne wartości CTA/CTD/MIN z bazy do Hotresa?\n\n` +
-      `Zakres dat: ${startDateStr} – ${endDateStr}\n` +
-      `Jednostki: ${units.filter(u => u.external_type_id).length}\n\n` +
-      `Nadpisze bieżące wartości restrykcji w Hotresie.`
-    )) return;
+  const executePushDBToHotres = async (planIds: Set<string>) => {
+    if (!property) return;
+
+    const currentData = getHotresSyncCount(property.id);
+    const startDateStr = toLocalDateStr(dates[0]);
+    const endDateStr = toLocalDateStr(dates[dates.length - 1]);
 
     try {
       const { data: allRatePlansRaw, error: rpError } = await supabase
@@ -858,9 +873,9 @@ export const CalendarView: React.FC = () => {
         throw new Error('Cenniki nie mają external_id. Pobierz cenniki z Hotres w zakładce Cenniki.');
       }
 
-      const plansToSend = allRatePlans.filter(rp => selectedPushRatePlanIds.has(rp.id));
+      const plansToSend = allRatePlans.filter(rp => planIds.has(rp.id));
       if (plansToSend.length === 0) {
-        alert('Zaznacz przynajmniej jeden cennik do wysyłki w ⚙ Akcje / Ustawienia → „Wyślij do cenników:".');
+        alert('Nie wybrano żadnego cennika do wysyłki.');
         return;
       }
 
@@ -1546,9 +1561,18 @@ export const CalendarView: React.FC = () => {
       return;
     }
 
+    // Pick the target rate plans before sending (modal asks every time)
+    setShowOverrideModal(false);
+    openPushModal('override', `🚨 OVERRIDE: ${selected.join(', ')} · wszystkie jednostki i dni. Nadpisze dane w Hotresie.`);
+  };
+
+  const executeOverride = async (planIds: Set<string>) => {
+    const selected: string[] = [];
+    if (overrideCTA) selected.push('CTA');
+    if (overrideCTD) selected.push('CTD');
+    if (overrideMIN) selected.push('MIN nocy');
     try {
-      setShowOverrideModal(false);
-      await sendAllPricesToHotres();
+      await sendAllPricesToHotres(planIds);
       alert(`✅ SUKCES!\n\nWysłano: ${selected.join(', ')}`);
     } catch (error: any) {
       alert(`❌ Błąd: ${error.message}`);
@@ -1556,8 +1580,9 @@ export const CalendarView: React.FC = () => {
     }
   };
 
-  const sendAllPricesToHotres = async () => {
+  const sendAllPricesToHotres = async (planIdsOverride?: Set<string>) => {
     if (!property) throw new Error('Brak informacji o obiekcie');
+    const pushSet = planIdsOverride ?? selectedPushRatePlanIds;
 
     console.log('🏠 OVERWRITE ALL: Sending ALL restrictions (CTA/CTD/MIN) for property:', property.name, 'ID:', property.id);
 
@@ -1583,9 +1608,9 @@ export const CalendarView: React.FC = () => {
       throw new Error(`Cenniki istnieją (${names}), ale nie mają external_id. Pobierz cenniki z Hotres używając przycisku "Pobierz z Hotres" w zakładce Cenniki.`);
     }
 
-    const plansToSend = allRatePlans.filter(rp => selectedPushRatePlanIds.has(rp.id));
+    const plansToSend = allRatePlans.filter(rp => pushSet.has(rp.id));
     if (plansToSend.length === 0) {
-      throw new Error('Zaznacz przynajmniej jeden cennik do wysyłki w ⚙ Akcje / Ustawienia → „Wyślij do cenników:".');
+      throw new Error('Nie wybrano żadnego cennika do wysyłki.');
     }
 
     // Fixed date range: 20.01.2026 to 31.12.2026
@@ -3152,14 +3177,19 @@ export const CalendarView: React.FC = () => {
         </div>
       )}
 
-      {/* Push target modal — asks which rate plans to push to, every "Wyślij na Hotres" */}
+      {/* Shared push-target modal — asks which rate plans to push to, every push action */}
       {showPushSendModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] flex flex-col border border-yellow-600">
+          <div className={`bg-slate-800 rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] flex flex-col border ${pushModalAction === 'override' ? 'border-red-600' : 'border-yellow-600'}`}>
             <div className="p-5 border-b border-slate-700">
-              <h2 className="text-xl font-bold text-yellow-500 flex items-center gap-2">📤 Wyślij na Hotres</h2>
-              <p className="text-sm text-slate-300 mt-2">Do których cenników wysłać zmiany ({priceChanges.size})?</p>
-              {readNotificationIds.size > 0 && (
+              <h2 className={`text-xl font-bold flex items-center gap-2 ${pushModalAction === 'override' ? 'text-red-500' : 'text-yellow-500'}`}>
+                {pushModalAction === 'override' ? '🚨 OVERRIDE — wybierz cenniki' : pushModalAction === 'pushdb' ? '📤 Push DB → Hotres' : '📤 Wyślij na Hotres'}
+              </h2>
+              <p className="text-sm text-slate-300 mt-2">Do których cenników wysłać?</p>
+              {pushModalInfo && (
+                <p className="text-xs text-slate-400 mt-1 whitespace-pre-line">{pushModalInfo}</p>
+              )}
+              {pushModalAction === 'sync' && readNotificationIds.size > 0 && (
                 <p className="text-xs text-slate-400 mt-1">+ {readNotificationIds.size} odczytanych powiadomień</p>
               )}
             </div>
@@ -3209,9 +3239,9 @@ export const CalendarView: React.FC = () => {
                   Anuluj
                 </button>
                 <button
-                  onClick={confirmPushSend}
+                  onClick={confirmPushModal}
                   disabled={pushModalSelection.size === 0}
-                  className="flex-1 bg-yellow-600 hover:bg-yellow-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold py-2.5 px-4 rounded-lg transition"
+                  className={`flex-1 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold py-2.5 px-4 rounded-lg transition ${pushModalAction === 'override' ? 'bg-red-600 hover:bg-red-700' : 'bg-yellow-600 hover:bg-yellow-700'}`}
                 >
                   Wyślij ({pushModalSelection.size})
                 </button>
