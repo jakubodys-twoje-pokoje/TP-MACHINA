@@ -98,6 +98,10 @@ export const CalendarView: React.FC = () => {
   const [aiSuggestions, setAiSuggestions] = useState<Map<string, AISuggestion>>(new Map());
   const [selectedSuggestion, setSelectedSuggestion] = useState<AISuggestion | null>(null);
 
+  // "Wyślij na Hotres" — modal asking which rate plans to push to (each time)
+  const [showPushSendModal, setShowPushSendModal] = useState(false);
+  const [pushModalSelection, setPushModalSelection] = useState<Set<string>>(new Set());
+
   // Override modal state
   const [showOverrideModal, setShowOverrideModal] = useState(false);
   const [overrideCTA, setOverrideCTA] = useState(false);
@@ -687,10 +691,12 @@ export const CalendarView: React.FC = () => {
     setReadNotificationIds(new Set());
   };
 
-  const handleSyncToHotres = async () => {
+  // Opener: validate, then EACH TIME open the modal that asks which rate plans to push to.
+  // (When there are only notifications and no price edits, there's nothing to push to a
+  // rate plan, so we keep the simple confirm.)
+  const handleSyncToHotres = () => {
     if (!property) return;
 
-    // Check limit - separate for each property
     const currentData = getHotresSyncCount(property.id);
     if (currentData.count >= 10) {
       alert('Osiągnięto limit 10 synchronizacji na godzinę dla tego obiektu. Spróbuj ponownie za chwilę.');
@@ -705,21 +711,48 @@ export const CalendarView: React.FC = () => {
       return;
     }
 
-    // Build confirmation message
-    let confirmMsg = 'Czy na pewno chcesz wysłać zmiany na Hotres?\n\n';
-    if (hasNotifications) confirmMsg += `• ${readNotificationIds.size} odczytanych powiadomień\n`;
-    if (hasPriceChanges) confirmMsg += `• ${priceChanges.size} zmian w cenach/restrykcjach\n`;
-    confirmMsg += '\nTa operacja jest nieodwracalna.';
-
-    if (!confirm(confirmMsg)) {
+    if (hasPriceChanges) {
+      // Seed the modal from the saved push selection (or displayed plans as a default)
+      const seed = new Set<string>(selectedPushRatePlanIds);
+      if (seed.size === 0) {
+        unitRatePlan.forEach(planId => { if (planId) seed.add(planId); });
+        if (seed.size === 0 && defaultRatePlanId) seed.add(defaultRatePlanId);
+      }
+      setPushModalSelection(seed);
+      setShowPushSendModal(true);
       return;
     }
+
+    // Notifications only — no rate plan target needed
+    let confirmMsg = 'Czy na pewno chcesz wysłać zmiany na Hotres?\n\n';
+    confirmMsg += `• ${readNotificationIds.size} odczytanych powiadomień\n`;
+    confirmMsg += '\nTa operacja jest nieodwracalna.';
+    if (!confirm(confirmMsg)) return;
+    executeSyncToHotres(new Set());
+  };
+
+  // Confirm handler for the push-target modal
+  const confirmPushSend = () => {
+    if (pushModalSelection.size === 0) return;
+    // Remember the choice as the next default
+    setSelectedPushRatePlanIds(new Set(pushModalSelection));
+    setShowPushSendModal(false);
+    executeSyncToHotres(pushModalSelection);
+  };
+
+  // Performs the actual send using the chosen rate plan ids
+  const executeSyncToHotres = async (planIds: Set<string>) => {
+    if (!property) return;
+
+    const currentData = getHotresSyncCount(property.id);
+    const hasNotifications = readNotificationIds.size > 0;
+    const hasPriceChanges = priceChanges.size > 0;
 
     try {
       // Send price changes to Hotres if any
       let syncResult: { cellsAffected: number; ctaChanges: number; ctdChanges: number; minChanges: number; verificationFailed: number; hotresResponse: any } | undefined;
       if (hasPriceChanges) {
-        syncResult = await sendPriceChangesToHotres();
+        syncResult = await sendPriceChangesToHotres(planIds);
       }
 
       // Update counter for this property
@@ -946,8 +979,9 @@ export const CalendarView: React.FC = () => {
     }
   };
 
-  const sendPriceChangesToHotres = async () => {
+  const sendPriceChangesToHotres = async (planIdsOverride?: Set<string>) => {
     if (!property) throw new Error('Brak informacji o obiekcie');
+    const pushSet = planIdsOverride ?? selectedPushRatePlanIds;
 
     console.log('🏠 Sending changes for property:', property.name, 'ID:', property.id);
 
@@ -975,9 +1009,9 @@ export const CalendarView: React.FC = () => {
       throw new Error(`Cenniki istnieją (${names}), ale nie mają external_id. Pobierz cenniki z Hotres używając przycisku "Pobierz z Hotres" w zakładce Cenniki.`);
     }
 
-    const plansToSend = allRatePlans.filter(rp => selectedPushRatePlanIds.has(rp.id));
+    const plansToSend = allRatePlans.filter(rp => pushSet.has(rp.id));
     if (plansToSend.length === 0) {
-      throw new Error('Zaznacz przynajmniej jeden cennik do wysyłki w ⚙ Akcje / Ustawienia → „Wyślij do cenników:".');
+      throw new Error('Nie wybrano żadnego cennika do wysyłki.');
     }
 
     // Group changes by type_id
@@ -2231,6 +2265,14 @@ export const CalendarView: React.FC = () => {
     });
   };
 
+  const togglePushModalPlan = (id: string) => {
+    setPushModalSelection(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
   // Panel: which rate plans receive min/availability/CTA/CTD on push to Hotres
   const renderPushRatePlanSelector = () => {
     if (ratePlans.length === 0) return null;
@@ -3105,6 +3147,78 @@ export const CalendarView: React.FC = () => {
                   ✓ Akceptuj
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Push target modal — asks which rate plans to push to, every "Wyślij na Hotres" */}
+      {showPushSendModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-xl shadow-2xl max-w-md w-full max-h-[90vh] flex flex-col border border-yellow-600">
+            <div className="p-5 border-b border-slate-700">
+              <h2 className="text-xl font-bold text-yellow-500 flex items-center gap-2">📤 Wyślij na Hotres</h2>
+              <p className="text-sm text-slate-300 mt-2">Do których cenników wysłać zmiany ({priceChanges.size})?</p>
+              {readNotificationIds.size > 0 && (
+                <p className="text-xs text-slate-400 mt-1">+ {readNotificationIds.size} odczytanych powiadomień</p>
+              )}
+            </div>
+
+            <div className="p-5 overflow-y-auto">
+              {ratePlans.length === 0 ? (
+                <p className="text-slate-400 text-sm">Brak cenników dla tego obiektu.</p>
+              ) : (
+                <>
+                  <div className="flex justify-end gap-1 mb-2">
+                    <button
+                      onClick={() => setPushModalSelection(new Set(ratePlans.map(rp => rp.id)))}
+                      className="bg-slate-700 hover:bg-slate-600 text-slate-200 px-2 py-0.5 rounded text-[10px]"
+                    >
+                      Zaznacz wszystkie
+                    </button>
+                    <button
+                      onClick={() => setPushModalSelection(new Set())}
+                      className="bg-slate-700 hover:bg-slate-600 text-slate-200 px-2 py-0.5 rounded text-[10px]"
+                    >
+                      Odznacz wszystkie
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {ratePlans.map(rp => (
+                      <label key={rp.id} className="flex items-center gap-3 p-2 bg-slate-700/40 rounded-lg cursor-pointer hover:bg-slate-700 transition">
+                        <input
+                          type="checkbox"
+                          checked={pushModalSelection.has(rp.id)}
+                          onChange={() => togglePushModalPlan(rp.id)}
+                          className="w-5 h-5 accent-yellow-600 flex-shrink-0"
+                        />
+                        <span className="text-sm text-white break-words">{rp.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="p-5 border-t border-slate-700">
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowPushSendModal(false)}
+                  className="flex-1 bg-slate-600 hover:bg-slate-700 text-white font-semibold py-2.5 px-4 rounded-lg transition"
+                >
+                  Anuluj
+                </button>
+                <button
+                  onClick={confirmPushSend}
+                  disabled={pushModalSelection.size === 0}
+                  className="flex-1 bg-yellow-600 hover:bg-yellow-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold py-2.5 px-4 rounded-lg transition"
+                >
+                  Wyślij ({pushModalSelection.size})
+                </button>
+              </div>
+              {pushModalSelection.size === 0 && (
+                <p className="text-xs text-red-400 text-center mt-3">Zaznacz przynajmniej jeden cennik.</p>
+              )}
             </div>
           </div>
         </div>
