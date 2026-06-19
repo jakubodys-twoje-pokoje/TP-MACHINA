@@ -93,7 +93,7 @@ export const RatePlanMatrixModal: React.FC<RatePlanMatrixModalProps> = ({
                               type="button"
                               disabled={!isAvailable}
                               onClick={() => onSelect(unit.id, rp.id)}
-                              title={isAvailable ? rp.name : 'Brak danych cenowych dla tej kwatery'}
+                              title={isAvailable ? rp.name : 'Brak danych cenowych dla tej kwatery — zsynchronizuj „Pobierz z Hotres"'}
                               className={`w-5 h-5 rounded-full border-2 flex items-center justify-center mx-auto transition ${
                                 !isAvailable
                                   ? 'border-slate-700 bg-slate-700/40 cursor-not-allowed opacity-40'
@@ -115,8 +115,12 @@ export const RatePlanMatrixModal: React.FC<RatePlanMatrixModalProps> = ({
           )}
         </div>
 
-        <div className="p-4 border-t border-slate-700 flex justify-end">
-          <button onClick={onClose} className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-5 rounded-lg transition">
+        <div className="p-4 border-t border-slate-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-[11px] text-slate-400">
+            <span className="w-4 h-4 rounded-full border-2 border-slate-700 bg-slate-700/40 opacity-40 flex-shrink-0" />
+            <span>Wyszarzone = brak danych cenowych dla tej kwatery. Zsynchronizuj „Pobierz z Hotres", aby je odblokować.</span>
+          </div>
+          <button onClick={onClose} className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-5 rounded-lg transition self-end sm:self-auto flex-shrink-0">
             Gotowe
           </button>
         </div>
