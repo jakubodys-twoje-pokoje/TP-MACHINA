@@ -288,6 +288,30 @@ export const CalendarView: React.FC = () => {
     await supabase.from('units').update({ selected_rate_plan_id: ratePlanId }).eq('id', unitId);
   };
 
+  // Bulk: assign one rate plan to every unit shown in the matrix.
+  // Skips units that have no price data for that plan (their selection stays).
+  const handleBulkRatePlanChange = async (ratePlanId: string) => {
+    const next = new Map(unitRatePlan);
+    const affectedIds: string[] = [];
+    filteredUnits.forEach(u => {
+      const avail = unitAvailablePlans.get(u.id);
+      const isAvailable = avail ? avail.has(ratePlanId) : true;
+      if (isAvailable) {
+        next.set(u.id, ratePlanId);
+        affectedIds.push(u.id);
+      }
+    });
+    if (affectedIds.length === 0) return;
+    setUnitRatePlan(next);
+    setPricesData(buildPricesMap(allPricesRaw, next, defaultRatePlanId));
+    // Chunk .in() updates — PostgREST URL limit breaks with many UUIDs in one request
+    const CHUNK = 50;
+    for (let i = 0; i < affectedIds.length; i += CHUNK) {
+      const chunk = affectedIds.slice(i, i + CHUNK);
+      await supabase.from('units').update({ selected_rate_plan_id: ratePlanId }).in('id', chunk);
+    }
+  };
+
   const fetchQuarterAvailability = async () => {
     if (units.length === 0) return;
 
@@ -3233,7 +3257,7 @@ export const CalendarView: React.FC = () => {
             <div className="flex items-center justify-between p-4 border-b border-slate-700">
               <div>
                 <h2 className="text-lg sm:text-xl font-bold text-indigo-400 flex items-center gap-2">🗓 Cenniki na kalendarzu</h2>
-                <p className="text-xs text-slate-400 mt-1">Dla każdej kwatery wybierz jeden cennik wyświetlany na kalendarzu.</p>
+                <p className="text-xs text-slate-400 mt-1">Dla każdej kwatery wybierz jeden cennik wyświetlany na kalendarzu. Przycisk „✓ wszystkim" w nagłówku ustawia dany cennik od razu wszystkim kwaterom.</p>
               </div>
               <button
                 onClick={() => setShowRatePlanMatrix(false)}
@@ -3253,15 +3277,23 @@ export const CalendarView: React.FC = () => {
                 <table className="border-collapse text-xs">
                   <thead>
                     <tr>
-                      <th className="sticky left-0 top-0 z-30 bg-slate-800 text-left text-slate-300 font-semibold p-2 border-b border-r border-slate-700 min-w-[120px]">
+                      <th className="sticky left-0 top-0 z-30 bg-slate-800 text-left text-slate-300 font-semibold p-2 border-b border-r border-slate-700 min-w-[120px] align-bottom">
                         Kwatera
                       </th>
                       {ratePlans.map(rp => (
                         <th
                           key={rp.id}
-                          className="sticky top-0 z-20 bg-slate-800 text-slate-300 font-medium p-2 border-b border-slate-700 min-w-[80px] max-w-[120px]"
+                          className="sticky top-0 z-20 bg-slate-800 text-slate-300 font-medium p-2 border-b border-slate-700 min-w-[80px] max-w-[120px] align-bottom"
                         >
-                          <div className="truncate" title={rp.name}>{rp.name}</div>
+                          <div className="truncate mb-1" title={rp.name}>{rp.name}</div>
+                          <button
+                            type="button"
+                            onClick={() => handleBulkRatePlanChange(rp.id)}
+                            title={`Ustaw „${rp.name}" wszystkim kwaterom (które mają dane)`}
+                            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-[9px] font-semibold rounded px-1 py-0.5 transition"
+                          >
+                            ✓ wszystkim
+                          </button>
                         </th>
                       ))}
                     </tr>
