@@ -169,11 +169,28 @@ export const CalendarView: React.FC = () => {
     }
   }, [defaultRatePlanId, unitRatePlan]);
 
-  // Initialize push rate-plan selection once: default to the rate plans currently
-  // displayed on the calendar (distinct unitRatePlan values), fallback to default plan.
+  // The push rate-plan selection is INDEPENDENT of the displayed/pull plan: you can
+  // view one cennik on the calendar but push to several. It is persisted per property
+  // (localStorage). On first load: use the stored push selection if present, otherwise
+  // seed once from the currently displayed plans purely as a convenience default.
   useEffect(() => {
     if (pushSelectionInitialized.current) return;
     if (ratePlans.length === 0) return;
+    if (propertyId) {
+      try {
+        const stored = localStorage.getItem(`tp_push_rate_plans_${propertyId}`);
+        if (stored) {
+          const ids: string[] = JSON.parse(stored);
+          const valid = ids.filter(id => ratePlans.some(rp => rp.id === id));
+          if (valid.length > 0) {
+            setSelectedPushRatePlanIds(new Set(valid));
+            pushSelectionInitialized.current = true;
+            return;
+          }
+        }
+      } catch { /* ignore corrupt storage */ }
+    }
+    // Seed default from currently displayed plans (one-time convenience only)
     const distinct = new Set<string>();
     unitRatePlan.forEach(planId => { if (planId) distinct.add(planId); });
     if (distinct.size === 0 && defaultRatePlanId) distinct.add(defaultRatePlanId);
@@ -181,7 +198,13 @@ export const CalendarView: React.FC = () => {
       setSelectedPushRatePlanIds(distinct);
       pushSelectionInitialized.current = true;
     }
-  }, [ratePlans, unitRatePlan, defaultRatePlanId]);
+  }, [ratePlans, unitRatePlan, defaultRatePlanId, propertyId]);
+
+  // Persist the independent push selection so it sticks across reloads/sessions.
+  useEffect(() => {
+    if (!pushSelectionInitialized.current || !propertyId) return;
+    localStorage.setItem(`tp_push_rate_plans_${propertyId}`, JSON.stringify([...selectedPushRatePlanIds]));
+  }, [selectedPushRatePlanIds, propertyId]);
 
   // Auto-scroll to position selected date at 1/3 of viewport
   useEffect(() => {
@@ -804,7 +827,7 @@ export const CalendarView: React.FC = () => {
 
       const plansToSend = allRatePlans.filter(rp => selectedPushRatePlanIds.has(rp.id));
       if (plansToSend.length === 0) {
-        alert('Zaznacz przynajmniej jeden cennik do wysyłki');
+        alert('Zaznacz przynajmniej jeden cennik do wysyłki w ⚙ Akcje / Ustawienia → „Wyślij do cenników:".');
         return;
       }
 
@@ -954,7 +977,7 @@ export const CalendarView: React.FC = () => {
 
     const plansToSend = allRatePlans.filter(rp => selectedPushRatePlanIds.has(rp.id));
     if (plansToSend.length === 0) {
-      throw new Error('Zaznacz przynajmniej jeden cennik do wysyłki');
+      throw new Error('Zaznacz przynajmniej jeden cennik do wysyłki w ⚙ Akcje / Ustawienia → „Wyślij do cenników:".');
     }
 
     // Group changes by type_id
@@ -1375,7 +1398,7 @@ export const CalendarView: React.FC = () => {
       const plansToSend = allRatePlans.filter(rp => selectedPushRatePlanIds.has(rp.id));
       if (plansToSend.length === 0) {
         // finally{} resets syncing; just stop here
-        alert('Zaznacz przynajmniej jeden cennik do wysyłki');
+        alert('Zaznacz przynajmniej jeden cennik do wysyłki w ⚙ Akcje / Ustawienia → „Wyślij do cenników:".');
         return;
       }
 
@@ -1528,7 +1551,7 @@ export const CalendarView: React.FC = () => {
 
     const plansToSend = allRatePlans.filter(rp => selectedPushRatePlanIds.has(rp.id));
     if (plansToSend.length === 0) {
-      throw new Error('Zaznacz przynajmniej jeden cennik do wysyłki');
+      throw new Error('Zaznacz przynajmniej jeden cennik do wysyłki w ⚙ Akcje / Ustawienia → „Wyślij do cenników:".');
     }
 
     // Fixed date range: 20.01.2026 to 31.12.2026
@@ -2212,9 +2235,9 @@ export const CalendarView: React.FC = () => {
   const renderPushRatePlanSelector = () => {
     if (ratePlans.length === 0) return null;
     return (
-      <div className="mt-3 p-3 bg-slate-800 rounded-lg text-xs text-slate-300">
-        <div className="flex items-center justify-between mb-2">
-          <span className="font-semibold text-slate-200">Wyślij do cenników:</span>
+      <div className="mt-3 p-3 bg-slate-800 rounded-lg text-xs text-slate-300 border border-blue-900/60">
+        <div className="flex items-center justify-between mb-1">
+          <span className="font-semibold text-slate-200">📤 Wyślij do cenników (push){selectedPushRatePlanIds.size > 0 ? ` — ${selectedPushRatePlanIds.size}` : ''}</span>
           <div className="flex gap-1">
             <button
               onClick={() => setSelectedPushRatePlanIds(new Set(ratePlans.map(rp => rp.id)))}
@@ -2230,6 +2253,7 @@ export const CalendarView: React.FC = () => {
             </button>
           </div>
         </div>
+        <p className="text-[10px] text-slate-500 mb-2">Niezależne od cennika wyświetlanego na kalendarzu — możesz patrzeć na jeden, a wysłać na kilka.</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-40 overflow-y-auto">
           {ratePlans.map(rp => (
             <label key={rp.id} className="flex items-center gap-2 cursor-pointer">
@@ -2244,7 +2268,7 @@ export const CalendarView: React.FC = () => {
           ))}
         </div>
         {selectedPushRatePlanIds.size === 0 && (
-          <p className="text-[10px] text-red-400 mt-2">Zaznacz przynajmniej jeden cennik do wysyłki.</p>
+          <p className="text-[10px] text-red-400 mt-2">Zaznacz przynajmniej jeden cennik — bez tego push nie wyśle nic.</p>
         )}
       </div>
     );
