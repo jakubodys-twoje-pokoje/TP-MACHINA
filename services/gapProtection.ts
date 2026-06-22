@@ -3,7 +3,55 @@
 // (2) reading `gap_restrictions`, (3) writing `gap_overrides`, and
 // (4) pushing engine output to Hotres via the existing update-hotres-prices.
 import { supabase } from './supabaseClient';
-import type { GapRestriction, GapOverride, Unit, GapMode } from '../types';
+import type { GapRestriction, GapOverride, Unit, GapMode, GapConfigValues } from '../types';
+
+/** Sensible defaults shown when a property has no config row yet. */
+export const DEFAULT_GAP_CONFIG: GapConfigValues = {
+  standard_min_los: 2,
+  min_acceptable_gap: 3,
+  emergency_acceptable_gap: 2,
+  max_los: null,
+  last_minute_lead_days: 7,
+  horizon_days: 365,
+  allow_shorten_min_los: true,
+  emergency_mode: false,
+};
+
+// Identifies the single property-scoped config row (no unit/season/channel/date scope).
+const propertyScopeFilter = (q: any, propertyId: string) =>
+  q.eq('property_id', propertyId)
+    .is('unit_id', null).is('season', null).is('channel', null)
+    .is('date_from', null).is('date_to', null);
+
+/** Read the effective editable config for a property (property row → global → defaults). */
+export async function getPropertyGapConfig(propertyId: string): Promise<GapConfigValues> {
+  const cols = 'standard_min_los, min_acceptable_gap, emergency_acceptable_gap, max_los, last_minute_lead_days, horizon_days, allow_shorten_min_los, emergency_mode';
+  const { data: own } = await propertyScopeFilter(
+    supabase.from('gap_engine_config').select(cols), propertyId,
+  ).limit(1).maybeSingle();
+  if (own) return own as GapConfigValues;
+  // Fall back to global default row.
+  const { data: global } = await supabase
+    .from('gap_engine_config').select(cols)
+    .is('property_id', null).is('unit_id', null).is('season', null)
+    .is('channel', null).is('date_from', null).is('date_to', null)
+    .limit(1).maybeSingle();
+  return (global as GapConfigValues) ?? DEFAULT_GAP_CONFIG;
+}
+
+/** Save the editable config to the property-scoped row (create it if needed, preserving mode). */
+export async function savePropertyGapConfig(propertyId: string, values: GapConfigValues): Promise<void> {
+  const { data: existing } = await propertyScopeFilter(
+    supabase.from('gap_engine_config').select('id'), propertyId,
+  ).limit(1).maybeSingle();
+  if (existing?.id) {
+    const { error } = await supabase.from('gap_engine_config').update(values).eq('id', existing.id);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await supabase.from('gap_engine_config').insert({ property_id: propertyId, mode: 'suggest', ...values });
+    if (error) throw new Error(error.message);
+  }
+}
 
 const FUNCTIONS_BASE = 'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1';
 

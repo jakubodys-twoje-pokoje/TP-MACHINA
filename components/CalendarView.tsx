@@ -4,8 +4,8 @@ import { supabase } from '../services/supabaseClient';
 import { Property, Availability, Unit, Notification, Price, AISuggestion, RatePlan, GapRestriction } from '../types';
 import { Loader2, ChevronLeft, ChevronRight, RefreshCw, Sparkles, ArrowRight, CheckSquare, Square, X, Save, Shield } from 'lucide-react';
 import { RatePlanMatrixModal } from './RatePlanMatrixModal';
-import { recomputeGapRestrictions, fetchGapRestrictions as fetchGapRestrictionsSvc, saveGapOverride, pushGapRestrictionsToHotres, getPropertyGapMode, setPropertyGapMode, savePushRatePlanIds } from '../services/gapProtection';
-import type { GapMode } from '../types';
+import { recomputeGapRestrictions, fetchGapRestrictions as fetchGapRestrictionsSvc, saveGapOverride, pushGapRestrictionsToHotres, getPropertyGapMode, setPropertyGapMode, savePushRatePlanIds, getPropertyGapConfig, savePropertyGapConfig, DEFAULT_GAP_CONFIG } from '../services/gapProtection';
+import type { GapMode, GapConfigValues } from '../types';
 
 // Gap Protection Engine is the SOLE deterministic source of CTA/CTD/Min LOS.
 // The legacy ai_suggestions + n8n + Gemini heuristic is retired (phased out);
@@ -110,6 +110,9 @@ export const CalendarView: React.FC = () => {
   const [recomputingGaps, setRecomputingGaps] = useState(false);
   const [gapMode, setGapMode] = useState<GapMode>('suggest');
   const [showGapMenu, setShowGapMenu] = useState(false);
+  const [showGapConfig, setShowGapConfig] = useState(false);
+  const [gapConfigDraft, setGapConfigDraft] = useState<GapConfigValues>(DEFAULT_GAP_CONFIG);
+  const [savingGapConfig, setSavingGapConfig] = useState(false);
   const gapModeRef = useRef<GapMode>('suggest');
   // Debounce auto-suggest when multiple notifications arrive at once.
   const autoSuggestUnitsRef = useRef<Set<string>>(new Set());
@@ -2073,6 +2076,40 @@ export const CalendarView: React.FC = () => {
     }
   };
 
+  // Open the per-property Gap Protection settings modal, pre-filled with current values.
+  const openGapConfig = async () => {
+    if (!property) return;
+    setShowGapMenu(false);
+    try {
+      const cfg = await getPropertyGapConfig(property.id);
+      setGapConfigDraft(cfg);
+    } catch {
+      setGapConfigDraft(DEFAULT_GAP_CONFIG);
+    }
+    setShowGapConfig(true);
+  };
+
+  const handleSaveGapConfig = async () => {
+    if (!property) return;
+    const d = gapConfigDraft;
+    if (d.min_acceptable_gap < 1 || d.standard_min_los < 1) {
+      alert('Min LOS i minimalna luka muszą być ≥ 1.');
+      return;
+    }
+    setSavingGapConfig(true);
+    try {
+      await savePropertyGapConfig(property.id, d);
+      setShowGapConfig(false);
+      if (confirm('✓ Zapisano ustawienia ochrony luk.\n\nPrzeliczyć teraz na nowych wartościach?')) {
+        await runRecompute({}, 'cały obiekt');
+      }
+    } catch (err: any) {
+      alert(`✗ Błąd zapisu ustawień: ${err.message}`);
+    } finally {
+      setSavingGapConfig(false);
+    }
+  };
+
   // Suggest mode: prefill engine output into the existing staging buffer (priceChanges)
   // so the operator pushes with the normal "Wyślij na Hotres" flow — as if edited by hand.
   // Does NOT overwrite cells the operator already changed manually.
@@ -2827,6 +2864,14 @@ export const CalendarView: React.FC = () => {
                     </button>
                   ))}
                 </div>
+
+                <button
+                  onClick={openGapConfig}
+                  className="px-2 py-1 sm:px-2.5 sm:py-2 text-[10px] sm:text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg transition-colors font-medium whitespace-nowrap"
+                  title="Ustawienia ochrony luk (min. luka, Min LOS, horyzont…) dla tego obiektu"
+                >
+                  ⚙ Ustawienia luk
+                </button>
 
                 {gapMode !== 'off' && (
                   <div className="relative flex items-stretch">
@@ -3764,6 +3809,69 @@ export const CalendarView: React.FC = () => {
             >
               <Shield size={16} /> Zapisz jako override ochrony luk
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Gap Protection settings (per property) */}
+      {showGapConfig && (
+        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-md shadow-2xl p-5">
+            <h2 className="text-xl font-bold text-teal-400 mb-1 flex items-center gap-2">
+              <Shield size={20} /> Ustawienia ochrony luk
+            </h2>
+            <p className="text-xs text-slate-400 mb-4">Dla tego obiektu{property ? `: ${property.name}` : ''}. Po zapisie możesz od razu przeliczyć.</p>
+
+            <div className="space-y-3">
+              {([
+                ['min_acceptable_gap', 'Minimalna akceptowalna luka (nocy)', 'Najmniejsza pusta reszta, jaką wolno zostawić po rezerwacji'],
+                ['emergency_acceptable_gap', 'Awaryjna minimalna luka (nocy)', 'Mniejsza luka dopuszczalna w trybie last-minute/awaryjnym'],
+                ['standard_min_los', 'Standardowy Min LOS (nocy)', 'Domyślna minimalna długość pobytu'],
+                ['max_los', 'Max LOS (nocy, puste = brak)', 'Górny limit długości pobytu'],
+                ['last_minute_lead_days', 'Last-minute: lead time (dni)', 'Jeśli do przyjazdu ≤ tylu dni → tryb awaryjny'],
+                ['horizon_days', 'Horyzont (dni)', 'Jak daleko w przód liczyć luki'],
+              ] as [keyof GapConfigValues, string, string][]).map(([key, label, hint]) => (
+                <div key={key as string}>
+                  <label className="block text-xs font-semibold text-slate-200">{label}</label>
+                  <input
+                    type="number"
+                    min={key === 'max_los' ? 1 : 0}
+                    value={gapConfigDraft[key] === null || gapConfigDraft[key] === undefined ? '' : String(gapConfigDraft[key])}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const val = raw === '' ? (key === 'max_los' ? null : 0) : parseInt(raw, 10);
+                      setGapConfigDraft(prev => ({ ...prev, [key]: val as any }));
+                    }}
+                    className="w-full mt-0.5 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-0.5">{hint}</p>
+                </div>
+              ))}
+
+              <label className="flex items-center gap-2 cursor-pointer pt-1">
+                <input type="checkbox" className="w-4 h-4 accent-teal-600"
+                  checked={gapConfigDraft.allow_shorten_min_los}
+                  onChange={(e) => setGapConfigDraft(prev => ({ ...prev, allow_shorten_min_los: e.target.checked }))} />
+                <span className="text-xs text-slate-200">Pozwól obniżyć Min LOS, by wypełnić krótką lukę (awaryjnie)</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" className="w-4 h-4 accent-teal-600"
+                  checked={gapConfigDraft.emergency_mode}
+                  onChange={(e) => setGapConfigDraft(prev => ({ ...prev, emergency_mode: e.target.checked }))} />
+                <span className="text-xs text-slate-200">Tryb awaryjny zawsze włączony (używa awaryjnej luki)</span>
+              </label>
+            </div>
+
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setShowGapConfig(false)} disabled={savingGapConfig}
+                className="flex-1 bg-slate-600 hover:bg-slate-700 text-white font-semibold py-2.5 px-4 rounded-lg transition">
+                Anuluj
+              </button>
+              <button onClick={handleSaveGapConfig} disabled={savingGapConfig}
+                className="flex-1 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-bold py-2.5 px-4 rounded-lg transition flex items-center justify-center gap-2">
+                {savingGapConfig ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Zapisz
+              </button>
+            </div>
           </div>
         </div>
       )}

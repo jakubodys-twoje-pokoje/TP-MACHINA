@@ -161,6 +161,18 @@ export interface Price {
 // Gap Assistant operating mode (per property).
 export type GapMode = 'off' | 'suggest' | 'autofill';
 
+// Editable Gap Protection parameters (per property), mirrors gap_engine_config.
+export interface GapConfigValues {
+  standard_min_los: number;
+  min_acceptable_gap: number;
+  emergency_acceptable_gap: number;
+  max_los: number | null;
+  last_minute_lead_days: number;
+  horizon_days: number;
+  allow_shorten_min_los: boolean;
+  emergency_mode: boolean;
+}
+
 // Gap Protection Engine — per-day output (mirrors `gap_restrictions` table).
 export interface GapRestriction {
   id?: string;
