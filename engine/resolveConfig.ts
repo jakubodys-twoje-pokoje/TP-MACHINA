@@ -17,6 +17,7 @@ export const DEFAULT_CONFIG: GapEngineConfig = {
   lastMinuteLeadDays: 7,
   emergencyMode: false,
   allowShortenMinLos: true,
+  mode: 'suggest',
 };
 
 export const DEFAULT_HORIZON_DAYS = 365;
@@ -30,6 +31,7 @@ function rowToConfig(row: GapConfigRow): GapEngineConfig {
     lastMinuteLeadDays: row.last_minute_lead_days,
     emergencyMode: row.emergency_mode,
     allowShortenMinLos: row.allow_shorten_min_los,
+    mode: row.mode ?? 'suggest',
   };
 }
 

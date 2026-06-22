@@ -8,6 +8,9 @@
 
 export type Bool01 = 0 | 1;
 
+/** Gap Assistant operating mode (per property). */
+export type GapMode = 'off' | 'suggest' | 'autofill';
+
 /** A single gap to evaluate — purely positional, no availability rows. */
 export interface Gap {
   gapId: string;
@@ -36,6 +39,8 @@ export interface GapEngineConfig {
   emergencyMode: boolean;
   /** Permit lowering min LOS to fill a gap shorter than standardMinLos. */
   allowShortenMinLos: boolean;
+  /** Operating mode. Off = don't compute/show; suggest = manual push; autofill = auto push. */
+  mode?: GapMode;
 }
 
 /** Operator override for a single date. Provided fields win over the auto output. */
@@ -85,6 +90,7 @@ export interface GapConfigRow {
   allow_shorten_min_los: boolean;
   horizon_days: number;
   priority: number;
+  mode: GapMode;
 }
 
 /** Context used to resolve the most-specific config for a given date/unit. */

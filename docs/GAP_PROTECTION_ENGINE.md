@@ -25,6 +25,7 @@ Plan z §9 został zaimplementowany. Weryfikacja: `npm test` → **26 testów OK
 | 5. Frontend: serwis + wizualizacja + recompute + override | ✅ | `services/gapProtection.ts`, integracja w `components/CalendarView.tsx` |
 | 6. Push z `gap_restrictions` → Hotres | ✅ | `pushGapRestrictionsToHotres` + akcja `'gaps'` w modalu wyboru cenników |
 | 7. Wygaszenie AI | ✅ (disable) | flaga `AI_SUGGESTIONS_ENABLED=false`; bannery DEPRECATED w docs AI/n8n |
+| 8. Tryby pracy (Off/Suggest/Autofill) + cron | ✅ | `mode` w `gap_engine_config`; `gap-autofill` edge + `_shared/gapCompute.ts`/`gapPush.ts`; `schedule_gap_autofill.sql`; toggle w UI |
 
 **Decyzje przyjęte (domyślne z §11, do potwierdzenia):** standardowy Min LOS z
 `gap_engine_config` (fallback default); `min_gap=3`, `emergency_gap=2`,
@@ -517,3 +518,39 @@ Każdy etap jest niezależnie wdrażalny; rdzeń (1) i schemat (2) nie ruszają 
    prostoty pushu; alternatywa: jeden wiersz per `unit_id,date` i rozmnożenie przy pushu.)
 8. **Branch:** zadanie wskazuje `claude/focused-gates-1HKyf` (użyty), a konfiguracja sesji —
    `claude/dreamy-euler-tt2rx8`. Potwierdzasz `claude/focused-gates-1HKyf` jako docelowy?
+
+---
+
+## 12. Tryby pracy Asystenta Luk (Off / Suggest / Autofill)
+
+Per-obiektowy przełącznik 3-pozycyjny (`gap_engine_config.mode`, rozwiązywany jak
+reszta configu — najbardziej szczegółowy wiersz wygrywa; UI ustawia wiersz property-scoped).
+
+| Tryb | Liczenie (`gap_restrictions`) | Push do Hotres |
+|---|---|---|
+| **off** | nie liczy (edge `computeAndStore` zwraca `skipped`) | — |
+| **suggest** | liczy i pokazuje sugestie | **ręczny** — „🛡 Zastosuj sugestie (prefill)" wstawia wynik do istniejącego stagingu (`priceChanges`), potem zwykłe „Wyślij na Hotres" (jak edycja ręczna; nie nadpisuje ręcznych zmian) |
+| **autofill** | liczy | **automatyczny** — cron `gap-autofill` co 10 min |
+
+### Autofill — przepływ (serwerowy)
+`pg_cron` (`schedule_gap_autofill.sql`, `*/10 * * * *`) → edge `gap-autofill`:
+1. dla każdego obiektu z `mode='autofill'`: `computeAndStoreGapRestrictions` (recompute),
+2. sprawdza **wspólny limit 10/h** (tabela `hotres_push_log`, liczy pushe z ostatniej godziny — manual + autofill razem),
+3. cel cenników z `properties.push_rate_plan_ids` (utrwalone z UI — bo cron nie widzi `localStorage`),
+4. buduje payload z `gap_restrictions` (kompresja zakresów `isNextDay`) i wysyła **tą samą drogą co user** → edge `update-hotres-prices`,
+5. zapisuje wpis do `hotres_push_log` (`source='autofill'`).
+
+### Współdzielony limit 10/h
+Konieczny, bo dotychczasowy licznik żył w `localStorage` (niewidoczny dla crona). Nowa
+tabela `hotres_push_log` jest źródłem prawdy po stronie serwera: autofill nie przekroczy
+10/h licząc również pushe ręczne. (UI nadal pokazuje licznik z `localStorage` dla natychmiastowego
+feedbacku — drobna rozbieżność wyświetlania; twarde egzekwowanie jest po stronie crona/DB.)
+
+### Reużyte moduły współdzielone (Deno)
+- `supabase/functions/_shared/gapCompute.ts` — `computeAndStoreGapRestrictions` (jedna implementacja dla edge on-demand i crona).
+- `supabase/functions/_shared/gapPush.ts` — budowa payloadu + wysyłka przez `update-hotres-prices`.
+
+### Kroki wdrożeniowe (środowisko Supabase — poza tą sesją)
+1. Migracje: `create_gap_*`, `add_gap_push_target_to_properties`, `create_hotres_push_log` (+ `mode` jest już w `create_gap_engine_config`).
+2. Deploy edge: `compute-gap-restrictions`, `gap-autofill`.
+3. `schedule_gap_autofill.sql` (wymaga `app.settings.service_role_key` jak istniejący `setup_pg_cron.sql`).

@@ -21,6 +21,11 @@ CREATE TABLE IF NOT EXISTS gap_engine_config (
   allow_shorten_min_los     BOOLEAN NOT NULL DEFAULT true,
   horizon_days              INTEGER NOT NULL DEFAULT 365,
   priority                  INTEGER NOT NULL DEFAULT 0,        -- tie-break
+  -- Gap Assistant operating mode (per-property when property_id is set):
+  --   'off'      → engine does nothing for this scope
+  --   'suggest'  → engine computes; operator pushes manually
+  --   'autofill' → engine computes; cron auto-pushes (counts against 10/h limit)
+  mode                      TEXT NOT NULL DEFAULT 'suggest' CHECK (mode IN ('off', 'suggest', 'autofill')),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -46,8 +51,8 @@ CREATE POLICY "Service role can read gap_engine_config"
   USING (true);
 
 -- Seed a sensible global default (matches engine DEFAULT_CONFIG).
-INSERT INTO gap_engine_config (standard_min_los, min_acceptable_gap, emergency_acceptable_gap, last_minute_lead_days, horizon_days)
-VALUES (2, 3, 2, 7, 365)
+INSERT INTO gap_engine_config (standard_min_los, min_acceptable_gap, emergency_acceptable_gap, last_minute_lead_days, horizon_days, mode)
+VALUES (2, 3, 2, 7, 365, 'suggest')
 ON CONFLICT DO NOTHING;
 
 COMMENT ON TABLE gap_engine_config IS 'Layered config for the Gap Protection Engine; most-specific matching row wins.';

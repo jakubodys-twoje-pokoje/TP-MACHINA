@@ -3,7 +3,7 @@
 // (2) reading `gap_restrictions`, (3) writing `gap_overrides`, and
 // (4) pushing engine output to Hotres via the existing update-hotres-prices.
 import { supabase } from './supabaseClient';
-import type { GapRestriction, GapOverride, Unit } from '../types';
+import type { GapRestriction, GapOverride, Unit, GapMode } from '../types';
 
 const FUNCTIONS_BASE = 'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1';
 
@@ -53,6 +53,41 @@ export async function fetchGapRestrictions(
     (data ?? []).forEach((r: GapRestriction) => result.set(`${r.unit_id}_${r.date}`, r));
   }
   return result;
+}
+
+/** Read the per-property operating mode from gap_engine_config (property-scoped row). */
+export async function getPropertyGapMode(propertyId: string): Promise<GapMode> {
+  const { data } = await supabase
+    .from('gap_engine_config')
+    .select('mode')
+    .eq('property_id', propertyId)
+    .is('unit_id', null).is('season', null).is('channel', null)
+    .is('date_from', null).is('date_to', null)
+    .limit(1).maybeSingle();
+  return (data?.mode as GapMode) ?? 'suggest';
+}
+
+/** Set the per-property operating mode (upsert the property-scoped config row). */
+export async function setPropertyGapMode(propertyId: string, mode: GapMode): Promise<void> {
+  const { data: existing } = await supabase
+    .from('gap_engine_config')
+    .select('id')
+    .eq('property_id', propertyId)
+    .is('unit_id', null).is('season', null).is('channel', null)
+    .is('date_from', null).is('date_to', null)
+    .limit(1).maybeSingle();
+  if (existing?.id) {
+    const { error } = await supabase.from('gap_engine_config').update({ mode }).eq('id', existing.id);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await supabase.from('gap_engine_config').insert({ property_id: propertyId, mode });
+    if (error) throw new Error(error.message);
+  }
+}
+
+/** Persist the push rate-plan selection to the DB so the autofill cron can read it. */
+export async function savePushRatePlanIds(propertyId: string, ids: string[]): Promise<void> {
+  await supabase.from('properties').update({ push_rate_plan_ids: ids }).eq('id', propertyId);
 }
 
 /** Persist an operator override (survives recompute). */

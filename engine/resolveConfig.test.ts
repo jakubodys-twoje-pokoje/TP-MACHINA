@@ -7,7 +7,7 @@ const base: Omit<GapConfigRow, 'standard_min_los'> = {
   date_from: null, date_to: null,
   min_acceptable_gap: 3, emergency_acceptable_gap: 2, max_los: null,
   last_minute_lead_days: 7, emergency_mode: false, allow_shorten_min_los: true,
-  horizon_days: 365, priority: 0,
+  horizon_days: 365, priority: 0, mode: 'suggest',
 };
 const row = (over: Partial<GapConfigRow> & { standard_min_los: number }): GapConfigRow => ({ ...base, ...over });
 
@@ -48,6 +48,16 @@ describe('resolveConfig', () => {
     ];
     expect(resolveConfig({ date: '2026-07-15' }, cfgs).standardMinLos).toBe(7);
     expect(resolveConfig({ date: '2026-09-15' }, cfgs).standardMinLos).toBe(2);
+  });
+
+  it('resolves the operating mode from the most-specific row', () => {
+    const cfgs = [
+      row({ standard_min_los: 2, mode: 'off' }),                          // global off
+      row({ standard_min_los: 2, property_id: 'P1', mode: 'autofill' }),  // property autofill
+    ];
+    expect(resolveConfig({ propertyId: 'P1' }, cfgs).mode).toBe('autofill');
+    expect(resolveConfig({ propertyId: 'P9' }, cfgs).mode).toBe('off');
+    expect(resolveConfig({ propertyId: 'P9' }, []).mode).toBe('suggest'); // default
   });
 
   it('ties break by priority', () => {

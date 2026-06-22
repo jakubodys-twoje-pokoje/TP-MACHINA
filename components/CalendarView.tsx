@@ -4,7 +4,8 @@ import { supabase } from '../services/supabaseClient';
 import { Property, Availability, Unit, Notification, Price, AISuggestion, RatePlan, GapRestriction } from '../types';
 import { Loader2, ChevronLeft, ChevronRight, RefreshCw, Sparkles, ArrowRight, CheckSquare, Square, X, Save, Shield } from 'lucide-react';
 import { RatePlanMatrixModal } from './RatePlanMatrixModal';
-import { recomputeGapRestrictions, fetchGapRestrictions as fetchGapRestrictionsSvc, saveGapOverride, pushGapRestrictionsToHotres } from '../services/gapProtection';
+import { recomputeGapRestrictions, fetchGapRestrictions as fetchGapRestrictionsSvc, saveGapOverride, pushGapRestrictionsToHotres, getPropertyGapMode, setPropertyGapMode, savePushRatePlanIds } from '../services/gapProtection';
+import type { GapMode } from '../types';
 
 // Gap Protection Engine is the SOLE deterministic source of CTA/CTD/Min LOS.
 // The legacy ai_suggestions + n8n + Gemini heuristic is retired (phased out);
@@ -107,6 +108,7 @@ export const CalendarView: React.FC = () => {
   // Gap Protection Engine — per-day restrictions keyed "unitId_date".
   const [gapRestrictions, setGapRestrictions] = useState<Map<string, GapRestriction>>(new Map());
   const [recomputingGaps, setRecomputingGaps] = useState(false);
+  const [gapMode, setGapMode] = useState<GapMode>('suggest');
 
   // Shared "which rate plans to push to" modal — asks every time, for all push actions
   const [showPushSendModal, setShowPushSendModal] = useState(false);
@@ -167,6 +169,7 @@ export const CalendarView: React.FC = () => {
       fetchPropertyAndUnits();
       fetchUnreadNotifications();
       fetchRatePlans();
+      getPropertyGapMode(propertyId).then(setGapMode).catch(() => {});
     }
   }, [propertyId]);
 
@@ -218,9 +221,13 @@ export const CalendarView: React.FC = () => {
   }, [ratePlans, unitRatePlan, defaultRatePlanId, propertyId]);
 
   // Persist the independent push selection so it sticks across reloads/sessions.
+  // Also mirror it to the DB (properties.push_rate_plan_ids) so the server-side
+  // autofill cron targets the same rate plans the operator chose here.
   useEffect(() => {
     if (!pushSelectionInitialized.current || !propertyId) return;
-    localStorage.setItem(`tp_push_rate_plans_${propertyId}`, JSON.stringify([...selectedPushRatePlanIds]));
+    const ids = [...selectedPushRatePlanIds];
+    localStorage.setItem(`tp_push_rate_plans_${propertyId}`, JSON.stringify(ids));
+    savePushRatePlanIds(propertyId, ids).catch(() => {});
   }, [selectedPushRatePlanIds, propertyId]);
 
   // Auto-scroll to position selected date at 1/3 of viewport
@@ -2047,6 +2054,45 @@ export const CalendarView: React.FC = () => {
   const getGapRestriction = (unitId: string, dateStr: string): GapRestriction | undefined =>
     gapRestrictions.get(`${unitId}_${dateStr}`);
 
+  // Change the per-property Gap Assistant mode (off / suggest / autofill).
+  const handleChangeGapMode = async (mode: GapMode) => {
+    if (!property) return;
+    const prev = gapMode;
+    setGapMode(mode);
+    try {
+      await setPropertyGapMode(property.id, mode);
+      if (mode === 'off') setGapRestrictions(new Map());
+    } catch (err: any) {
+      setGapMode(prev);
+      alert(`✗ Nie udało się zmienić trybu: ${err.message}`);
+    }
+  };
+
+  // Suggest mode: prefill engine output into the existing staging buffer (priceChanges)
+  // so the operator pushes with the normal "Wyślij na Hotres" flow — as if edited by hand.
+  // Does NOT overwrite cells the operator already changed manually.
+  const applyGapSuggestionsToStaging = () => {
+    if (gapRestrictions.size === 0) { alert('Brak sugestii ochrony luk. Kliknij „Przelicz ochronę luk".'); return; }
+    let applied = 0;
+    setPriceChanges(prev => {
+      const updated = new Map(prev);
+      gapRestrictions.forEach((gr, key) => {
+        if (updated.has(key)) return; // keep manual edits
+        const priceData = pricesData.get(key);
+        const next: Partial<Price> = {
+          unit_id: gr.unit_id, date: gr.date, rate_id: priceData?.rate_id || gr.rate_id || '',
+        };
+        let changed = false;
+        if (gr.cta !== null && gr.cta !== (priceData?.cta ?? 0)) { next.cta = gr.cta; changed = true; }
+        if (gr.ctd !== null && gr.ctd !== (priceData?.ctd ?? 0)) { next.ctd = gr.ctd; changed = true; }
+        if (gr.min_los !== null && gr.min_los !== (priceData?.min ?? null)) { next.min = gr.min_los; changed = true; }
+        if (changed) { updated.set(key, next); applied++; }
+      });
+      return updated;
+    });
+    alert(`✓ Wstawiono ${applied} sugestii do edycji. Sprawdź i kliknij „Wyślij na Hotres".`);
+  };
+
   // Recompute restrictions server-side (after sync or on demand), then reload.
   const handleRecomputeGaps = async () => {
     if (!property) return;
@@ -2671,30 +2717,55 @@ export const CalendarView: React.FC = () => {
               </button>
             )}
 
-            {/* Gap Protection Engine — recompute + push */}
+            {/* Gap Protection Engine — mode toggle + actions */}
             {(viewMode === 'full' || viewMode === 'notifications') && (
               <>
-                <button
-                  onClick={handleRecomputeGaps}
-                  disabled={recomputingGaps}
-                  className="flex items-center gap-1 sm:gap-2 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs bg-teal-700 hover:bg-teal-600 disabled:opacity-50 text-white rounded-lg transition-colors font-medium whitespace-nowrap"
-                  title="Przelicz deterministyczną ochronę luk (CTA/CTD/Min LOS) dla całego obiektu"
-                >
-                  {recomputingGaps
-                    ? <Loader2 size={12} className="sm:w-3.5 sm:h-3.5 animate-spin" />
-                    : <Shield size={12} className="sm:w-3.5 sm:h-3.5" />}
-                  <span className="hidden sm:inline">🛡 Przelicz ochronę luk</span>
-                  <span className="sm:hidden">🛡 Przelicz</span>
-                </button>
-                {gapRestrictions.size > 0 && (
+                {/* 3-position mode toggle (per property) */}
+                <div className="flex items-center gap-0.5 bg-slate-800 rounded-lg p-0.5" title="Tryb Asystenta Luk dla tego obiektu">
+                  <Shield size={12} className="text-teal-400 ml-1 mr-0.5" />
+                  {([
+                    ['off', 'Off', 'Nie rób nic'],
+                    ['suggest', 'Sugeruj', 'Licz i podsuwaj sugestie (push ręczny)'],
+                    ['autofill', 'Autofill', 'Licz i wysyłaj automatycznie co 10 min'],
+                  ] as [GapMode, string, string][]).map(([m, label, tip]) => (
+                    <button
+                      key={m}
+                      onClick={() => handleChangeGapMode(m)}
+                      title={tip}
+                      className={`px-1.5 py-0.5 sm:px-2 sm:py-1 text-[9px] sm:text-[11px] rounded-md font-semibold transition-colors ${
+                        gapMode === m
+                          ? (m === 'autofill' ? 'bg-cyan-600 text-white' : m === 'off' ? 'bg-slate-600 text-white' : 'bg-teal-600 text-white')
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {gapMode !== 'off' && (
                   <button
-                    onClick={handlePushGapsToHotres}
-                    className="flex items-center gap-1 sm:gap-2 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs bg-cyan-700 hover:bg-cyan-600 text-white rounded-lg transition-colors font-medium whitespace-nowrap"
-                    title="Wyślij wynik ochrony luk do Hotres (wybór cenników jak przy innych pushach)"
+                    onClick={handleRecomputeGaps}
+                    disabled={recomputingGaps}
+                    className="flex items-center gap-1 sm:gap-2 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs bg-teal-700 hover:bg-teal-600 disabled:opacity-50 text-white rounded-lg transition-colors font-medium whitespace-nowrap"
+                    title="Przelicz deterministyczną ochronę luk (CTA/CTD/Min LOS) dla całego obiektu"
+                  >
+                    {recomputingGaps
+                      ? <Loader2 size={12} className="sm:w-3.5 sm:h-3.5 animate-spin" />
+                      : <Shield size={12} className="sm:w-3.5 sm:h-3.5" />}
+                    <span className="hidden sm:inline">🛡 Przelicz ochronę luk</span>
+                    <span className="sm:hidden">🛡 Przelicz</span>
+                  </button>
+                )}
+                {gapMode === 'suggest' && gapRestrictions.size > 0 && (
+                  <button
+                    onClick={applyGapSuggestionsToStaging}
+                    className="flex items-center gap-1 sm:gap-2 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs bg-teal-600 hover:bg-teal-500 text-white rounded-lg transition-colors font-medium whitespace-nowrap"
+                    title="Wstaw sugestie do edycji (prefill) — potem wyślij normalnym „Wyślij na Hotres”"
                   >
                     <Shield size={12} className="sm:w-3.5 sm:h-3.5" />
-                    <span className="hidden sm:inline">🛡 Wyślij ochronę → Hotres</span>
-                    <span className="sm:hidden">🛡 → Hotres</span>
+                    <span className="hidden sm:inline">🛡 Zastosuj sugestie (prefill)</span>
+                    <span className="sm:hidden">🛡 Prefill</span>
                   </button>
                 )}
               </>

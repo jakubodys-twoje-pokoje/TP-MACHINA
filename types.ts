@@ -158,6 +158,9 @@ export interface Price {
   ctd_synced?: boolean | null;
 }
 
+// Gap Assistant operating mode (per property).
+export type GapMode = 'off' | 'suggest' | 'autofill';
+
 // Gap Protection Engine — per-day output (mirrors `gap_restrictions` table).
 export interface GapRestriction {
   id?: string;
