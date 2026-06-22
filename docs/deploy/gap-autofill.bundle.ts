@@ -554,14 +554,31 @@ export async function computeAndStoreGapRestrictions(
       .eq('unit_id', unit.id);
     const overridesByDate = expandOverrides(ovrRows ?? [], today);
 
+    // Standard Min LOS comes from the CENNIK (prices.min of the unit's selected rate
+    // plan) — the same value shown/edited on the calendar. Config only acts as fallback.
+    const { data: priceRows } = await supabase
+      .from('prices')
+      .select('date, min')
+      .eq('unit_id', unit.id)
+      .eq('rate_id', rateId)
+      .gte('date', today)
+      .lte('date', horizon);
+    const minByDate = new Map<string, number>();
+    (priceRows ?? []).forEach((p: { date: string; min: number | null }) => {
+      if (p.min != null && p.min > 0) minByDate.set(p.date, p.min);
+    });
+
     const gaps = buildGaps({ unitId: unit.id, rows: avail ?? [], todayISO: today, horizonISO: horizon });
     gapCount += gaps.length;
 
     for (const gap of gaps) {
-      const cfg = resolveConfig(
+      const baseCfg = resolveConfig(
         { propertyId, unitId: unit.id, unitType: unit.type, date: gap.startDate },
         cfgRows,
       );
+      // Prefer the cennik's Min LOS at the arrival night (gap_start); fall back to config.
+      const cennikMin = minByDate.get(gap.startDate);
+      const cfg = { ...baseCfg, standardMinLos: cennikMin ?? baseCfg.standardMinLos };
       const overrides: Override[] = [];
       for (let i = 0; i < gap.length; i++) {
         const d = addDays(gap.startDate, i);

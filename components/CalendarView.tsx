@@ -2092,8 +2092,8 @@ export const CalendarView: React.FC = () => {
   const handleSaveGapConfig = async () => {
     if (!property) return;
     const d = gapConfigDraft;
-    if (d.min_acceptable_gap < 1 || d.standard_min_los < 1) {
-      alert('Min LOS i minimalna luka muszą być ≥ 1.');
+    if (d.min_acceptable_gap < 1) {
+      alert('Minimalna luka musi być ≥ 1.');
       return;
     }
     setSavingGapConfig(true);
@@ -3820,13 +3820,15 @@ export const CalendarView: React.FC = () => {
             <h2 className="text-xl font-bold text-teal-400 mb-1 flex items-center gap-2">
               <Shield size={20} /> Ustawienia ochrony luk
             </h2>
-            <p className="text-xs text-slate-400 mb-4">Dla tego obiektu{property ? `: ${property.name}` : ''}. Po zapisie możesz od razu przeliczyć.</p>
+            <p className="text-xs text-slate-400 mb-2">Dla tego obiektu{property ? `: ${property.name}` : ''}. Po zapisie możesz od razu przeliczyć.</p>
+            <p className="text-[11px] text-teal-300/80 bg-teal-900/20 border border-teal-800/40 rounded px-2 py-1.5 mb-4">
+              ℹ️ Standardowy Min LOS jest brany z <b>cennika</b> (wartość MIN w kalendarzu dla wybranego cennika). Steruj nim, edytując MIN w kalendarzu — nie ma tu osobnego pola.
+            </p>
 
             <div className="space-y-3">
               {([
                 ['min_acceptable_gap', 'Minimalna akceptowalna luka (nocy)', 'Najmniejsza pusta reszta, jaką wolno zostawić po rezerwacji'],
                 ['emergency_acceptable_gap', 'Awaryjna minimalna luka (nocy)', 'Mniejsza luka dopuszczalna w trybie last-minute/awaryjnym'],
-                ['standard_min_los', 'Standardowy Min LOS (nocy)', 'Domyślna minimalna długość pobytu'],
                 ['max_los', 'Max LOS (nocy, puste = brak)', 'Górny limit długości pobytu'],
                 ['last_minute_lead_days', 'Last-minute: lead time (dni)', 'Jeśli do przyjazdu ≤ tylu dni → tryb awaryjny'],
                 ['horizon_days', 'Horyzont (dni)', 'Jak daleko w przód liczyć luki'],
