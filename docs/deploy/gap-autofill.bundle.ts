@@ -173,85 +173,89 @@ export interface EffectiveParams {
   unsellable: boolean;
 }
 
-/** Resolve the dynamic effective_min_los and gap floor for a gap. */
-export function resolveEffectiveParams(gap: Gap, cfg: GapEngineConfig): EffectiveParams {
+/** Resolve the gap-level params (floor + emergency). Min LOS is now per arrival night. */
+export function resolveGapParams(gap: Gap, cfg: GapEngineConfig): { gapFloor: number; emergency: boolean } {
   const lastMinute = gap.leadDays <= cfg.lastMinuteLeadDays;
   const emergency = cfg.emergencyMode || lastMinute;
   const gapFloor = emergency ? cfg.emergencyAcceptableGap : cfg.minAcceptableGap;
-
-  let effMinLos = cfg.standardMinLos;
-  let shortened = false;
-  let unsellable = false;
-
-  if (cfg.standardMinLos > gap.length) {
-    // Standard stay does not fit the gap at all.
-    if (emergency && cfg.allowShortenMinLos) {
-      effMinLos = gap.length;   // collapse to a single full-fill stay (priority 4)
-      shortened = true;
-    } else {
-      unsellable = true;        // priority 5: never leave an unsellable fragment silently
-    }
-  }
-  return { effMinLos, gapFloor, emergency, shortened, unsellable };
-}
-
-/** All acceptable single reservations for the gap as it exists NOW (empty). */
-export function enumerateAcceptableStays(
-  L: number, effMinLos: number, gapFloor: number, maxLos: number | null,
-): Stay[] {
-  const stays: Stay[] = [];
-  const leftOk = (a: number) => a === 0 || a >= gapFloor;
-  const rightOk = (d: number) => (L - d) === 0 || (L - d) >= gapFloor;
-  for (let a = 0; a <= L - effMinLos; a++) {
-    if (!leftOk(a)) continue;
-    for (let d = a + effMinLos; d <= L; d++) {
-      if (!rightOk(d)) continue;
-      const len = d - a;
-      if (maxLos !== null && len > maxLos) continue;
-      stays.push({ a, d, len });
-    }
-  }
-  return stays;
+  return { gapFloor, emergency };
 }
 
 /**
  * Core engine. One gap + resolved config (+ overrides) → per-night restrictions.
+ *
+ * `minLosByDate` carries the CENNIK Min LOS per date (prices.min of the calendar cell).
+ * Each candidate ARRIVAL night uses its OWN date's min (not a single gap-wide value);
+ * config.standardMinLos is only the fallback when a cell has no min.
  */
 export function computeGapRestrictions(
   gap: Gap,
   cfg: GapEngineConfig,
   overrides: Override[] = [],
+  minLosByDate?: Map<string, number>,
 ): DayRestriction[] {
   const L = gap.length;
   const out: DayRestriction[] = [];
   if (L <= 0) return out;
 
-  const p = resolveEffectiveParams(gap, cfg);
+  const { gapFloor, emergency } = resolveGapParams(gap, cfg);
   const overrideByDate = new Map<string, Override>(overrides.map(o => [o.date, o]));
 
-  // Unsellable gap: close every arrival, flag for manual override (priority 5).
-  if (p.unsellable) {
-    for (let i = 0; i < L; i++) {
+  // Min LOS for an arrival on night offset p: that cell's cennik min, else config fallback.
+  const rawMinAt = (p: number): number => {
+    const v = minLosByDate?.get(addDays(gap.startDate, p));
+    return v !== undefined && v !== null && v > 0 ? v : cfg.standardMinLos;
+  };
+
+  // Effective min LOS for arrival p, after emergency shortening. Infinity = can't sell here.
+  let shortened = false;
+  const effMinLosAt = (p: number): number => {
+    let m = rawMinAt(p);
+    const room = L - p;            // max nights bookable from this arrival to gap end
+    if (m > room) {
+      if (emergency && cfg.allowShortenMinLos) { m = room; shortened = true; }
+      else return Infinity;        // priority 5: don't sell a too-short stay here
+    }
+    return m;
+  };
+
+  // Enumerate acceptable stays with PER-ARRIVAL min LOS.
+  const leftOk = (a: number) => a === 0 || a >= gapFloor;
+  const rightOk = (d: number) => (L - d) === 0 || (L - d) >= gapFloor;
+  const stays: Stay[] = [];
+  for (let a = 0; a < L; a++) {
+    if (!leftOk(a)) continue;
+    const m = effMinLosAt(a);
+    if (!Number.isFinite(m)) continue;
+    for (let d = a + m; d <= L; d++) {
+      if (!rightOk(d)) continue;
+      const len = d - a;
+      if (cfg.maxLos !== null && len > cfg.maxLos) continue;
+      stays.push({ a, d, len });
+    }
+  }
+
+  const unsellable = stays.length === 0;
+  const baseConfidence = unsellable ? 0.3 : (emergency || shortened ? 0.6 : 1.0);
+
+  for (let i = 0; i < L; i++) {
+    const date = addDays(gap.startDate, i);
+
+    if (unsellable) {
+      // Nothing sellable anywhere in this gap → close arrivals, flag for override.
       out.push(applyOverride({
-        date: addDays(gap.startDate, i),
+        date,
         cta: 1,
         ctd: i === 0 ? 0 : 1,           // keep prior guest's checkout open on day 0
-        minLos: cfg.standardMinLos,
+        minLos: rawMinAt(i),
         maxLos: null,
         reason: 'gap_unsellable_below_min_los',
         gapId: gap.gapId,
         source: 'auto',
         confidence: 0.3,
       }, overrideByDate));
+      continue;
     }
-    return out;
-  }
-
-  const stays = enumerateAcceptableStays(L, p.effMinLos, p.gapFloor, cfg.maxLos);
-  const baseConfidence = (p.emergency || p.shortened) ? 0.6 : 1.0;
-
-  for (let i = 0; i < L; i++) {
-    const date = addDays(gap.startDate, i);
 
     const arrivals = stays.filter(s => s.a === i);
     const departures = stays.filter(s => s.d === i);   // d===L lands on gap_end (no row)
@@ -260,7 +264,7 @@ export function computeGapRestrictions(
     // Day 0 (gap_start) is the PRIOR reservation's checkout day — never block CTD there.
     const ctd: Bool01 = i === 0 ? 0 : (departures.length > 0 ? 0 : 1);
 
-    const minLos = arrivals.length > 0 ? Math.min(...arrivals.map(s => s.len)) : p.effMinLos;
+    const minLos = arrivals.length > 0 ? Math.min(...arrivals.map(s => s.len)) : rawMinAt(i);
     const maxLosFromStay = arrivals.length > 0 ? Math.max(...arrivals.map(s => s.len)) : null;
     const maxLos = maxLosFromStay === null
       ? null
@@ -270,9 +274,9 @@ export function computeGapRestrictions(
       date,
       cta,
       ctd,
-      minLos: cta === 1 ? p.effMinLos : minLos,
+      minLos,
       maxLos,
-      reason: reasonFor(i, L, cta, ctd, p.effMinLos, p.gapFloor, arrivals.length > 0),
+      reason: reasonFor(i, L, cta, ctd, rawMinAt(i), gapFloor, arrivals.length > 0),
       gapId: gap.gapId,
       source: 'auto',
       confidence: baseConfidence,
@@ -572,20 +576,17 @@ export async function computeAndStoreGapRestrictions(
     gapCount += gaps.length;
 
     for (const gap of gaps) {
-      const baseCfg = resolveConfig(
+      const cfg = resolveConfig(
         { propertyId, unitId: unit.id, unitType: unit.type, date: gap.startDate },
         cfgRows,
       );
-      // Prefer the cennik's Min LOS at the arrival night (gap_start); fall back to config.
-      const cennikMin = minByDate.get(gap.startDate);
-      const cfg = { ...baseCfg, standardMinLos: cennikMin ?? baseCfg.standardMinLos };
       const overrides: Override[] = [];
       for (let i = 0; i < gap.length; i++) {
         const d = addDays(gap.startDate, i);
         const ov = overridesByDate.get(d);
         if (ov) overrides.push(ov);
       }
-      for (const r of computeGapRestrictions(gap, cfg, overrides)) {
+      for (const r of computeGapRestrictions(gap, cfg, overrides, minByDate)) {
         if (!inWindow(r.date)) continue;
         outputRows.push({
           unit_id: unit.id, rate_id: rateId, date: r.date,

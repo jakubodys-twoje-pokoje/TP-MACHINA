@@ -109,20 +109,17 @@ export async function computeAndStoreGapRestrictions(
     gapCount += gaps.length;
 
     for (const gap of gaps) {
-      const baseCfg = resolveConfig(
+      const cfg = resolveConfig(
         { propertyId, unitId: unit.id, unitType: unit.type, date: gap.startDate },
         cfgRows,
       );
-      // Prefer the cennik's Min LOS at the arrival night (gap_start); fall back to config.
-      const cennikMin = minByDate.get(gap.startDate);
-      const cfg = { ...baseCfg, standardMinLos: cennikMin ?? baseCfg.standardMinLos };
       const overrides: Override[] = [];
       for (let i = 0; i < gap.length; i++) {
         const d = addDays(gap.startDate, i);
         const ov = overridesByDate.get(d);
         if (ov) overrides.push(ov);
       }
-      for (const r of computeGapRestrictions(gap, cfg, overrides)) {
+      for (const r of computeGapRestrictions(gap, cfg, overrides, minByDate)) {
         if (!inWindow(r.date)) continue;
         outputRows.push({
           unit_id: unit.id, rate_id: rateId, date: r.date,

@@ -31,7 +31,9 @@ describe('Gap Protection Engine — 10 mandatory cases', () => {
     const rows = computeGapRestrictions(gap(3), {
       ...DEFAULT_CFG, standardMinLos: 6, emergencyAcceptableGap: 3, emergencyMode: true, allowShortenMinLos: true,
     });
-    expect(sig(rows)).toBe('0/0/3 1/1/3 1/1/3');
+    // Open arrival (day 0) sells the single 3-night stay; closed days report their
+    // base min (config 6) informationally — CTA=1 means the channel ignores min anyway.
+    expect(sig(rows)).toBe('0/0/3 1/1/6 1/1/6');
     expect(rows[0].confidence).toBe(0.6);
   });
 
@@ -94,6 +96,28 @@ describe('Gap Protection Engine — 10 mandatory cases', () => {
     expect(sig(high)).toBe('0/0/6 1/1/4 1/1/4 1/1/4 1/1/4 1/1/4');
     expect(sig(low)).toBe('0/0/2 1/1/2 0/0/2 0/0/3 0/0/2 1/1/2');
     expect(sig(high)).not.toBe(sig(low));
+  });
+});
+
+describe('Gap Protection Engine — per-date Min LOS from cennik', () => {
+  it('each arrival uses its own date min (map), config is only fallback', () => {
+    const cfg: GapEngineConfig = { ...DEFAULT_CFG, standardMinLos: 2, minAcceptableGap: 2, emergencyAcceptableGap: 2 };
+    const map = new Map<string, number>([
+      [addDays(START, 0), 3],   // arrivals on day 0 need >= 3 nights
+      [addDays(START, 2), 2],   // arrivals on day 2 need >= 2 nights
+    ]);
+    const rows = computeGapRestrictions(gap(6), cfg, [], map);
+    expect(rows[0].cta).toBe(0);
+    expect(rows[0].minLos).toBe(3);   // from cennik date 0
+    expect(rows[2].cta).toBe(0);
+    expect(rows[2].minLos).toBe(2);   // from cennik date 2
+  });
+
+  it('falls back to config.standardMinLos when a date has no cennik min', () => {
+    const cfg: GapEngineConfig = { ...DEFAULT_CFG, standardMinLos: 3 };
+    const rows = computeGapRestrictions(gap(7), cfg, [], new Map());
+    // identical to the no-map case (T2)
+    expect(sig(rows)).toBe('0/0/3 1/1/3 1/1/3 0/0/4 0/0/3 1/1/3 1/1/3');
   });
 });
 

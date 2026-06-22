@@ -307,7 +307,7 @@ Domyślny `minGap = 3`, `gapFloor` = `minGap` poza trybem awaryjnym.
 |---|---|---|---|---|
 | 1 | Luka 5, MinLOS 3, min.luka 3 | L=5 | `0/0/5` `1/1/3` `1/1/3` `1/1/3` `1/1/3` | Każdy podział zostawia <3 → **wymuszony pełny pobyt 5 nocy** (przyjazd tylko dzień 0, Min=5). |
 | 2 | Luka 7, MinLOS 3, min.luka 3 | L=7 | `0/0/3` `1/1/3` `1/1/3` `0/0/4` `0/0/3` `1/1/3` `1/1/3` | Bogaty zbiór: 3+4, 4+3 lub całość. Przyjazd dz.0 (Min 3), dz.3 (Min 4→do końca), dz.4 (Min 3→do końca). |
-| 3 | Luka 3, MinLOS 6, **awaryjna** min.luka 3, tryb awaryjny | L=3, emergency | `0/0/3` `1/1/3` `1/1/3` | LOS 6>3 → awaryjne obniżenie do 3 → jeden pobyt na całość. `confidence=0.6`. |
+| 3 | Luka 3, MinLOS 6, **awaryjna** min.luka 3, tryb awaryjny | L=3, emergency | `0/0/3` `1/1/6` `1/1/6` | LOS 6>3 → awaryjne obniżenie do 3 → jeden pobyt na całość (dz.0 Min 3). Dni CTA pokazują bazowy Min 6 (informacyjnie). `confidence=0.6`. |
 | 3b | jw. **bez** trybu awaryjnego | L=3, MinLOS 6 | `1/0/6` `1/1/6` `1/1/6` | Niesprzedawalna → wszystko CTA, dz.0 CTD=0 (wymeldowanie poprzedniego), `confidence=0.3`, czeka na override. |
 | 4 | Rezerwacja zostawia 1 noc po **prawej** | L=6 | `0/0/3` `1/1/3` `1/1/3` `0/0/3` `1/1/3` `1/1/3` | Wyjazd na offsecie 5 (reszta 1) → **CTD=1**; offset 4 (reszta 2) → CTD=1. Dozwolone tylko 3+3 lub całość. |
 | 5 | Rezerwacja zostawia 1 noc po **lewej** | L=6 | jw. | Przyjazd na offsecie 1 (reszta 1) i 2 (reszta 2) → **CTA=1**; offset 3 (reszta 3, sprzedawalna) → CTA=0. |
@@ -317,6 +317,12 @@ Domyślny `minGap = 3`, `gapFloor` = `minGap` poza trybem awaryjnym.
 | 9 | Ręczne nadpisanie operatora | L=7 + override dz.5 `{cta:0,ctd:0,min:2}` | dz.5: `0/0/2`, `source=manual`, `confidence=1`, `reason=operator_last_minute`; reszta auto | Override wygrywa nad auto na wskazanej dacie; pozostałe dni bez zmian. |
 | 10 | Sezon wysoki vs niski (ta sama luka L=6) | high: MinLOS 4, minLuka 3 / low: MinLOS 2, minLuka 2 | **high:** `0/0/6` `1/1/4` `1/1/4` `1/1/4` `1/1/4` `1/1/4`  ·  **low:** `0/0/2` `1/1/2` `0/0/2` `0/0/3` `0/0/2` `1/1/2` | Wysoki sezon wymusza pełne 6 nocy; niski dopuszcza krótkie pobyty i podziały. |
 
+> **Min LOS per data (z cennika):** standardowy Min LOS dla każdego dnia przyjazdu jest
+> brany z `prices.min` wybranego cennika dla **tej daty** (wartość MIN z kalendarza), a nie
+> z jednej wartości na całą lukę. `gap_engine_config.standard_min_los` jest tylko fallbackiem,
+> gdy w cenniku brak MIN. Przekazywane do rdzenia jako `minLosByDate` (4. argument
+> `computeGapRestrictions`). Decyzja §11.1 rozstrzygnięta: **źródłem jest cennik**.
+>
 > **Uwaga o projekcji per-dzień:** zbiór dozwolony przez per-dniowe CTA/CTD/Min jest w
 > ogólności **nadzbiorem** ścisłego `S` (restrykcje kanałowe nie wyrażają dowolnych
 > zbiorów par). Dla wszystkich 10 przypadków projekcja pokrywa się z `S`. W rzadkich,
