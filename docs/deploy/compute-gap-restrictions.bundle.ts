@@ -480,11 +480,20 @@ export interface ComputeResult {
   skipped: boolean;
 }
 
+export interface ComputeOptions {
+  /** Restrict to these units (e.g. only units with new notifications). Default: all. */
+  unitIds?: string[];
+  /** Only upsert restrictions whose date is >= this (gaps are still computed with full context). */
+  from?: string;
+  /** Only upsert restrictions whose date is <= this. */
+  to?: string;
+}
+
 // deno-lint-ignore no-explicit-any
 export async function computeAndStoreGapRestrictions(
   supabase: any,
   propertyId: string,
-  unitId?: string,
+  opts: ComputeOptions = {},
 ): Promise<ComputeResult> {
   const today = toLocalDateStr(new Date());
 
@@ -509,7 +518,7 @@ export async function computeAndStoreGapRestrictions(
     .from('units')
     .select('id, type, selected_rate_plan_id')
     .eq('property_id', propertyId);
-  if (unitId) unitQuery = unitQuery.eq('id', unitId);
+  if (opts.unitIds && opts.unitIds.length > 0) unitQuery = unitQuery.in('id', opts.unitIds);
   const { data: units, error: unitsErr } = await unitQuery;
   if (unitsErr) throw unitsErr;
   if (!units || units.length === 0) {
@@ -525,6 +534,7 @@ export async function computeAndStoreGapRestrictions(
 
   const outputRows: Record<string, unknown>[] = [];
   let gapCount = 0;
+  const inWindow = (d: string) => (!opts.from || d >= opts.from) && (!opts.to || d <= opts.to);
 
   for (const unit of units) {
     const rateId = unit.selected_rate_plan_id ?? defaultRateId;
@@ -559,6 +569,7 @@ export async function computeAndStoreGapRestrictions(
         if (ov) overrides.push(ov);
       }
       for (const r of computeGapRestrictions(gap, cfg, overrides)) {
+        if (!inWindow(r.date)) continue;
         outputRows.push({
           unit_id: unit.id, rate_id: rateId, date: r.date,
           cta: r.cta, ctd: r.ctd, min_los: r.minLos, max_los: r.maxLos,
@@ -621,7 +632,7 @@ const corsHeaders = {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
-    const { property_id, unit_id } = await req.json();
+    const { property_id, unit_id, unit_ids, from, to } = await req.json();
     if (!property_id) return json({ error: 'property_id is required' }, 400);
 
     const supabase = createClient(
@@ -629,7 +640,8 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    const result = await computeAndStoreGapRestrictions(supabase, property_id, unit_id);
+    const unitIds: string[] | undefined = unit_ids ?? (unit_id ? [unit_id] : undefined);
+    const result = await computeAndStoreGapRestrictions(supabase, property_id, { unitIds, from, to });
     return json({ success: true, ...result });
   } catch (error: any) {
     console.error('❌ compute-gap-restrictions error:', error?.message ?? error);

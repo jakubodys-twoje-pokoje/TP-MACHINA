@@ -109,6 +109,11 @@ export const CalendarView: React.FC = () => {
   const [gapRestrictions, setGapRestrictions] = useState<Map<string, GapRestriction>>(new Map());
   const [recomputingGaps, setRecomputingGaps] = useState(false);
   const [gapMode, setGapMode] = useState<GapMode>('suggest');
+  const [showGapMenu, setShowGapMenu] = useState(false);
+  const gapModeRef = useRef<GapMode>('suggest');
+  // Debounce auto-suggest when multiple notifications arrive at once.
+  const autoSuggestUnitsRef = useRef<Set<string>>(new Set());
+  const autoSuggestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Shared "which rate plans to push to" modal — asks every time, for all push actions
   const [showPushSendModal, setShowPushSendModal] = useState(false);
@@ -2093,20 +2098,100 @@ export const CalendarView: React.FC = () => {
     alert(`✓ Wstawiono ${applied} sugestii do edycji. Sprawdź i kliknij „Wyślij na Hotres".`);
   };
 
-  // Recompute restrictions server-side (after sync or on demand), then reload.
-  const handleRecomputeGaps = async () => {
+  // Unit ids that currently have unread notifications (default recompute scope).
+  const notificationUnitIds = (): string[] =>
+    [...new Set(unreadNotifications.map(n => n.unit_id))];
+
+  // Recompute restrictions server-side, scoped, then reload. `silent` skips the alert
+  // (used by the automatic "suggest on new notification" path).
+  const runRecompute = async (
+    scope: { unitIds?: string[]; from?: string; to?: string },
+    label: string,
+    silent = false,
+  ) => {
     if (!property) return;
     setRecomputingGaps(true);
     try {
-      const res = await recomputeGapRestrictions(property.id);
+      const res = await recomputeGapRestrictions(property.id, scope);
       await loadGapRestrictions();
-      alert(`🛡 Ochrona luk przeliczona.\n\nJednostki: ${res.units}\nLuki: ${res.gaps}\nDni restrykcji: ${res.restrictions_upserted}`);
+      if (!silent) {
+        if (res.skipped) alert('🛡 Tryb „Off" — silnik nic nie przeliczył dla tego obiektu.');
+        else alert(`🛡 Ochrona luk przeliczona (${label}).\n\nJednostki: ${res.units}\nLuki: ${res.gaps}\nDni restrykcji: ${res.restrictions_upserted}`);
+      }
     } catch (err: any) {
-      alert(`✗ Błąd przeliczania ochrony luk: ${err.message}`);
+      if (!silent) alert(`✗ Błąd przeliczania ochrony luk: ${err.message}`);
+      else console.error('auto-suggest recompute failed:', err);
     } finally {
       setRecomputingGaps(false);
     }
   };
+
+  // Default action: only the units that arrived as notifications.
+  const handleRecomputeNotifications = async () => {
+    setShowGapMenu(false);
+    const unitIds = notificationUnitIds();
+    if (unitIds.length === 0) { alert('Brak nowych powiadomień do przeliczenia. Użyj rozwijanego menu, aby sprawdzić miesiąc lub przedział.'); return; }
+    await runRecompute({ unitIds }, `powiadomienia: ${unitIds.length} jedn.`);
+  };
+
+  // Dropdown: current visible month (all units).
+  const handleRecomputeMonth = async () => {
+    setShowGapMenu(false);
+    const first = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+    const last = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0);
+    await runRecompute({ from: toLocalDateStr(first), to: toLocalDateStr(last) }, `miesiąc ${toLocalDateStr(first).slice(0, 7)}`);
+  };
+
+  // Dropdown: arbitrary date range (all units).
+  const handleRecomputeRange = async () => {
+    setShowGapMenu(false);
+    const from = prompt('Sprawdź przedział — data OD (RRRR-MM-DD):', toLocalDateStr(dates[0]));
+    if (!from) return;
+    const to = prompt('Sprawdź przedział — data DO (RRRR-MM-DD):', toLocalDateStr(dates[dates.length - 1]));
+    if (!to) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) { alert('Niepoprawny format daty (RRRR-MM-DD).'); return; }
+    await runRecompute({ from, to }, `przedział ${from} – ${to}`);
+  };
+
+  // Dropdown: whole property (full horizon).
+  const handleRecomputeAll = async () => {
+    setShowGapMenu(false);
+    await runRecompute({}, 'cały obiekt');
+  };
+
+  // Auto-suggest on incoming notifications (debounced). Only in 'suggest' mode.
+  const scheduleAutoSuggest = (unitId: string) => {
+    if (gapModeRef.current !== 'suggest') return;
+    autoSuggestUnitsRef.current.add(unitId);
+    if (autoSuggestTimerRef.current) clearTimeout(autoSuggestTimerRef.current);
+    autoSuggestTimerRef.current = setTimeout(() => {
+      const unitIds = [...autoSuggestUnitsRef.current];
+      autoSuggestUnitsRef.current.clear();
+      if (unitIds.length > 0) runRecompute({ unitIds }, 'auto', true);
+    }, 1500);
+  };
+
+  // Keep a ref of the current mode for stable use inside the realtime callback.
+  useEffect(() => { gapModeRef.current = gapMode; }, [gapMode]);
+
+  // Realtime: when a new notification arrives for this property, refresh the list
+  // and (in 'suggest' mode) immediately recompute that unit so a suggestion shows up.
+  useEffect(() => {
+    if (!propertyId) return;
+    const channel = supabase
+      .channel(`notif-gap-${propertyId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `property_id=eq.${propertyId}` },
+        (payload: any) => {
+          fetchUnreadNotifications();
+          const unitId = payload?.new?.unit_id;
+          if (unitId) scheduleAutoSuggest(unitId);
+        },
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [propertyId]);
 
   // Push engine output to Hotres, respecting the saved push rate-plan selection.
   const executePushGapsToHotres = async (planIds: Set<string>) => {
@@ -2744,18 +2829,36 @@ export const CalendarView: React.FC = () => {
                 </div>
 
                 {gapMode !== 'off' && (
-                  <button
-                    onClick={handleRecomputeGaps}
-                    disabled={recomputingGaps}
-                    className="flex items-center gap-1 sm:gap-2 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs bg-teal-700 hover:bg-teal-600 disabled:opacity-50 text-white rounded-lg transition-colors font-medium whitespace-nowrap"
-                    title="Przelicz deterministyczną ochronę luk (CTA/CTD/Min LOS) dla całego obiektu"
-                  >
-                    {recomputingGaps
-                      ? <Loader2 size={12} className="sm:w-3.5 sm:h-3.5 animate-spin" />
-                      : <Shield size={12} className="sm:w-3.5 sm:h-3.5" />}
-                    <span className="hidden sm:inline">🛡 Przelicz ochronę luk</span>
-                    <span className="sm:hidden">🛡 Przelicz</span>
-                  </button>
+                  <div className="relative flex items-stretch">
+                    {/* Default: only units that arrived as notifications */}
+                    <button
+                      onClick={handleRecomputeNotifications}
+                      disabled={recomputingGaps}
+                      className="flex items-center gap-1 sm:gap-2 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs bg-teal-700 hover:bg-teal-600 disabled:opacity-50 text-white rounded-l-lg transition-colors font-medium whitespace-nowrap"
+                      title="Przelicz ochronę luk tylko dla jednostek z nowymi powiadomieniami"
+                    >
+                      {recomputingGaps
+                        ? <Loader2 size={12} className="sm:w-3.5 sm:h-3.5 animate-spin" />
+                        : <Shield size={12} className="sm:w-3.5 sm:h-3.5" />}
+                      <span className="hidden sm:inline">🛡 Przelicz (powiadomienia)</span>
+                      <span className="sm:hidden">🛡 Powiad.</span>
+                    </button>
+                    <button
+                      onClick={() => setShowGapMenu(v => !v)}
+                      disabled={recomputingGaps}
+                      className="px-1.5 sm:px-2 bg-teal-800 hover:bg-teal-700 disabled:opacity-50 text-white rounded-r-lg border-l border-teal-900 transition-colors"
+                      title="Więcej zakresów"
+                    >
+                      <ChevronRight size={14} className="rotate-90" />
+                    </button>
+                    {showGapMenu && (
+                      <div className="absolute top-full left-0 mt-1 z-30 bg-slate-800 border border-slate-700 rounded-lg shadow-xl py-1 min-w-[180px]">
+                        <button onClick={handleRecomputeMonth} className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-slate-700">📅 Sprawdź miesiąc</button>
+                        <button onClick={handleRecomputeRange} className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-slate-700">📆 Sprawdź przedział…</button>
+                        <button onClick={handleRecomputeAll} className="w-full text-left px-3 py-2 text-xs text-slate-200 hover:bg-slate-700">🏠 Cały obiekt</button>
+                      </div>
+                    )}
+                  </div>
                 )}
                 {gapMode === 'suggest' && gapRestrictions.size > 0 && (
                   <button

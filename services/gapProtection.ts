@@ -29,11 +29,24 @@ async function authedFetch(fn: string, body: unknown) {
   return json;
 }
 
-/** Trigger a server-side recompute of gap_restrictions for a property (or one unit). */
-export async function recomputeGapRestrictions(propertyId: string, unitId?: string): Promise<{
-  units: number; gaps: number; restrictions_upserted: number;
+export interface RecomputeScope {
+  /** Restrict to these units (e.g. units with new notifications). */
+  unitIds?: string[];
+  /** Only write restrictions in this date window (gaps still computed with full context). */
+  from?: string;
+  to?: string;
+}
+
+/** Trigger a server-side recompute of gap_restrictions for a property, optionally scoped. */
+export async function recomputeGapRestrictions(propertyId: string, scope: RecomputeScope = {}): Promise<{
+  units: number; gaps: number; restrictions_upserted: number; mode: string; skipped: boolean;
 }> {
-  return authedFetch('compute-gap-restrictions', { property_id: propertyId, unit_id: unitId });
+  return authedFetch('compute-gap-restrictions', {
+    property_id: propertyId,
+    unit_ids: scope.unitIds,
+    from: scope.from,
+    to: scope.to,
+  });
 }
 
 /** Load gap_restrictions for the given units in a date range. Keyed "unitId_date". */

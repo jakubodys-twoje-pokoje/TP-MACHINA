@@ -14,7 +14,7 @@ const corsHeaders = {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
-    const { property_id, unit_id } = await req.json();
+    const { property_id, unit_id, unit_ids, from, to } = await req.json();
     if (!property_id) return json({ error: 'property_id is required' }, 400);
 
     const supabase = createClient(
@@ -22,7 +22,8 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    const result = await computeAndStoreGapRestrictions(supabase, property_id, unit_id);
+    const unitIds: string[] | undefined = unit_ids ?? (unit_id ? [unit_id] : undefined);
+    const result = await computeAndStoreGapRestrictions(supabase, property_id, { unitIds, from, to });
     return json({ success: true, ...result });
   } catch (error: any) {
     console.error('❌ compute-gap-restrictions error:', error?.message ?? error);

@@ -17,11 +17,20 @@ export interface ComputeResult {
   skipped: boolean;
 }
 
+export interface ComputeOptions {
+  /** Restrict to these units (e.g. only units with new notifications). Default: all. */
+  unitIds?: string[];
+  /** Only upsert restrictions whose date is >= this (gaps are still computed with full context). */
+  from?: string;
+  /** Only upsert restrictions whose date is <= this. */
+  to?: string;
+}
+
 // deno-lint-ignore no-explicit-any
 export async function computeAndStoreGapRestrictions(
   supabase: any,
   propertyId: string,
-  unitId?: string,
+  opts: ComputeOptions = {},
 ): Promise<ComputeResult> {
   const today = toLocalDateStr(new Date());
 
@@ -46,7 +55,7 @@ export async function computeAndStoreGapRestrictions(
     .from('units')
     .select('id, type, selected_rate_plan_id')
     .eq('property_id', propertyId);
-  if (unitId) unitQuery = unitQuery.eq('id', unitId);
+  if (opts.unitIds && opts.unitIds.length > 0) unitQuery = unitQuery.in('id', opts.unitIds);
   const { data: units, error: unitsErr } = await unitQuery;
   if (unitsErr) throw unitsErr;
   if (!units || units.length === 0) {
@@ -62,6 +71,7 @@ export async function computeAndStoreGapRestrictions(
 
   const outputRows: Record<string, unknown>[] = [];
   let gapCount = 0;
+  const inWindow = (d: string) => (!opts.from || d >= opts.from) && (!opts.to || d <= opts.to);
 
   for (const unit of units) {
     const rateId = unit.selected_rate_plan_id ?? defaultRateId;
@@ -96,6 +106,7 @@ export async function computeAndStoreGapRestrictions(
         if (ov) overrides.push(ov);
       }
       for (const r of computeGapRestrictions(gap, cfg, overrides)) {
+        if (!inWindow(r.date)) continue;
         outputRows.push({
           unit_id: unit.id, rate_id: rateId, date: r.date,
           cta: r.cta, ctd: r.ctd, min_los: r.minLos, max_los: r.maxLos,
