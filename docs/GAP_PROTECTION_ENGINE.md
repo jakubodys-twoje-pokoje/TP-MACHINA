@@ -10,6 +10,36 @@
 
 ---
 
+## 0. Status implementacji (zrealizowane)
+
+Plan z §9 został zaimplementowany. Weryfikacja: `npm test` → **26 testów OK**,
+`npm run build` (vite/esbuild) → **OK**.
+
+| Etap | Status | Artefakty |
+|---|---|---|
+| 1. Rdzeń (pure shared TS) | ✅ | `engine/gapEngine.ts`, `engine/dates.ts`, `engine/types.ts`, `engine/index.ts` |
+| 1. Testy rdzenia (10 obowiązkowych) | ✅ | `engine/gapEngine.test.ts` (vitest, 14 asercji) + prototyp `docs/prototypes/gapEngine.ts` |
+| 2. Migracje DB | ✅ | `supabase/migrations/create_gap_restrictions.sql`, `…_gap_engine_config.sql`, `…_gap_overrides.sql` |
+| 3. `buildGaps` + `resolveConfig` + testy | ✅ | `engine/buildGaps.ts`, `engine/resolveConfig.ts`, `*.test.ts` (12 asercji) |
+| 4. Edge function | ✅ | `supabase/functions/compute-gap-restrictions/index.ts` (import rdzenia) |
+| 5. Frontend: serwis + wizualizacja + recompute + override | ✅ | `services/gapProtection.ts`, integracja w `components/CalendarView.tsx` |
+| 6. Push z `gap_restrictions` → Hotres | ✅ | `pushGapRestrictionsToHotres` + akcja `'gaps'` w modalu wyboru cenników |
+| 7. Wygaszenie AI | ✅ (disable) | flaga `AI_SUGGESTIONS_ENABLED=false`; bannery DEPRECATED w docs AI/n8n |
+
+**Decyzje przyjęte (domyślne z §11, do potwierdzenia):** standardowy Min LOS z
+`gap_engine_config` (fallback default); `min_gap=3`, `emergency_gap=2`,
+`last_minute_lead_days=7`, `horizon_days=365`; tryb awaryjny = flaga w configu **lub**
+auto last-minute; override loosen/tighten z `expires_at`; push CTA/CTD/MIN (max opcjonalnie).
+Wygaszenie AI jako **disable flagą** (bez kasowania kodu) — pełny `DROP`/usunięcie kodu
+jako świadomy follow-up.
+
+> **Uwaga wdrożeniowa:** migracje SQL i deploy edge function `compute-gap-restrictions`
+> trzeba uruchomić na środowisku Supabase (brak dostępu do DB/deploy z tej sesji).
+> Do czasu utworzenia tabel front-end degraduje się łagodnie (puste `gap_restrictions`,
+> przycisk „Przelicz" zgłosi błąd z edge function).
+
+---
+
 ## 1. Stan obecny (Discovery)
 
 Zweryfikowane w kodzie na branchu `claude/focused-gates-1HKyf`.

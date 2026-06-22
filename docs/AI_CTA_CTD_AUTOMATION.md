@@ -1,3 +1,10 @@
+> ⚠️ **DEPRECATED / WYGASZONE.** Ten przepływ (ai_suggestions + n8n + Gemini) został
+> zastąpiony deterministycznym **Gap Protection Engine** (`engine/*`, edge
+> `compute-gap-restrictions`, tabele `gap_restrictions`/`gap_engine_config`/`gap_overrides`).
+> W kodzie front-endu jest wyłączony flagą `AI_SUGGESTIONS_ENABLED = false`
+> (`components/CalendarView.tsx`). Workflow n8n należy wyłączyć. Dokument zostawiony
+> wyłącznie jako referencja historyczna — patrz `docs/GAP_PROTECTION_ENGINE.md` §8.
+
 # AI Automation dla CTA/CTD - Pure n8n Workflow
 
 ## Przegląd

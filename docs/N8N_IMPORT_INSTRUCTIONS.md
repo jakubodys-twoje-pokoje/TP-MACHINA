@@ -1,3 +1,7 @@
+> ⚠️ **DEPRECATED / WYGASZONE.** Workflow AI (n8n + Gemini) zastąpiony przez
+> deterministyczny Gap Protection Engine. Nie importuj/nie uruchamiaj go.
+> Patrz `docs/GAP_PROTECTION_ENGINE.md` §8.
+
 # Jak zaimportować workflow AI do n8n
 
 ## Krok 1: Import workflow

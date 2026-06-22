@@ -158,6 +158,38 @@ export interface Price {
   ctd_synced?: boolean | null;
 }
 
+// Gap Protection Engine — per-day output (mirrors `gap_restrictions` table).
+export interface GapRestriction {
+  id?: string;
+  unit_id: string;
+  rate_id: string;
+  date: string;
+  cta: 0 | 1 | null;
+  ctd: 0 | 1 | null;
+  min_los: number | null;
+  max_los: number | null;
+  gap_id: string | null;
+  reason: string | null;
+  source: 'auto' | 'manual';
+  confidence: number;
+  computed_at?: string;
+}
+
+// Gap Protection Engine — persistent operator override (mirrors `gap_overrides`).
+export interface GapOverride {
+  id?: string;
+  unit_id: string;
+  date_from: string;
+  date_to: string;
+  cta: 0 | 1 | null;
+  ctd: 0 | 1 | null;
+  min_los: number | null;
+  reason: string | null;
+  operator_email: string | null;
+  expires_at: string | null;
+  created_at?: string;
+}
+
 export interface AISuggestion {
   id: string;
   notification_id: string;

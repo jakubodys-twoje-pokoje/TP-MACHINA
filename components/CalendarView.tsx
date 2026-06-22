@@ -1,9 +1,15 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback, memo } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { Property, Availability, Unit, Notification, Price, AISuggestion, RatePlan } from '../types';
-import { Loader2, ChevronLeft, ChevronRight, RefreshCw, Sparkles, ArrowRight, CheckSquare, Square, X, Save } from 'lucide-react';
+import { Property, Availability, Unit, Notification, Price, AISuggestion, RatePlan, GapRestriction } from '../types';
+import { Loader2, ChevronLeft, ChevronRight, RefreshCw, Sparkles, ArrowRight, CheckSquare, Square, X, Save, Shield } from 'lucide-react';
 import { RatePlanMatrixModal } from './RatePlanMatrixModal';
+import { recomputeGapRestrictions, fetchGapRestrictions as fetchGapRestrictionsSvc, saveGapOverride, pushGapRestrictionsToHotres } from '../services/gapProtection';
+
+// Gap Protection Engine is the SOLE deterministic source of CTA/CTD/Min LOS.
+// The legacy ai_suggestions + n8n + Gemini heuristic is retired (phased out);
+// flip this to true only to re-enable the old flow for debugging. See docs §8.
+const AI_SUGGESTIONS_ENABLED = false;
 
 export const CalendarView: React.FC = () => {
   const { id: propertyId } = useParams<{ id: string }>();
@@ -98,10 +104,14 @@ export const CalendarView: React.FC = () => {
   const [aiSuggestions, setAiSuggestions] = useState<Map<string, AISuggestion>>(new Map());
   const [selectedSuggestion, setSelectedSuggestion] = useState<AISuggestion | null>(null);
 
+  // Gap Protection Engine — per-day restrictions keyed "unitId_date".
+  const [gapRestrictions, setGapRestrictions] = useState<Map<string, GapRestriction>>(new Map());
+  const [recomputingGaps, setRecomputingGaps] = useState(false);
+
   // Shared "which rate plans to push to" modal — asks every time, for all push actions
   const [showPushSendModal, setShowPushSendModal] = useState(false);
   const [pushModalSelection, setPushModalSelection] = useState<Set<string>>(new Set());
-  const [pushModalAction, setPushModalAction] = useState<'sync' | 'pushdb' | 'override'>('sync');
+  const [pushModalAction, setPushModalAction] = useState<'sync' | 'pushdb' | 'override' | 'gaps'>('sync');
   const [pushModalInfo, setPushModalInfo] = useState<string>('');
 
   // Override modal state
@@ -165,6 +175,7 @@ export const CalendarView: React.FC = () => {
       fetchQuarterAvailability();
       fetchPricesData();
       fetchAISuggestions();
+      loadGapRestrictions();
     }
   }, [selectedDate, units]);
 
@@ -728,7 +739,7 @@ export const CalendarView: React.FC = () => {
 
   // Open the shared push-target modal, seeding the selection from the saved push choice
   // (or the displayed plans as a one-time default).
-  const openPushModal = (action: 'sync' | 'pushdb' | 'override', info: string) => {
+  const openPushModal = (action: 'sync' | 'pushdb' | 'override' | 'gaps', info: string) => {
     const seed = new Set<string>(selectedPushRatePlanIds);
     if (seed.size === 0) {
       unitRatePlan.forEach(planId => { if (planId) seed.add(planId); });
@@ -749,6 +760,7 @@ export const CalendarView: React.FC = () => {
     if (pushModalAction === 'sync') executeSyncToHotres(ids);
     else if (pushModalAction === 'pushdb') executePushDBToHotres(ids);
     else if (pushModalAction === 'override') executeOverride(ids);
+    else if (pushModalAction === 'gaps') executePushGapsToHotres(ids);
   };
 
   // Performs the actual send using the chosen rate plan ids
@@ -1941,6 +1953,14 @@ export const CalendarView: React.FC = () => {
         await fetchQuarterAvailability();
         await fetchPricesData();
       }
+
+      // Availability changed → recompute gap protection from fresh local data.
+      try {
+        await recomputeGapRestrictions(property.id);
+        await loadGapRestrictions();
+      } catch (gapErr) {
+        console.error('Gap recompute after sync failed (non-fatal):', gapErr);
+      }
     } catch (error: any) {
       console.error('Manual sync error:', error);
       alert(`Błąd synchronizacji: ${error.message}`);
@@ -2008,7 +2028,98 @@ export const CalendarView: React.FC = () => {
   };
 
   // Fetch AI suggestions for current view
+  // ─── Gap Protection Engine integration ───────────────────────────────────
+  // Load engine output for the visible window (same ~90-day span as the grid).
+  const loadGapRestrictions = async () => {
+    if (units.length === 0) return;
+    try {
+      const start = new Date(selectedDate); start.setDate(start.getDate() - 30);
+      const end = new Date(selectedDate); end.setDate(end.getDate() + 60);
+      const map = await fetchGapRestrictionsSvc(
+        units.map(u => u.id), toLocalDateStr(start), toLocalDateStr(end),
+      );
+      setGapRestrictions(map);
+    } catch (err) {
+      console.error('loadGapRestrictions error:', err);
+    }
+  };
+
+  const getGapRestriction = (unitId: string, dateStr: string): GapRestriction | undefined =>
+    gapRestrictions.get(`${unitId}_${dateStr}`);
+
+  // Recompute restrictions server-side (after sync or on demand), then reload.
+  const handleRecomputeGaps = async () => {
+    if (!property) return;
+    setRecomputingGaps(true);
+    try {
+      const res = await recomputeGapRestrictions(property.id);
+      await loadGapRestrictions();
+      alert(`🛡 Ochrona luk przeliczona.\n\nJednostki: ${res.units}\nLuki: ${res.gaps}\nDni restrykcji: ${res.restrictions_upserted}`);
+    } catch (err: any) {
+      alert(`✗ Błąd przeliczania ochrony luk: ${err.message}`);
+    } finally {
+      setRecomputingGaps(false);
+    }
+  };
+
+  // Push engine output to Hotres, respecting the saved push rate-plan selection.
+  const executePushGapsToHotres = async (planIds: Set<string>) => {
+    if (!property) return;
+    try {
+      const { data: rps } = await supabase
+        .from('rate_plans').select('id, name, external_id').eq('property_id', property.id);
+      const plansToSend = (rps ?? [])
+        .filter(rp => rp.external_id != null && planIds.has(rp.id))
+        .map(rp => ({ external_id: String(rp.external_id) }));
+      if (plansToSend.length === 0) { alert('Nie wybrano żadnego cennika (z external_id) do wysyłki.'); return; }
+      const startStr = toLocalDateStr(dates[0]);
+      const endStr = toLocalDateStr(dates[dates.length - 1]);
+      const res = await pushGapRestrictionsToHotres({ propertyId: property.id, units, plansToSend, startStr, endStr });
+      alert(`✓ Wysłano ochronę luk do Hotresa:\n• ${res.records} rekordów (CTA/CTD/MIN)\n• Zakres: ${startStr} – ${endStr}`);
+    } catch (err: any) {
+      alert(`✗ Błąd wysyłki ochrony luk: ${err.message}`);
+    }
+  };
+
+  const handlePushGapsToHotres = () => {
+    if (!property) return;
+    const startStr = toLocalDateStr(dates[0]);
+    const endStr = toLocalDateStr(dates[dates.length - 1]);
+    openPushModal('gaps', `Wyślę CTA/CTD/MIN z silnika ochrony luk (gap_restrictions).\nZakres: ${startStr} – ${endStr}.\nNadpisze bieżące restrykcje w Hotresie.`);
+  };
+
+  // Persist selected calendar cells as a Gap override (survives recompute).
+  const handleSaveGapOverrides = async () => {
+    if (selectedCells.size === 0) { alert('Zaznacz przynajmniej jedną komórkę (tryb edycji zbiorczej).'); return; }
+    if (bulkEditCTA === null && bulkEditCTD === null && bulkEditMIN === null) {
+      alert('Ustaw przynajmniej jedną wartość (CTA / CTD / MIN) do zapisania jako override.');
+      return;
+    }
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const ops: Promise<void>[] = [];
+      selectedCells.forEach(key => {
+        const idx = key.lastIndexOf('_');
+        const unitId = key.slice(0, idx);
+        const dateStr = key.slice(idx + 1);
+        ops.push(saveGapOverride({
+          unit_id: unitId, date_from: dateStr, date_to: dateStr,
+          cta: bulkEditCTA as 0 | 1 | null, ctd: bulkEditCTD as 0 | 1 | null, min_los: bulkEditMIN,
+          reason: 'operator_override', operator_email: user?.email ?? null, expires_at: null,
+        }));
+      });
+      await Promise.all(ops);
+      setShowBulkEditModal(false);
+      setBulkEditMode(false);
+      setSelectedCells(new Set());
+      alert(`✓ Zapisano ${ops.length} override(ów) ochrony luk.\nKliknij „Przelicz ochronę luk", aby je zastosować.`);
+    } catch (err: any) {
+      alert(`✗ Błąd zapisu override: ${err.message}`);
+    }
+  };
+
   const fetchAISuggestions = async () => {
+    if (!AI_SUGGESTIONS_ENABLED) return; // retired — Gap Protection Engine is the source of truth
     if (!propertyId || units.length === 0) return;
 
     const startDate = new Date(selectedDate);
@@ -2196,6 +2307,7 @@ export const CalendarView: React.FC = () => {
 
   // Check if date has AI suggestion
   const hasAISuggestion = (unitId: string, dateStr: string): AISuggestion | null => {
+    if (!AI_SUGGESTIONS_ENABLED) return null; // retired
     const key = `${unitId}-${dateStr}`;
     return aiSuggestions.get(key) || null;
   };
@@ -2525,7 +2637,7 @@ export const CalendarView: React.FC = () => {
                 <span>✕ Wyczyść</span>
               </button>
             )}
-            {viewMode === 'notifications' && unreadNotifications.length > 0 && (
+            {AI_SUGGESTIONS_ENABLED && viewMode === 'notifications' && unreadNotifications.length > 0 && (
               <button
                 onClick={handleAIOptimization}
                 disabled={isLoadingAI}
@@ -2547,7 +2659,7 @@ export const CalendarView: React.FC = () => {
               </button>
             )}
 
-            {aiSuggestions.size > 0 && (
+            {AI_SUGGESTIONS_ENABLED && aiSuggestions.size > 0 && (
               <button
                 onClick={handleAcceptAll}
                 className="flex items-center gap-1 sm:gap-2 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium whitespace-nowrap"
@@ -2557,6 +2669,35 @@ export const CalendarView: React.FC = () => {
                 <span className="hidden sm:inline">✓ Akceptuj wszystkie ({aiSuggestions.size})</span>
                 <span className="sm:hidden">✓ ({aiSuggestions.size})</span>
               </button>
+            )}
+
+            {/* Gap Protection Engine — recompute + push */}
+            {(viewMode === 'full' || viewMode === 'notifications') && (
+              <>
+                <button
+                  onClick={handleRecomputeGaps}
+                  disabled={recomputingGaps}
+                  className="flex items-center gap-1 sm:gap-2 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs bg-teal-700 hover:bg-teal-600 disabled:opacity-50 text-white rounded-lg transition-colors font-medium whitespace-nowrap"
+                  title="Przelicz deterministyczną ochronę luk (CTA/CTD/Min LOS) dla całego obiektu"
+                >
+                  {recomputingGaps
+                    ? <Loader2 size={12} className="sm:w-3.5 sm:h-3.5 animate-spin" />
+                    : <Shield size={12} className="sm:w-3.5 sm:h-3.5" />}
+                  <span className="hidden sm:inline">🛡 Przelicz ochronę luk</span>
+                  <span className="sm:hidden">🛡 Przelicz</span>
+                </button>
+                {gapRestrictions.size > 0 && (
+                  <button
+                    onClick={handlePushGapsToHotres}
+                    className="flex items-center gap-1 sm:gap-2 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs bg-cyan-700 hover:bg-cyan-600 text-white rounded-lg transition-colors font-medium whitespace-nowrap"
+                    title="Wyślij wynik ochrony luk do Hotres (wybór cenników jak przy innych pushach)"
+                  >
+                    <Shield size={12} className="sm:w-3.5 sm:h-3.5" />
+                    <span className="hidden sm:inline">🛡 Wyślij ochronę → Hotres</span>
+                    <span className="sm:hidden">🛡 → Hotres</span>
+                  </button>
+                )}
+              </>
             )}
 
             {/* Bulk Edit Mode Toggle - available in full and notifications view */}
@@ -2910,6 +3051,7 @@ export const CalendarView: React.FC = () => {
                             const priceData = pricesData.get(priceKey);
                             const changeData = priceChanges.get(priceKey);
                             const compareInfo = cellCompareInfo.get(priceKey);
+                            const gapR = getGapRestriction(unit.id, dateStr);
 
                             // Use change data if available, otherwise use price data
                             const ctaValue = changeData?.cta !== undefined ? changeData.cta === 1 : priceData?.cta === 1;
@@ -2954,8 +3096,20 @@ export const CalendarView: React.FC = () => {
 
                             void ctaSynced; void ctdSynced;
 
+                            // Gap Protection Engine overlay: tint by source/confidence, tooltip with reason.
+                            const gapBorder = gapR
+                              ? gapR.source === 'manual'
+                                ? 'ring-1 ring-purple-400/70'
+                                : gapR.confidence < 1
+                                  ? 'ring-1 ring-amber-400/70'
+                                  : 'ring-1 ring-teal-400/50'
+                              : '';
+                            const gapTitle = gapR
+                              ? `🛡 Ochrona luk\nCTA=${gapR.cta} CTD=${gapR.ctd} Min=${gapR.min_los ?? '-'} Max=${gapR.max_los ?? '-'}\nPowód: ${gapR.reason ?? '-'}\nŹródło: ${gapR.source} · pewność ${Math.round((gapR.confidence ?? 0) * 100)}%${gapR.gap_id ? `\nLuka: ${gapR.gap_id}` : ''}`
+                              : '';
+
                             return (
-                              <div className="flex flex-col gap-1">
+                              <div className={`flex flex-col gap-1 rounded ${gapBorder}`} title={gapR ? gapTitle : undefined}>
                                 {/* Colored cell with 0/1 */}
                                 <div
                                   className={cellClass}
@@ -2964,6 +3118,15 @@ export const CalendarView: React.FC = () => {
                                 >
                                   {aiSuggestion ? '🤖' : (isBooked ? '0' : '1')}
                                 </div>
+                                {gapR && (
+                                  <div
+                                    className={`text-[7px] sm:text-[8px] leading-none text-center font-semibold rounded px-0.5 ${
+                                      gapR.source === 'manual' ? 'text-purple-300' : gapR.confidence < 1 ? 'text-amber-300' : 'text-teal-300'
+                                    }`}
+                                  >
+                                    🛡{gapR.min_los ?? '-'}{gapR.max_los != null ? `-${gapR.max_los}` : ''}
+                                  </div>
+                                )}
 
                                 {/* Checkboxes in one line - vertical labels */}
                                 <div className="flex items-center justify-center gap-1 sm:gap-1.5 lg:gap-2">
@@ -3420,6 +3583,13 @@ export const CalendarView: React.FC = () => {
                 Zastosuj zmiany
               </button>
             </div>
+            <button
+              onClick={handleSaveGapOverrides}
+              className="w-full mt-3 bg-purple-700 hover:bg-purple-600 text-white font-semibold py-2.5 px-4 rounded-lg transition flex items-center justify-center gap-2"
+              title="Zapisz zaznaczone wartości jako trwały override ochrony luk (przeżywa przeliczenie)"
+            >
+              <Shield size={16} /> Zapisz jako override ochrony luk
+            </button>
           </div>
         </div>
       )}
