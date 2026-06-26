@@ -130,6 +130,25 @@ export const fmtPLN = (n: number) =>
 export const fmtPct = (n: number) =>
   new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 3 }).format(n);
 
+/**
+ * Monthly report period as a full-month range (1 → last day) derived from the
+ * "licz prowizję od" date's month — e.g. count_from = 2026-06-07 → "1–30 czerwca 2026".
+ * Falls back to the earliest reservation's add date, then today.
+ */
+export function monthPeriodLabel(countFrom: string | null, rows: CommissionReservation[]): string {
+  let basis: Date | null = null;
+  if (countFrom) basis = new Date(`${countFrom}T12:00:00`);
+  else {
+    const dates = rows.map(r => (r.addDate || '').replace(' ', 'T')).filter(Boolean).sort();
+    if (dates.length) basis = new Date(dates[0]);
+  }
+  if (!basis || Number.isNaN(basis.getTime())) basis = new Date();
+  const y = basis.getFullYear(), m = basis.getMonth();
+  const first = new Date(y, m, 1);
+  const last = new Date(y, m + 1, 0);
+  return `${first.getDate()}–${last.toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })}`;
+}
+
 const esc = (s: string) => (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
 /** Build a self-contained, print-ready HTML document for the report. */
@@ -292,7 +311,7 @@ export async function downloadReportPdf(opts: {
   doc.setTextColor(224, 231, 255); doc.setFontSize(12);
   if (property?.name) doc.text(property.name, mX, 84);
   doc.setTextColor(199, 210, 254); doc.setFontSize(9);
-  const meta = `Wygenerowano: ${today}      Stawka: ${fmtPct(ratePercent)}%      ${countFrom ? 'Liczone od: ' + countFrom : 'Caly zakres pliku'}`;
+  const meta = `Wygenerowano: ${today}      Stawka: ${fmtPct(ratePercent)}%      Raport za okres: ${monthPeriodLabel(countFrom, rows)}`;
   doc.text(meta, mX, 102);
 
   // ── KPI cards ──

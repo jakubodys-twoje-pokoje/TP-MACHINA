@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
-import { parseAmount, buildReport, parseSaleReport, type RawReservation } from './commission.ts';
+import { parseAmount, buildReport, parseSaleReport, monthPeriodLabel, type RawReservation } from './commission.ts';
+
+describe('monthPeriodLabel (always full month from count_from)', () => {
+  it('expands any day to the whole month', () => {
+    expect(monthPeriodLabel('2026-06-07', [])).toBe('1–30 czerwca 2026');
+    expect(monthPeriodLabel('2026-07-15', [])).toBe('1–31 lipca 2026');
+    expect(monthPeriodLabel('2026-02-10', [])).toBe('1–28 lutego 2026');
+  });
+});
 
 describe('parseAmount (PL number formats)', () => {
   it('handles comma decimals and thousand separators', () => {
