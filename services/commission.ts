@@ -45,6 +45,8 @@ export async function parseSaleReport(file: File): Promise<RawReservation[]> {
       firstName: get('first name'),
       lastName: get('last name'),
       source: get('source'),
+      adults: parseInt(get('adults'), 10) || 0,
+      children: (parseInt(get('child 1'), 10) || 0) + (parseInt(get('child 2'), 10) || 0) + (parseInt(get('child 3'), 10) || 0),
       price: parseAmount(get('price')),
       amount: get('amount') ? parseAmount(get('amount')) : null,
       currency: get('currency') || 'PLN',
@@ -141,6 +143,8 @@ export function buildReportHtml(opts: {
       <td>${esc(r.arrival)} – ${esc(r.departure)}</td>
       <td>${esc(`${r.firstName} ${r.lastName}`.trim())}</td>
       <td>${esc(r.source)}</td>
+      <td class="num">${r.adults}</td>
+      <td class="num">${r.children}</td>
       <td class="num">${fmtPLN(r.price)}</td>
       <td class="num com">${fmtPLN(r.commission)}</td>
     </tr>`;
@@ -174,18 +178,19 @@ export function buildReportHtml(opts: {
   <table>
     <thead><tr>
       <th>Kwatera</th><th>Nr rez.</th><th>Pobyt</th><th>Gość</th><th>Źródło</th>
+      <th class="num">Doro.</th><th class="num">Dzieci</th>
       <th class="num">Cena (${esc(currency)})</th><th class="num">Prowizja (${esc(currency)})</th>
     </tr></thead>
     <tbody>${body}</tbody>
     <tfoot>
-      <tr><td colspan="5" class="totlbl">SUMA rezerwacji (${rows.length}):</td>
+      <tr><td colspan="7" class="totlbl">SUMA rezerwacji (${rows.length}):</td>
           <td class="num">${fmtPLN(totalPrice)}</td><td class="num com">${fmtPLN(totalCommission)}</td></tr>
     </tfoot>
   </table>
   </body></html>`;
 }
 
-/** Open the report in a new window and trigger the print/save-as-PDF dialog. */
+/** Open the report in a new window and trigger the print/save-as-PDF dialog (fallback). */
 export function exportReportPdf(html: string): void {
   const w = window.open('', '_blank');
   if (!w) { alert('Zezwól na wyskakujące okna, aby wyeksportować PDF.'); return; }
@@ -193,4 +198,79 @@ export function exportReportPdf(html: string): void {
   w.document.close();
   w.focus();
   setTimeout(() => w.print(), 300);
+}
+
+const sanitize = (s: string) => (s || 'raport').replace(/[^\p{L}\p{N}_-]+/gu, '_').slice(0, 60);
+
+/**
+ * Build a real, downloadable PDF with jsPDF + autotable (native pagination,
+ * repeated header, no row-cutting) and an embedded Roboto font for Polish.
+ * Libraries are imported on demand to keep the main bundle small.
+ */
+export async function downloadReportPdf(opts: {
+  property: Pick<Property, 'name'> | null;
+  rows: CommissionReservation[];
+  totalPrice: number;
+  totalCommission: number;
+  ratePercent: number;
+  countFrom: string | null;
+  currency: string;
+}): Promise<void> {
+  const { property, rows, totalPrice, totalCommission, ratePercent, countFrom, currency } = opts;
+  const [{ jsPDF }, autoTableMod, fontMod] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+    import('./fonts/roboto.ts'),
+  ]);
+  const autoTable = (autoTableMod as any).default ?? (autoTableMod as any).autoTable;
+
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+  doc.addFileToVFS('Roboto-Regular.ttf', fontMod.ROBOTO_REGULAR_B64);
+  doc.addFont('Roboto-Regular.ttf', 'Roboto', 'normal');
+  doc.setFont('Roboto', 'normal');
+
+  const today = new Date().toLocaleDateString('pl-PL');
+  doc.setFontSize(16); doc.setTextColor(15, 118, 110);
+  doc.text('Raport prowizji', 40, 40);
+  doc.setFontSize(10); doc.setTextColor(71, 85, 105);
+  if (property?.name) doc.text(property.name, 40, 58);
+  const meta = `Wygenerowano: ${today}    Stawka: ${ratePercent}%    ${countFrom ? 'Liczone od (add date): ' + countFrom : 'Caly zakres pliku'}`;
+  doc.text(meta, 40, 74);
+
+  const body = rows.map((r, i) => {
+    const showRoom = i === 0 || r.room !== rows[i - 1].room;
+    return [
+      showRoom ? r.room : '',
+      r.reservation,
+      `${r.arrival} – ${r.departure}`,
+      `${r.firstName} ${r.lastName}`.trim(),
+      r.source,
+      String(r.adults),
+      String(r.children),
+      fmtPLN(r.price),
+      fmtPLN(r.commission),
+    ];
+  });
+
+  autoTable(doc, {
+    startY: 88,
+    head: [['Kwatera', 'Nr rez.', 'Pobyt', 'Gość', 'Źródło', 'Doro.', 'Dzieci', `Cena (${currency})`, `Prowizja (${currency})`]],
+    body,
+    foot: [[
+      { content: `SUMA · ${rows.length} rezerwacji`, colSpan: 7, styles: { halign: 'right' } },
+      fmtPLN(totalPrice),
+      fmtPLN(totalCommission),
+    ]],
+    styles: { font: 'Roboto', fontStyle: 'normal', fontSize: 8, cellPadding: 3, textColor: [30, 41, 59] },
+    headStyles: { font: 'Roboto', fontStyle: 'normal', fillColor: [13, 148, 136], textColor: 255 },
+    footStyles: { font: 'Roboto', fontStyle: 'normal', fillColor: [240, 253, 250], textColor: [15, 118, 110], fontSize: 9 },
+    columnStyles: {
+      0: { textColor: [15, 118, 110] },
+      5: { halign: 'center' }, 6: { halign: 'center' },
+      7: { halign: 'right' }, 8: { halign: 'right', textColor: [15, 118, 110] },
+    },
+    margin: { left: 40, right: 40 },
+  });
+
+  doc.save(`Prowizje_${sanitize(property?.name ?? '')}_${today.replace(/\./g, '-')}.pdf`);
 }

@@ -4,7 +4,7 @@ import { supabase } from '../services/supabaseClient';
 import type { Property, CommissionReport } from '../types';
 import {
   parseSaleReport, buildReport, getCommissionRate, saveCommissionRate,
-  listReports, saveReport, deleteReport, buildReportHtml, exportReportPdf, fmtPLN,
+  listReports, saveReport, deleteReport, downloadReportPdf, fmtPLN,
   type RawReservation,
 } from '../services/commission';
 import { Loader2, Upload, FileDown, Save, Trash2, Percent, Calculator } from 'lucide-react';
@@ -21,6 +21,7 @@ export const CommissionView: React.FC = () => {
   const [history, setHistory] = useState<CommissionReport[]>([]);
   const [historyView, setHistoryView] = useState<CommissionReport | null>(null);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (!propertyId) return;
@@ -85,11 +86,18 @@ export const CommissionView: React.FC = () => {
     } finally { setSaving(false); }
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (rows.length === 0) return;
-    exportReportPdf(buildReportHtml({
-      property, rows, totalPrice, totalCommission, ratePercent: viewRate, countFrom: viewCountFrom, currency,
-    }));
+    setExporting(true);
+    try {
+      await downloadReportPdf({
+        property, rows, totalPrice, totalCommission, ratePercent: viewRate, countFrom: viewCountFrom, currency,
+      });
+    } catch (err: any) {
+      alert(`✗ Błąd eksportu PDF: ${err.message}`);
+    } finally {
+      setExporting(false);
+    }
   };
 
   const handleDeleteReport = async (id?: string) => {
@@ -150,9 +158,9 @@ export const CommissionView: React.FC = () => {
       {/* Actions */}
       {rows.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 mb-3">
-          <button onClick={handleExport}
-            className="flex items-center gap-2 px-3 py-2 text-sm bg-cyan-700 hover:bg-cyan-600 text-white rounded-lg font-medium">
-            <FileDown size={16} /> Eksportuj PDF
+          <button onClick={handleExport} disabled={exporting}
+            className="flex items-center gap-2 px-3 py-2 text-sm bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 text-white rounded-lg font-medium">
+            {exporting ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={16} />} Eksportuj PDF
           </button>
           {!historyView && (
             <button onClick={handleSaveReport} disabled={saving}
@@ -179,6 +187,8 @@ export const CommissionView: React.FC = () => {
                 <th className="text-left px-3 py-2">Pobyt</th>
                 <th className="text-left px-3 py-2">Gość</th>
                 <th className="text-left px-3 py-2">Źródło</th>
+                <th className="text-center px-3 py-2">Doro.</th>
+                <th className="text-center px-3 py-2">Dzieci</th>
                 <th className="text-right px-3 py-2">Cena</th>
                 <th className="text-right px-3 py-2">Prowizja</th>
               </tr>
@@ -193,6 +203,8 @@ export const CommissionView: React.FC = () => {
                     <td className="px-3 py-1.5 text-slate-400 whitespace-nowrap">{r.arrival} – {r.departure}</td>
                     <td className="px-3 py-1.5 text-slate-300">{`${r.firstName} ${r.lastName}`.trim()}</td>
                     <td className="px-3 py-1.5 text-slate-400">{r.source}</td>
+                    <td className="px-3 py-1.5 text-center text-slate-300">{r.adults}</td>
+                    <td className="px-3 py-1.5 text-center text-slate-300">{r.children}</td>
                     <td className="px-3 py-1.5 text-right text-slate-200 whitespace-nowrap">{fmtPLN(r.price)}</td>
                     <td className="px-3 py-1.5 text-right font-bold text-teal-300 whitespace-nowrap">{fmtPLN(r.commission)}</td>
                   </tr>
@@ -201,7 +213,7 @@ export const CommissionView: React.FC = () => {
             </tbody>
             <tfoot>
               <tr className="bg-teal-900/30 border-t-2 border-teal-600 text-white font-bold">
-                <td className="px-3 py-2.5" colSpan={5}>SUMA · {rows.length} rezerwacji</td>
+                <td className="px-3 py-2.5" colSpan={7}>SUMA · {rows.length} rezerwacji</td>
                 <td className="px-3 py-2.5 text-right whitespace-nowrap">{fmtPLN(totalPrice)} {currency}</td>
                 <td className="px-3 py-2.5 text-right text-teal-300 whitespace-nowrap">{fmtPLN(totalCommission)} {currency}</td>
               </tr>

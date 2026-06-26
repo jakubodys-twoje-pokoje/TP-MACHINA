@@ -14,7 +14,7 @@ describe('parseAmount (PL number formats)', () => {
 
 const raw = (room: string, price: number, addDate: string): RawReservation => ({
   room, reservation: 'X', arrival: '2026-06-01', departure: '2026-06-03',
-  firstName: 'A', lastName: 'B', source: 'airbnb', price, amount: price, currency: 'PLN', addDate,
+  firstName: 'A', lastName: 'B', source: 'airbnb', adults: 2, children: 0, price, amount: price, currency: 'PLN', addDate,
 });
 
 describe('buildReport', () => {

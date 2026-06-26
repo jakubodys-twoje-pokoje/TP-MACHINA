@@ -214,6 +214,8 @@ export interface CommissionReservation {
   firstName: string;
   lastName: string;
   source: string;
+  adults: number;
+  children: number;       // sum of child 1..3
   price: number;
   amount: number | null;
   currency: string;
