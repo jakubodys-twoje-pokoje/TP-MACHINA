@@ -194,6 +194,24 @@ export const CommissionView: React.FC = () => {
         </div>
       )}
 
+      {/* KPI summary */}
+      {rows.length > 0 && (
+        <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-4">
+          <div className="bg-slate-800/60 border border-slate-700 rounded-xl px-3 py-2.5">
+            <div className="text-[10px] uppercase tracking-wide text-slate-400">Rezerwacje</div>
+            <div className="text-lg sm:text-xl font-bold text-white">{rows.length}</div>
+          </div>
+          <div className="bg-slate-800/60 border border-slate-700 rounded-xl px-3 py-2.5">
+            <div className="text-[10px] uppercase tracking-wide text-slate-400">Suma sprzedaży</div>
+            <div className="text-lg sm:text-xl font-bold text-white whitespace-nowrap">{fmtPLN(totalPrice)} {currency}</div>
+          </div>
+          <div className="bg-indigo-600 rounded-xl px-3 py-2.5 shadow-lg shadow-indigo-900/30">
+            <div className="text-[10px] uppercase tracking-wide text-indigo-200">Suma prowizji</div>
+            <div className="text-lg sm:text-xl font-bold text-white whitespace-nowrap">{fmtPLN(totalCommission)} {currency}</div>
+          </div>
+        </div>
+      )}
+
       {/* Report table */}
       {rows.length > 0 ? (
         <div className="bg-slate-800/40 border border-slate-700 rounded-xl overflow-x-auto">

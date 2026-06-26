@@ -213,44 +213,44 @@ const sanitize = (s: string) => (s || 'raport').replace(/[^\p{L}\p{N}_-]+/gu, '_
 // Machina brand: deep slate + indigo accent.
 const INK = { indigo: [79, 70, 229] as [number, number, number], indigoDark: [67, 56, 202] as [number, number, number], indigoBg: [238, 242, 255] as [number, number, number], slate: [30, 41, 59] as [number, number, number] };
 
-/** Runtime-generated header banner: strong indigo→slate gradient + faint hotel skyline. */
+/** Runtime header banner: indigo→slate gradient + a subtle, elegant hotel skyline. */
 function makeBannerDataUrl(wPx: number, hPx: number): string {
   const c = document.createElement('canvas');
   c.width = wPx; c.height = hPx;
   const ctx = c.getContext('2d')!;
   const g = ctx.createLinearGradient(0, 0, wPx, 0);
   g.addColorStop(0, '#1e1b4b');     // indigo-950
-  g.addColorStop(0.55, '#4f46e5');  // indigo-600
+  g.addColorStop(0.5, '#4338ca');   // indigo-700
   g.addColorStop(1, '#0f172a');     // slate-900
   ctx.fillStyle = g; ctx.fillRect(0, 0, wPx, hPx);
 
-  // Faint hotel skyline along the bottom (the "hotel graphic" under a strong gradient).
+  // Subtle skyline, smaller and fainter than before, sitting on the baseline.
   ctx.save();
-  ctx.globalAlpha = 0.10; ctx.fillStyle = '#ffffff';
-  let x = wPx * 0.42;
-  const blds = [[70, 46], [48, 72], [92, 34], [58, 88], [40, 60], [82, 50], [52, 76], [104, 40], [46, 66], [78, 52]];
+  ctx.globalAlpha = 0.07; ctx.fillStyle = '#ffffff';
+  let x = wPx * 0.40;
+  const blds = [[54, 38], [38, 58], [70, 28], [46, 70], [32, 48], [62, 40], [42, 60], [80, 32], [36, 52], [58, 44], [40, 64], [66, 36]];
   for (const [bw, bh] of blds) {
     if (x > wPx) break;
-    ctx.fillRect(x, hPx - bh, bw - 8, bh);
-    ctx.save(); ctx.globalAlpha = 0.05;
-    for (let wy = hPx - bh + 6; wy < hPx - 6; wy += 12)
-      for (let wx = x + 5; wx < x + bw - 14; wx += 11) ctx.fillRect(wx, wy, 5, 6);
+    ctx.fillRect(x, hPx - bh, bw - 7, bh);
+    ctx.save(); ctx.globalAlpha = 0.5;
+    for (let wy = hPx - bh + 7; wy < hPx - 7; wy += 11)
+      for (let wx = x + 5; wx < x + bw - 12; wx += 10) ctx.fillRect(wx, wy, 4, 5);
     ctx.restore();
     x += bw;
   }
   ctx.restore();
 
-  // Left vignette so white title text stays legible over the gradient.
-  const og = ctx.createLinearGradient(0, 0, wPx * 0.6, 0);
-  og.addColorStop(0, 'rgba(15,23,42,0.55)'); og.addColorStop(1, 'rgba(15,23,42,0)');
+  // Left vignette so the white title stays crisp.
+  const og = ctx.createLinearGradient(0, 0, wPx * 0.55, 0);
+  og.addColorStop(0, 'rgba(15,23,42,0.5)'); og.addColorStop(1, 'rgba(15,23,42,0)');
   ctx.fillStyle = og; ctx.fillRect(0, 0, wPx, hPx);
-  return c.toDataURL('image/jpeg', 0.9);
+  return c.toDataURL('image/jpeg', 0.92);
 }
 
 /**
  * Real, downloadable PDF — Machina-branded. jsPDF + autotable (native pagination,
  * repeated header, no row-cutting), embedded Roboto (Polish), a gradient hotel
- * banner + Twoje Pokoje logo. Libraries load on demand.
+ * banner + Twoje Pokoje logo, KPI summary cards and grouped, readable rows.
  */
 export async function downloadReportPdf(opts: {
   property: Pick<Property, 'name'> | null;
@@ -276,24 +276,43 @@ export async function downloadReportPdf(opts: {
   doc.setFont('Roboto', 'normal');
 
   const pageW = doc.internal.pageSize.getWidth();
-  const bannerH = 104;
+  const mX = 40;
+  const bannerH = 122;
 
-  // Branded header band.
-  doc.addImage(makeBannerDataUrl(1123, 150), 'JPEG', 0, 0, pageW, bannerH);
-  // Logo (600×360) on the dark right side.
-  const logoH = 46, logoW = logoH * (600 / 360);
-  try { doc.addImage(logoMod.TP_LOGO_PNG, 'PNG', pageW - 40 - logoW, 30, logoW, logoH, undefined, 'FAST'); } catch { /* logo optional */ }
+  // ── Branded header band ──
+  doc.addImage(makeBannerDataUrl(1123, 170), 'JPEG', 0, 0, pageW, bannerH);
+  const logoH = 44, logoW = logoH * (600 / 360);
+  try { doc.addImage(logoMod.TP_LOGO_PNG, 'PNG', pageW - mX - logoW, 28, logoW, logoH, undefined, 'FAST'); } catch { /* optional */ }
 
   const today = new Date().toLocaleDateString('pl-PL');
-  doc.setTextColor(199, 210, 254); doc.setFontSize(8.5);
-  doc.text('MACHINA REZERWACJI', 40, 34);
-  doc.setTextColor(255, 255, 255); doc.setFontSize(22);
-  doc.text('Raport prowizji', 40, 60);
-  doc.setTextColor(224, 231, 255); doc.setFontSize(11);
-  if (property?.name) doc.text(property.name, 40, 78);
+  doc.setTextColor(165, 180, 252); doc.setFontSize(8.5);
+  doc.text('M A C H I N A   R E Z E R W A C J I', mX, 36);
+  doc.setTextColor(255, 255, 255); doc.setFontSize(23);
+  doc.text('Raport prowizji', mX, 64);
+  doc.setTextColor(224, 231, 255); doc.setFontSize(12);
+  if (property?.name) doc.text(property.name, mX, 84);
   doc.setTextColor(199, 210, 254); doc.setFontSize(9);
-  const meta = `Wygenerowano: ${today}     Stawka: ${fmtPct(ratePercent)}%     ${countFrom ? 'Liczone od: ' + countFrom : 'Caly zakres pliku'}`;
-  doc.text(meta, 40, 94);
+  const meta = `Wygenerowano: ${today}      Stawka: ${fmtPct(ratePercent)}%      ${countFrom ? 'Liczone od: ' + countFrom : 'Caly zakres pliku'}`;
+  doc.text(meta, mX, 102);
+
+  // ── KPI cards ──
+  const tableW = pageW - 2 * mX;
+  const gap = 14, kpiW = (tableW - 2 * gap) / 3, kpiY = bannerH + 16, kpiH = 50;
+  const card = (x: number, label: string, value: string, accent: boolean) => {
+    if (accent) { doc.setFillColor(79, 70, 229); doc.setDrawColor(79, 70, 229); }
+    else { doc.setFillColor(248, 250, 252); doc.setDrawColor(226, 232, 240); }
+    doc.setLineWidth(0.8);
+    doc.roundedRect(x, kpiY, kpiW, kpiH, 6, 6, 'FD');
+    doc.setFontSize(7.5);
+    doc.setTextColor(accent ? 199 : 100, accent ? 210 : 116, accent ? 254 : 139);
+    doc.text(label.toUpperCase(), x + 12, kpiY + 18);
+    doc.setFontSize(15);
+    doc.setTextColor(accent ? 255 : 30, accent ? 255 : 41, accent ? 255 : 59);
+    doc.text(value, x + 12, kpiY + 38);
+  };
+  card(mX, 'Rezerwacje', String(rows.length), false);
+  card(mX + kpiW + gap, 'Suma sprzedaży', `${fmtPLN(totalPrice)} ${currency}`, false);
+  card(mX + 2 * (kpiW + gap), 'Suma prowizji', `${fmtPLN(totalCommission)} ${currency}`, true);
 
   const body = rows.map((r, i) => {
     const showRoom = i === 0 || r.room !== rows[i - 1].room;
@@ -312,29 +331,39 @@ export async function downloadReportPdf(opts: {
   });
 
   autoTable(doc, {
-    startY: bannerH + 16,
+    startY: kpiY + kpiH + 18,
+    theme: 'striped',
     head: [['Kwatera', 'Nr rez.', 'Pobyt', 'Dodano', 'Gość', 'Źródło', 'Doro.', 'Dzieci', `Cena (${currency})`, `Prowizja (${currency})`]],
     body,
     foot: [[
       { content: `SUMA · ${rows.length} rezerwacji`, colSpan: 8, styles: { halign: 'right' } },
-      fmtPLN(totalPrice),
-      fmtPLN(totalCommission),
+      `${fmtPLN(totalPrice)}`,
+      `${fmtPLN(totalCommission)}`,
     ]],
-    styles: { font: 'Roboto', fontStyle: 'normal', fontSize: 7.5, cellPadding: 3, textColor: INK.slate, lineColor: [226, 232, 240] },
-    headStyles: { font: 'Roboto', fontStyle: 'normal', fillColor: INK.indigo, textColor: 255 },
-    footStyles: { font: 'Roboto', fontStyle: 'normal', fillColor: INK.indigoBg, textColor: INK.indigoDark, fontSize: 9 },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
+    styles: { font: 'Roboto', fontStyle: 'normal', fontSize: 8.5, cellPadding: { top: 5, bottom: 5, left: 6, right: 6 }, textColor: INK.slate, valign: 'middle', lineWidth: 0 },
+    headStyles: { font: 'Roboto', fontStyle: 'normal', fillColor: INK.indigo, textColor: 255, fontSize: 8.5, cellPadding: { top: 7, bottom: 7, left: 6, right: 6 } },
+    footStyles: { font: 'Roboto', fontStyle: 'normal', fillColor: INK.indigoBg, textColor: INK.indigoDark, fontSize: 10, cellPadding: { top: 8, bottom: 8, left: 6, right: 6 } },
+    alternateRowStyles: { fillColor: [246, 247, 251] },
     columnStyles: {
-      0: { textColor: INK.indigoDark, fontStyle: 'normal' },
+      0: { textColor: INK.indigoDark, cellWidth: 86 },
       6: { halign: 'center' }, 7: { halign: 'center' },
       8: { halign: 'right' }, 9: { halign: 'right', textColor: INK.indigoDark },
     },
-    margin: { left: 40, right: 40 },
+    margin: { left: mX, right: mX },
+    // Clear divider line at the start of each new kwatera group.
+    didDrawCell: (data: any) => {
+      if (data.section === 'body' && data.column.index === 0 && data.row.index > 0 && data.cell.raw) {
+        doc.setDrawColor(165, 180, 252); doc.setLineWidth(1);
+        doc.line(mX, data.cell.y, pageW - mX, data.cell.y);
+      }
+    },
     didDrawPage: () => {
       const h = doc.internal.pageSize.getHeight();
-      doc.setFontSize(8); doc.setTextColor(148, 163, 184);
-      doc.text('Twoje Pokoje · Machina Rezerwacji', 40, h - 16);
-      doc.text(`${(doc as any).internal.getNumberOfPages()}`, pageW - 40, h - 16, { align: 'right' });
+      doc.setDrawColor(226, 232, 240); doc.setLineWidth(0.5);
+      doc.line(mX, h - 26, pageW - mX, h - 26);
+      doc.setFont('Roboto', 'normal'); doc.setFontSize(8); doc.setTextColor(148, 163, 184);
+      doc.text('Twoje Pokoje · Machina Rezerwacji', mX, h - 14);
+      doc.text(`Strona ${(doc as any).internal.getNumberOfPages()}`, pageW - mX, h - 14, { align: 'right' });
     },
   });
 
