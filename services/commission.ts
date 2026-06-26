@@ -243,10 +243,10 @@ function makeBannerDataUrl(wPx: number, hPx: number): string {
   g.addColorStop(1, '#0f172a');     // slate-900
   ctx.fillStyle = g; ctx.fillRect(0, 0, wPx, hPx);
 
-  // Subtle skyline, smaller and fainter than before, sitting on the baseline.
+  // Subtle skyline, kept to the RIGHT half so it never sits under the title/meta text.
   ctx.save();
   ctx.globalAlpha = 0.07; ctx.fillStyle = '#ffffff';
-  let x = wPx * 0.40;
+  let x = wPx * 0.60;
   const blds = [[54, 38], [38, 58], [70, 28], [46, 70], [32, 48], [62, 40], [42, 60], [80, 32], [36, 52], [58, 44], [40, 64], [66, 36]];
   for (const [bw, bh] of blds) {
     if (x > wPx) break;
@@ -259,9 +259,9 @@ function makeBannerDataUrl(wPx: number, hPx: number): string {
   }
   ctx.restore();
 
-  // Left vignette so the white title stays crisp.
-  const og = ctx.createLinearGradient(0, 0, wPx * 0.55, 0);
-  og.addColorStop(0, 'rgba(15,23,42,0.5)'); og.addColorStop(1, 'rgba(15,23,42,0)');
+  // Left vignette covering the whole text column so titles + meta stay crisp.
+  const og = ctx.createLinearGradient(0, 0, wPx * 0.62, 0);
+  og.addColorStop(0, 'rgba(15,23,42,0.62)'); og.addColorStop(0.8, 'rgba(15,23,42,0.35)'); og.addColorStop(1, 'rgba(15,23,42,0)');
   ctx.fillStyle = og; ctx.fillRect(0, 0, wPx, hPx);
   return c.toDataURL('image/jpeg', 0.92);
 }
@@ -296,23 +296,23 @@ export async function downloadReportPdf(opts: {
 
   const pageW = doc.internal.pageSize.getWidth();
   const mX = 40;
-  const bannerH = 122;
+  const bannerH = 128;
 
   // ── Branded header band ──
-  doc.addImage(makeBannerDataUrl(1123, 170), 'JPEG', 0, 0, pageW, bannerH);
+  doc.addImage(makeBannerDataUrl(1123, 178), 'JPEG', 0, 0, pageW, bannerH);
   const logoH = 44, logoW = logoH * (600 / 360);
-  try { doc.addImage(logoMod.TP_LOGO_PNG, 'PNG', pageW - mX - logoW, 28, logoW, logoH, undefined, 'FAST'); } catch { /* optional */ }
+  try { doc.addImage(logoMod.TP_LOGO_PNG, 'PNG', pageW - mX - logoW, 26, logoW, logoH, undefined, 'FAST'); } catch { /* optional */ }
 
   const today = new Date().toLocaleDateString('pl-PL');
   doc.setTextColor(165, 180, 252); doc.setFontSize(8.5);
-  doc.text('M A C H I N A   R E Z E R W A C J I', mX, 36);
+  doc.text('M A C H I N A   R E Z E R W A C J I', mX, 34);
   doc.setTextColor(255, 255, 255); doc.setFontSize(23);
-  doc.text('Raport prowizji', mX, 64);
-  doc.setTextColor(224, 231, 255); doc.setFontSize(12);
-  if (property?.name) doc.text(property.name, mX, 84);
-  doc.setTextColor(199, 210, 254); doc.setFontSize(9);
+  doc.text('Raport prowizji', mX, 62);
+  doc.setTextColor(226, 232, 255); doc.setFontSize(12);
+  if (property?.name) doc.text(property.name, mX, 82);
+  doc.setTextColor(213, 219, 255); doc.setFontSize(9);
   const meta = `Wygenerowano: ${today}      Stawka: ${fmtPct(ratePercent)}%      Raport za okres: ${monthPeriodLabel(countFrom, rows)}`;
-  doc.text(meta, mX, 102);
+  doc.text(meta, mX, 100);
 
   // ── KPI cards ──
   const tableW = pageW - 2 * mX;
