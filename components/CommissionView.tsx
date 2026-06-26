@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import type { Property, CommissionReport } from '../types';
 import {
-  parseSaleReport, buildReport, getCommissionRate, saveCommissionRate,
+  parseSaleReport, buildReport, getCommissionSettings, saveCommissionSettings,
   listReports, saveReport, deleteReport, downloadReportPdf, fmtPLN, fmtPct,
   type RawReservation,
 } from '../services/commission';
@@ -28,7 +28,10 @@ export const CommissionView: React.FC = () => {
   useEffect(() => {
     if (!propertyId) return;
     supabase.from('properties').select('*').eq('id', propertyId).single().then(({ data }) => setProperty(data));
-    getCommissionRate(propertyId).then(n => setRateInput(String(n ?? 0).replace('.', ','))).catch(() => {});
+    getCommissionSettings(propertyId).then(s => {
+      setRateInput(String(s.rate_percent ?? 0).replace('.', ','));
+      if (s.count_from) setCountFrom(s.count_from);
+    }).catch(() => {});
     listReports(propertyId).then(setHistory).catch(() => {});
   }, [propertyId]);
 
@@ -64,12 +67,22 @@ export const CommissionView: React.FC = () => {
     }
   };
 
-  const handleSaveRate = async () => {
+  const persistSettings = async (rate: number, cf: string) => {
     if (!propertyId) return;
+    try { await saveCommissionSettings(propertyId, { rate_percent: rate, count_from: cf || null }); }
+    catch (err: any) { alert(`✗ Błąd zapisu ustawień: ${err.message}`); }
+  };
+
+  const handleSaveRate = async () => {
     setSavingRate(true);
-    try { await saveCommissionRate(propertyId, ratePercent); }
-    catch (err: any) { alert(`✗ Błąd zapisu stawki: ${err.message}`); }
-    finally { setSavingRate(false); }
+    await persistSettings(ratePercent, countFrom);
+    setSavingRate(false);
+  };
+
+  const handleCountFromChange = (v: string) => {
+    setHistoryView(null);
+    setCountFrom(v);
+    persistSettings(ratePercent, v);   // "Liczone od" is remembered per property
   };
 
   const handleSaveReport = async () => {
@@ -115,7 +128,7 @@ export const CommissionView: React.FC = () => {
   return (
     <div className="p-3 sm:p-4 lg:p-6 max-w-6xl mx-auto">
       <div className="flex items-center gap-2 mb-1">
-        <Calculator className="text-teal-400" size={22} />
+        <Calculator className="text-indigo-400" size={22} />
         <h1 className="text-xl sm:text-2xl font-bold text-white">Kalkulator prowizji</h1>
       </div>
       <p className="text-slate-400 text-sm mb-5">{property?.name ?? '…'}</p>
@@ -130,7 +143,7 @@ export const CommissionView: React.FC = () => {
                 onChange={(e) => { setHistoryView(null); setRateInput(e.target.value.replace(/[^\d.,]/g, '')); }}
                 onBlur={() => { setRateInput(String(ratePercent).replace('.', ',')); handleSaveRate(); }}
                 placeholder="np. 4,75"
-                className="w-full pl-2 pr-7 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-teal-500" />
+                className="w-full pl-2 pr-7 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
               <Percent size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500" />
             </div>
             <button onClick={handleSaveRate} disabled={savingRate} title="Zapisz stawkę dla obiektu"
@@ -142,16 +155,16 @@ export const CommissionView: React.FC = () => {
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-slate-300 mb-1">Licz prowizję od (add date)</label>
+          <label className="block text-xs font-semibold text-slate-300 mb-1">Licz prowizję od</label>
           <input type="date" value={countFrom}
-            onChange={(e) => { setHistoryView(null); setCountFrom(e.target.value); }}
-            className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-teal-500" />
-          <p className="text-[10px] text-slate-500 mt-1">Rezerwacje dodane przed tą datą są ukrywane.</p>
+            onChange={(e) => handleCountFromChange(e.target.value)}
+            className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+          <p className="text-[10px] text-slate-500 mt-1">Rezerwacje dodane przed tą datą są ukrywane. Zapamiętywane per obiekt.</p>
         </div>
 
         <div>
           <label className="block text-xs font-semibold text-slate-300 mb-1">Plik raportu (.xls)</label>
-          <label className="flex items-center justify-center gap-2 px-3 py-2 bg-teal-700 hover:bg-teal-600 rounded-lg text-white text-sm cursor-pointer">
+          <label className="flex items-center justify-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 rounded-lg text-white text-sm cursor-pointer">
             {parsing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
             <span className="truncate">{fileName || 'Wgraj plik sprzedaży'}</span>
             <input type="file" accept=".xls,.html,.htm" className="hidden" onChange={handleFile} />
@@ -164,12 +177,12 @@ export const CommissionView: React.FC = () => {
       {rows.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <button onClick={handleExport} disabled={exporting}
-            className="flex items-center gap-2 px-3 py-2 text-sm bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 text-white rounded-lg font-medium">
+            className="flex items-center gap-2 px-3 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg font-medium">
             {exporting ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={16} />} Eksportuj PDF
           </button>
           {!historyView && (
             <button onClick={handleSaveReport} disabled={saving}
-              className="flex items-center gap-2 px-3 py-2 text-sm bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white rounded-lg font-medium">
+              className="flex items-center gap-2 px-3 py-2 text-sm bg-indigo-500 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-lg font-medium">
               {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Zapisz raport
             </button>
           )}
@@ -186,10 +199,11 @@ export const CommissionView: React.FC = () => {
         <div className="bg-slate-800/40 border border-slate-700 rounded-xl overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-slate-800 text-slate-300 text-xs">
+              <tr className="bg-indigo-600 text-white text-xs">
                 <th className="text-left px-3 py-2">Kwatera</th>
                 <th className="text-left px-3 py-2">Nr rez.</th>
                 <th className="text-left px-3 py-2">Pobyt</th>
+                <th className="text-left px-3 py-2">Dodano</th>
                 <th className="text-left px-3 py-2">Gość</th>
                 <th className="text-left px-3 py-2">Źródło</th>
                 <th className="text-center px-3 py-2">Doro.</th>
@@ -203,24 +217,25 @@ export const CommissionView: React.FC = () => {
                 const showRoom = i === 0 || r.room !== rows[i - 1].room;
                 return (
                   <tr key={i} className={`border-t ${showRoom && i > 0 ? 'border-slate-600' : 'border-slate-800'} hover:bg-slate-800/40`}>
-                    <td className="px-3 py-1.5 font-semibold text-teal-300">{showRoom ? r.room : ''}</td>
+                    <td className="px-3 py-1.5 font-semibold text-indigo-300">{showRoom ? r.room : ''}</td>
                     <td className="px-3 py-1.5 text-slate-300">{r.reservation}</td>
                     <td className="px-3 py-1.5 text-slate-400 whitespace-nowrap">{r.arrival} – {r.departure}</td>
+                    <td className="px-3 py-1.5 text-slate-400 whitespace-nowrap">{(r.addDate || '').split(' ')[0]}</td>
                     <td className="px-3 py-1.5 text-slate-300">{`${r.firstName} ${r.lastName}`.trim()}</td>
                     <td className="px-3 py-1.5 text-slate-400">{r.source}</td>
                     <td className="px-3 py-1.5 text-center text-slate-300">{r.adults}</td>
                     <td className="px-3 py-1.5 text-center text-slate-300">{r.children}</td>
                     <td className="px-3 py-1.5 text-right text-slate-200 whitespace-nowrap">{fmtPLN(r.price)}</td>
-                    <td className="px-3 py-1.5 text-right font-bold text-teal-300 whitespace-nowrap">{fmtPLN(r.commission)}</td>
+                    <td className="px-3 py-1.5 text-right font-bold text-indigo-300 whitespace-nowrap">{fmtPLN(r.commission)}</td>
                   </tr>
                 );
               })}
             </tbody>
             <tfoot>
-              <tr className="bg-teal-900/30 border-t-2 border-teal-600 text-white font-bold">
-                <td className="px-3 py-2.5" colSpan={7}>SUMA · {rows.length} rezerwacji</td>
+              <tr className="bg-indigo-900/40 border-t-2 border-indigo-600 text-white font-bold">
+                <td className="px-3 py-2.5" colSpan={8}>SUMA · {rows.length} rezerwacji</td>
                 <td className="px-3 py-2.5 text-right whitespace-nowrap">{fmtPLN(totalPrice)} {currency}</td>
-                <td className="px-3 py-2.5 text-right text-teal-300 whitespace-nowrap">{fmtPLN(totalCommission)} {currency}</td>
+                <td className="px-3 py-2.5 text-right text-indigo-300 whitespace-nowrap">{fmtPLN(totalCommission)} {currency}</td>
               </tr>
             </tfoot>
           </table>

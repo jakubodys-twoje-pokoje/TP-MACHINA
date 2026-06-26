@@ -2,6 +2,7 @@
 CREATE TABLE IF NOT EXISTS commission_settings (
   property_id  UUID PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
   rate_percent NUMERIC(6, 3) NOT NULL DEFAULT 0,   -- e.g. 15.000 = 15%
+  count_from   DATE,                                -- remembered "licz prowizję od"
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

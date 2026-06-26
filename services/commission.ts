@@ -90,15 +90,19 @@ export function buildReport(raw: RawReservation[], ratePercent: number, countFro
 }
 
 // ── Persistence ──────────────────────────────────────────────────────────────
-export async function getCommissionRate(propertyId: string): Promise<number> {
-  const { data } = await supabase.from('commission_settings').select('rate_percent').eq('property_id', propertyId).maybeSingle();
-  return data?.rate_percent ?? 0;
+export interface CommissionSettings { rate_percent: number; count_from: string | null; }
+
+export async function getCommissionSettings(propertyId: string): Promise<CommissionSettings> {
+  // select('*') so a missing count_from column (migration not run yet) doesn't break the read.
+  const { data } = await supabase
+    .from('commission_settings').select('*').eq('property_id', propertyId).maybeSingle();
+  return { rate_percent: data?.rate_percent ?? 0, count_from: data?.count_from ?? null };
 }
 
-export async function saveCommissionRate(propertyId: string, ratePercent: number): Promise<void> {
+export async function saveCommissionSettings(propertyId: string, s: CommissionSettings): Promise<void> {
   const { error } = await supabase
     .from('commission_settings')
-    .upsert({ property_id: propertyId, rate_percent: ratePercent, updated_at: new Date().toISOString() }, { onConflict: 'property_id' });
+    .upsert({ property_id: propertyId, rate_percent: s.rate_percent, count_from: s.count_from || null, updated_at: new Date().toISOString() }, { onConflict: 'property_id' });
   if (error) throw new Error(error.message);
 }
 
@@ -206,10 +210,47 @@ export function exportReportPdf(html: string): void {
 
 const sanitize = (s: string) => (s || 'raport').replace(/[^\p{L}\p{N}_-]+/gu, '_').slice(0, 60);
 
+// Machina brand: deep slate + indigo accent.
+const INK = { indigo: [79, 70, 229] as [number, number, number], indigoDark: [67, 56, 202] as [number, number, number], indigoBg: [238, 242, 255] as [number, number, number], slate: [30, 41, 59] as [number, number, number] };
+
+/** Runtime-generated header banner: strong indigo→slate gradient + faint hotel skyline. */
+function makeBannerDataUrl(wPx: number, hPx: number): string {
+  const c = document.createElement('canvas');
+  c.width = wPx; c.height = hPx;
+  const ctx = c.getContext('2d')!;
+  const g = ctx.createLinearGradient(0, 0, wPx, 0);
+  g.addColorStop(0, '#1e1b4b');     // indigo-950
+  g.addColorStop(0.55, '#4f46e5');  // indigo-600
+  g.addColorStop(1, '#0f172a');     // slate-900
+  ctx.fillStyle = g; ctx.fillRect(0, 0, wPx, hPx);
+
+  // Faint hotel skyline along the bottom (the "hotel graphic" under a strong gradient).
+  ctx.save();
+  ctx.globalAlpha = 0.10; ctx.fillStyle = '#ffffff';
+  let x = wPx * 0.42;
+  const blds = [[70, 46], [48, 72], [92, 34], [58, 88], [40, 60], [82, 50], [52, 76], [104, 40], [46, 66], [78, 52]];
+  for (const [bw, bh] of blds) {
+    if (x > wPx) break;
+    ctx.fillRect(x, hPx - bh, bw - 8, bh);
+    ctx.save(); ctx.globalAlpha = 0.05;
+    for (let wy = hPx - bh + 6; wy < hPx - 6; wy += 12)
+      for (let wx = x + 5; wx < x + bw - 14; wx += 11) ctx.fillRect(wx, wy, 5, 6);
+    ctx.restore();
+    x += bw;
+  }
+  ctx.restore();
+
+  // Left vignette so white title text stays legible over the gradient.
+  const og = ctx.createLinearGradient(0, 0, wPx * 0.6, 0);
+  og.addColorStop(0, 'rgba(15,23,42,0.55)'); og.addColorStop(1, 'rgba(15,23,42,0)');
+  ctx.fillStyle = og; ctx.fillRect(0, 0, wPx, hPx);
+  return c.toDataURL('image/jpeg', 0.9);
+}
+
 /**
- * Build a real, downloadable PDF with jsPDF + autotable (native pagination,
- * repeated header, no row-cutting) and an embedded Roboto font for Polish.
- * Libraries are imported on demand to keep the main bundle small.
+ * Real, downloadable PDF — Machina-branded. jsPDF + autotable (native pagination,
+ * repeated header, no row-cutting), embedded Roboto (Polish), a gradient hotel
+ * banner + Twoje Pokoje logo. Libraries load on demand.
  */
 export async function downloadReportPdf(opts: {
   property: Pick<Property, 'name'> | null;
@@ -221,10 +262,11 @@ export async function downloadReportPdf(opts: {
   currency: string;
 }): Promise<void> {
   const { property, rows, totalPrice, totalCommission, ratePercent, countFrom, currency } = opts;
-  const [{ jsPDF }, autoTableMod, fontMod] = await Promise.all([
+  const [{ jsPDF }, autoTableMod, fontMod, logoMod] = await Promise.all([
     import('jspdf'),
     import('jspdf-autotable'),
     import('./fonts/roboto.ts'),
+    import('./fonts/logo.ts'),
   ]);
   const autoTable = (autoTableMod as any).default ?? (autoTableMod as any).autoTable;
 
@@ -233,13 +275,25 @@ export async function downloadReportPdf(opts: {
   doc.addFont('Roboto-Regular.ttf', 'Roboto', 'normal');
   doc.setFont('Roboto', 'normal');
 
+  const pageW = doc.internal.pageSize.getWidth();
+  const bannerH = 104;
+
+  // Branded header band.
+  doc.addImage(makeBannerDataUrl(1123, 150), 'JPEG', 0, 0, pageW, bannerH);
+  // Logo (600×360) on the dark right side.
+  const logoH = 46, logoW = logoH * (600 / 360);
+  try { doc.addImage(logoMod.TP_LOGO_PNG, 'PNG', pageW - 40 - logoW, 30, logoW, logoH, undefined, 'FAST'); } catch { /* logo optional */ }
+
   const today = new Date().toLocaleDateString('pl-PL');
-  doc.setFontSize(16); doc.setTextColor(15, 118, 110);
-  doc.text('Raport prowizji', 40, 40);
-  doc.setFontSize(10); doc.setTextColor(71, 85, 105);
-  if (property?.name) doc.text(property.name, 40, 58);
-  const meta = `Wygenerowano: ${today}    Stawka: ${fmtPct(ratePercent)}%    ${countFrom ? 'Liczone od (add date): ' + countFrom : 'Caly zakres pliku'}`;
-  doc.text(meta, 40, 74);
+  doc.setTextColor(199, 210, 254); doc.setFontSize(8.5);
+  doc.text('MACHINA REZERWACJI', 40, 34);
+  doc.setTextColor(255, 255, 255); doc.setFontSize(22);
+  doc.text('Raport prowizji', 40, 60);
+  doc.setTextColor(224, 231, 255); doc.setFontSize(11);
+  if (property?.name) doc.text(property.name, 40, 78);
+  doc.setTextColor(199, 210, 254); doc.setFontSize(9);
+  const meta = `Wygenerowano: ${today}     Stawka: ${fmtPct(ratePercent)}%     ${countFrom ? 'Liczone od: ' + countFrom : 'Caly zakres pliku'}`;
+  doc.text(meta, 40, 94);
 
   const body = rows.map((r, i) => {
     const showRoom = i === 0 || r.room !== rows[i - 1].room;
@@ -247,6 +301,7 @@ export async function downloadReportPdf(opts: {
       showRoom ? r.room : '',
       r.reservation,
       `${r.arrival} – ${r.departure}`,
+      (r.addDate || '').split(' ')[0],
       `${r.firstName} ${r.lastName}`.trim(),
       r.source,
       String(r.adults),
@@ -257,23 +312,30 @@ export async function downloadReportPdf(opts: {
   });
 
   autoTable(doc, {
-    startY: 88,
-    head: [['Kwatera', 'Nr rez.', 'Pobyt', 'Gość', 'Źródło', 'Doro.', 'Dzieci', `Cena (${currency})`, `Prowizja (${currency})`]],
+    startY: bannerH + 16,
+    head: [['Kwatera', 'Nr rez.', 'Pobyt', 'Dodano', 'Gość', 'Źródło', 'Doro.', 'Dzieci', `Cena (${currency})`, `Prowizja (${currency})`]],
     body,
     foot: [[
-      { content: `SUMA · ${rows.length} rezerwacji`, colSpan: 7, styles: { halign: 'right' } },
+      { content: `SUMA · ${rows.length} rezerwacji`, colSpan: 8, styles: { halign: 'right' } },
       fmtPLN(totalPrice),
       fmtPLN(totalCommission),
     ]],
-    styles: { font: 'Roboto', fontStyle: 'normal', fontSize: 8, cellPadding: 3, textColor: [30, 41, 59] },
-    headStyles: { font: 'Roboto', fontStyle: 'normal', fillColor: [13, 148, 136], textColor: 255 },
-    footStyles: { font: 'Roboto', fontStyle: 'normal', fillColor: [240, 253, 250], textColor: [15, 118, 110], fontSize: 9 },
+    styles: { font: 'Roboto', fontStyle: 'normal', fontSize: 7.5, cellPadding: 3, textColor: INK.slate, lineColor: [226, 232, 240] },
+    headStyles: { font: 'Roboto', fontStyle: 'normal', fillColor: INK.indigo, textColor: 255 },
+    footStyles: { font: 'Roboto', fontStyle: 'normal', fillColor: INK.indigoBg, textColor: INK.indigoDark, fontSize: 9 },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
     columnStyles: {
-      0: { textColor: [15, 118, 110] },
-      5: { halign: 'center' }, 6: { halign: 'center' },
-      7: { halign: 'right' }, 8: { halign: 'right', textColor: [15, 118, 110] },
+      0: { textColor: INK.indigoDark, fontStyle: 'normal' },
+      6: { halign: 'center' }, 7: { halign: 'center' },
+      8: { halign: 'right' }, 9: { halign: 'right', textColor: INK.indigoDark },
     },
     margin: { left: 40, right: 40 },
+    didDrawPage: () => {
+      const h = doc.internal.pageSize.getHeight();
+      doc.setFontSize(8); doc.setTextColor(148, 163, 184);
+      doc.text('Twoje Pokoje · Machina Rezerwacji', 40, h - 16);
+      doc.text(`${(doc as any).internal.getNumberOfPages()}`, pageW - 40, h - 16, { align: 'right' });
+    },
   });
 
   doc.save(`Prowizje_${sanitize(property?.name ?? '')}_${today.replace(/\./g, '-')}.pdf`);
