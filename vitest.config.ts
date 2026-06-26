@@ -4,7 +4,7 @@ import { defineConfig } from 'vitest/config';
 // are excluded from the Node/vitest run.
 export default defineConfig({
   test: {
-    include: ['engine/**/*.test.ts'],
+    include: ['engine/**/*.test.ts', 'services/**/*.test.ts'],
     environment: 'node',
   },
 });

@@ -205,6 +205,36 @@ export interface GapOverride {
   created_at?: string;
 }
 
+// Commission calculator
+export interface CommissionReservation {
+  room: string;
+  reservation: string;
+  arrival: string;
+  departure: string;
+  firstName: string;
+  lastName: string;
+  source: string;
+  price: number;
+  amount: number | null;
+  currency: string;
+  addDate: string;        // ISO datetime from the file
+  commission: number;     // computed
+}
+
+export interface CommissionReport {
+  id?: string;
+  property_id: string;
+  label: string | null;
+  count_from: string | null;     // YYYY-MM-DD
+  rate_percent: number;
+  total_price: number;
+  total_commission: number;
+  reservation_count: number;
+  rows: CommissionReservation[];
+  created_by?: string | null;
+  created_at?: string;
+}
+
 export interface AISuggestion {
   id: string;
   notification_id: string;
