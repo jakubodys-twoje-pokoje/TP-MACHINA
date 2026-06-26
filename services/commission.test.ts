@@ -26,6 +26,12 @@ describe('buildReport', () => {
     expect(r.totalCommission).toBeCloseTo(182.25);
   });
 
+  it('handles fractional rates (e.g. 4,75%) rounded to grosze', () => {
+    const r = buildReport([raw('R1', 765, '2026-06-02 10:00:00')], 4.75, null);
+    expect(r.rows[0].commission).toBeCloseTo(36.34);   // 765 × 0.0475 = 36.3375 → 36.34
+    expect(r.totalCommission).toBeCloseTo(36.34);
+  });
+
   it('hides reservations added before countFrom', () => {
     const r = buildReport([
       raw('R1', 930, '2026-05-10 10:00:00'),  // before cutoff → hidden

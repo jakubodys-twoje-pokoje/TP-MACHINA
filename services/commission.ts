@@ -122,6 +122,10 @@ export async function deleteReport(id: string): Promise<void> {
 export const fmtPLN = (n: number) =>
   new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 
+// Rate with PL decimal comma, up to 3 places (e.g. 4,75). Trailing zeros trimmed.
+export const fmtPct = (n: number) =>
+  new Intl.NumberFormat('pl-PL', { maximumFractionDigits: 3 }).format(n);
+
 const esc = (s: string) => (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
 /** Build a self-contained, print-ready HTML document for the report. */
@@ -173,7 +177,7 @@ export function buildReportHtml(opts: {
   </style></head><body>
   <div class="head">
     <div><h1>Raport prowizji</h1><div class="sub">${property ? esc(property.name) : ''}</div></div>
-    <div class="meta">Wygenerowano: ${today}<br>Stawka prowizji: <b>${ratePercent}%</b><br>${periodNote}</div>
+    <div class="meta">Wygenerowano: ${today}<br>Stawka prowizji: <b>${fmtPct(ratePercent)}%</b><br>${periodNote}</div>
   </div>
   <table>
     <thead><tr>
@@ -234,7 +238,7 @@ export async function downloadReportPdf(opts: {
   doc.text('Raport prowizji', 40, 40);
   doc.setFontSize(10); doc.setTextColor(71, 85, 105);
   if (property?.name) doc.text(property.name, 40, 58);
-  const meta = `Wygenerowano: ${today}    Stawka: ${ratePercent}%    ${countFrom ? 'Liczone od (add date): ' + countFrom : 'Caly zakres pliku'}`;
+  const meta = `Wygenerowano: ${today}    Stawka: ${fmtPct(ratePercent)}%    ${countFrom ? 'Liczone od (add date): ' + countFrom : 'Caly zakres pliku'}`;
   doc.text(meta, 40, 74);
 
   const body = rows.map((r, i) => {

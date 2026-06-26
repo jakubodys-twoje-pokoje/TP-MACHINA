@@ -4,7 +4,7 @@ import { supabase } from '../services/supabaseClient';
 import type { Property, CommissionReport } from '../types';
 import {
   parseSaleReport, buildReport, getCommissionRate, saveCommissionRate,
-  listReports, saveReport, deleteReport, downloadReportPdf, fmtPLN,
+  listReports, saveReport, deleteReport, downloadReportPdf, fmtPLN, fmtPct,
   type RawReservation,
 } from '../services/commission';
 import { Loader2, Upload, FileDown, Save, Trash2, Percent, Calculator } from 'lucide-react';
@@ -12,7 +12,9 @@ import { Loader2, Upload, FileDown, Save, Trash2, Percent, Calculator } from 'lu
 export const CommissionView: React.FC = () => {
   const { id: propertyId } = useParams<{ id: string }>();
   const [property, setProperty] = useState<Property | null>(null);
-  const [ratePercent, setRatePercent] = useState<number>(0);
+  // Rate is kept as a STRING so the user can freely type decimals (comma or dot);
+  // the numeric value is derived only for computation/saving.
+  const [rateInput, setRateInput] = useState<string>('0');
   const [savingRate, setSavingRate] = useState(false);
   const [countFrom, setCountFrom] = useState<string>('');
   const [raw, setRaw] = useState<RawReservation[] | null>(null);
@@ -26,9 +28,11 @@ export const CommissionView: React.FC = () => {
   useEffect(() => {
     if (!propertyId) return;
     supabase.from('properties').select('*').eq('id', propertyId).single().then(({ data }) => setProperty(data));
-    getCommissionRate(propertyId).then(setRatePercent).catch(() => {});
+    getCommissionRate(propertyId).then(n => setRateInput(String(n ?? 0).replace('.', ','))).catch(() => {});
     listReports(propertyId).then(setHistory).catch(() => {});
   }, [propertyId]);
+
+  const ratePercent = parseFloat(rateInput.replace(',', '.')) || 0;
 
   const live = useMemo(
     () => (raw ? buildReport(raw, ratePercent, countFrom || null) : null),
@@ -122,9 +126,10 @@ export const CommissionView: React.FC = () => {
           <label className="block text-xs font-semibold text-slate-300 mb-1">Stawka prowizji (%)</label>
           <div className="flex gap-2">
             <div className="relative flex-1">
-              <input type="number" min={0} step={0.5} value={ratePercent}
-                onChange={(e) => { setHistoryView(null); setRatePercent(parseFloat(e.target.value) || 0); }}
-                onBlur={handleSaveRate}
+              <input type="text" inputMode="decimal" value={rateInput}
+                onChange={(e) => { setHistoryView(null); setRateInput(e.target.value.replace(/[^\d.,]/g, '')); }}
+                onBlur={() => { setRateInput(String(ratePercent).replace('.', ',')); handleSaveRate(); }}
+                placeholder="np. 4,75"
                 className="w-full pl-2 pr-7 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm focus:outline-none focus:ring-1 focus:ring-teal-500" />
               <Percent size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500" />
             </div>
@@ -236,7 +241,7 @@ export const CommissionView: React.FC = () => {
                 <button onClick={() => setHistoryView(h)} className="text-left flex-1 min-w-0">
                   <div className="text-sm text-slate-200 truncate">{h.label}</div>
                   <div className="text-[11px] text-slate-500">
-                    {h.reservation_count} rez. · stawka {h.rate_percent}% · prowizja {fmtPLN(h.total_commission)} · {h.created_at ? new Date(h.created_at).toLocaleString('pl-PL') : ''}
+                    {h.reservation_count} rez. · stawka {fmtPct(h.rate_percent)}% · prowizja {fmtPLN(h.total_commission)} · {h.created_at ? new Date(h.created_at).toLocaleString('pl-PL') : ''}
                   </div>
                 </button>
                 <button onClick={() => handleDeleteReport(h.id)} className="ml-2 text-slate-500 hover:text-red-400 p-1.5"><Trash2 size={15} /></button>
