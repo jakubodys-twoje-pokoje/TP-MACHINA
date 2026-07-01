@@ -374,6 +374,37 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
   }
 }
 
+async function buildSyncResult(property: Property, supabaseClient: any, pricesOnly: boolean) {
+  // Sync prices always; skip availability when prices_only flag is set
+  const [availResult, pricesResult] = await Promise.allSettled([
+    pricesOnly ? Promise.resolve({ recordsCompared: 0, changesDetected: 0 }) : syncPropertyAvailability(property, supabaseClient),
+    syncPropertyPrices(property, supabaseClient)
+  ])
+
+  return {
+    property: {
+      id: property.id,
+      name: property.name
+    },
+    availability: availResult.status === 'fulfilled' ? {
+      success: true,
+      recordsCompared: availResult.value.recordsCompared,
+      changesDetected: availResult.value.changesDetected
+    } : {
+      success: false,
+      error: (availResult as PromiseRejectedResult).reason?.message || 'Unknown error'
+    },
+    prices: pricesResult.status === 'fulfilled' ? {
+      success: true,
+      recordsCompared: pricesResult.value.recordsCompared,
+      changesDetected: pricesResult.value.changesDetected
+    } : {
+      success: false,
+      error: (pricesResult as PromiseRejectedResult).reason?.message || 'Unknown error'
+    }
+  }
+}
+
 Deno.serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -381,82 +412,91 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Parse request body
-    const { property_id, prices_only } = await req.json()
-
-    if (!property_id) {
-      return new Response(
-        JSON.stringify({ error: 'property_id is required' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-      )
-    }
-
-    console.log(`🚀 Starting sync for property: ${property_id}`)
+    // Parse request body. property_id is optional — omitting it (as the
+    // scheduled cron does) runs the sync for every property with a
+    // hotres_id, one at a time is still too slow for many properties, so
+    // they're run concurrently via Promise.allSettled.
+    const body = await req.json().catch(() => ({}))
+    const { property_id, prices_only } = body
 
     // Create Supabase client with service role
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabaseClient = createClient(supabaseUrl, supabaseServiceKey)
 
-    // Fetch the property
-    const { data: property, error: propertyError } = await supabaseClient
+    if (property_id) {
+      console.log(`🚀 Starting sync for property: ${property_id}`)
+
+      const { data: property, error: propertyError } = await supabaseClient
+        .from('properties')
+        .select('id, name, hotres_id')
+        .eq('id', property_id)
+        .single()
+
+      if (propertyError || !property) {
+        console.error(`❌ Property not found: ${property_id}`)
+        return new Response(
+          JSON.stringify({ error: 'Property not found' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404 }
+        )
+      }
+
+      if (!property.hotres_id) {
+        console.error(`❌ Property ${property.name} has no hotres_id`)
+        return new Response(
+          JSON.stringify({ error: 'Property has no hotres_id configured' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+        )
+      }
+
+      console.log(`📋 Property found: ${property.name} (hotres_id: ${property.hotres_id})`)
+
+      const response = await buildSyncResult(property, supabaseClient, !!prices_only)
+
+      console.log(`✅ Sync complete for ${property.name}`)
+      console.log(`📊 Results:`, JSON.stringify(response, null, 2))
+
+      return new Response(
+        JSON.stringify(response),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+      )
+    }
+
+    // No property_id → scheduled full-portfolio run (the 10-minute cron calls
+    // this with { "prices_only": true } so it doesn't duplicate the
+    // separate 3-minute availability-only cron).
+    console.log(`🚀 Starting sync for ALL properties (prices_only=${!!prices_only})`)
+
+    const { data: properties, error: propertiesError } = await supabaseClient
       .from('properties')
       .select('id, name, hotres_id')
-      .eq('id', property_id)
-      .single()
+      .not('hotres_id', 'is', null)
 
-    if (propertyError || !property) {
-      console.error(`❌ Property not found: ${property_id}`)
+    if (propertiesError) {
+      throw new Error(`Failed to fetch properties: ${propertiesError.message}`)
+    }
+
+    if (!properties || properties.length === 0) {
       return new Response(
-        JSON.stringify({ error: 'Property not found' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 404 }
+        JSON.stringify({ message: 'No properties with Hotres ID found', count: 0 }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
       )
     }
 
-    if (!property.hotres_id) {
-      console.error(`❌ Property ${property.name} has no hotres_id`)
-      return new Response(
-        JSON.stringify({ error: 'Property has no hotres_id configured' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-      )
-    }
+    const results = await Promise.allSettled(
+      properties.map((property: Property) => buildSyncResult(property, supabaseClient, !!prices_only))
+    )
 
-    console.log(`📋 Property found: ${property.name} (hotres_id: ${property.hotres_id})`)
+    const propertyResults = results.map((result, i) =>
+      result.status === 'fulfilled'
+        ? result.value
+        : { property: { id: properties[i].id, name: properties[i].name }, error: result.reason?.message || 'Unknown error' }
+    )
 
-    // Sync prices always; skip availability when prices_only flag is set
-    const [availResult, pricesResult] = await Promise.allSettled([
-      prices_only ? Promise.resolve({ recordsCompared: 0, changesDetected: 0 }) : syncPropertyAvailability(property, supabaseClient),
-      syncPropertyPrices(property, supabaseClient)
-    ])
-
-    const response = {
-      property: {
-        id: property.id,
-        name: property.name
-      },
-      availability: availResult.status === 'fulfilled' ? {
-        success: true,
-        recordsCompared: availResult.value.recordsCompared,
-        changesDetected: availResult.value.changesDetected
-      } : {
-        success: false,
-        error: availResult.reason?.message || 'Unknown error'
-      },
-      prices: pricesResult.status === 'fulfilled' ? {
-        success: true,
-        recordsCompared: pricesResult.value.recordsCompared,
-        changesDetected: pricesResult.value.changesDetected
-      } : {
-        success: false,
-        error: pricesResult.reason?.message || 'Unknown error'
-      }
-    }
-
-    console.log(`✅ Sync complete for ${property.name}`)
-    console.log(`📊 Results:`, JSON.stringify(response, null, 2))
+    console.log(`✅ Sync complete for ${properties.length} properties`)
 
     return new Response(
-      JSON.stringify(response),
+      JSON.stringify({ count: properties.length, results: propertyResults }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     )
   } catch (error: any) {
