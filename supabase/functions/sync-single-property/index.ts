@@ -180,7 +180,7 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     // Get units for this property
     const { data: units } = await supabaseClient
       .from('units')
-      .select('id, external_type_id')
+      .select('id, external_type_id, selected_rate_plan_id')
       .eq('property_id', property.id)
       .not('external_type_id', 'is', null)
 
@@ -191,19 +191,33 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
 
     console.log(`  📊 Found ${units.length} units`)
 
-    // Get ALL rate plans for this property
+    // Only sync rate plans that are actually selected/displayed on at least one
+    // unit — no point paying for a Hotres round-trip on cenniki nobody is
+    // looking at. Units without a selection (selected_rate_plan_id IS NULL)
+    // are intentionally left out of this sync; they'll get data once someone
+    // picks a rate plan for them in the "Cenniki na kalendarzu" UI.
+    const selectedRatePlanIds = Array.from(
+      new Set(units.map((u: any) => u.selected_rate_plan_id).filter((id: any) => id))
+    )
+
+    if (selectedRatePlanIds.length === 0) {
+      console.log(`  ⚠️ No unit has a selected_rate_plan_id for ${property.name} — nothing to sync`)
+      return { recordsCompared: 0, changesDetected: 0 }
+    }
+
     const { data: allRatePlans, error: ratePlansError } = await supabaseClient
       .from('rate_plans')
       .select('id, external_id, name')
       .eq('property_id', property.id)
       .not('external_id', 'is', null)
+      .in('id', selectedRatePlanIds)
 
     if (!allRatePlans || allRatePlans.length === 0) {
-      console.log(`  ⚠️ No rate plans with external_id for ${property.name}`)
+      console.log(`  ⚠️ No matching rate plans with external_id for ${property.name}`)
       return { recordsCompared: 0, changesDetected: 0 }
     }
 
-    console.log(`  📋 Rate plans for ${property.name}: ${allRatePlans.length} total — syncing ALL`)
+    console.log(`  📋 Rate plans for ${property.name}: ${allRatePlans.length} selected (of possibly more configured) — syncing selected only`)
     console.log(`  📋 Plans:`, allRatePlans.map(rp => `"${rp.name}" (ext_id: ${rp.external_id})`))
 
     // Fetch prices from Hotres - split into two ranges (180 day API limit)
