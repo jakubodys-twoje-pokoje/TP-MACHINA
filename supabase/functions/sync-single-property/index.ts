@@ -228,33 +228,42 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
 
     console.log(`  📊 Found ${units.length} units`)
 
-    // Only sync rate plans that are actually selected/displayed on at least one
-    // unit — no point paying for a Hotres round-trip on cenniki nobody is
-    // looking at. Units without a selection (selected_rate_plan_id IS NULL)
-    // are intentionally left out of this sync; they'll get data once someone
-    // picks a rate plan for them in the "Cenniki na kalendarzu" UI.
-    const selectedRatePlanIds = Array.from(
-      new Set(units.map((u: any) => u.selected_rate_plan_id).filter((id: any) => id))
-    )
-
-    if (selectedRatePlanIds.length === 0) {
-      console.log(`  ⚠️ No unit has a selected_rate_plan_id for ${property.name} — nothing to sync`)
-      return { recordsCompared: 0, changesDetected: 0 }
-    }
-
-    const { data: allRatePlans, error: ratePlansError } = await supabaseClient
+    // Need the property's full rate plan list (ordered by name) to know the
+    // "default" one — the frontend (RatePlanMatrixModal / CalendarView) falls
+    // back to the first rate plan by name whenever a unit has no explicit
+    // selected_rate_plan_id, so that's what actually ends up displayed for
+    // it. If we only synced explicitly-selected plans, a property where
+    // nobody has ever clicked a radio button (e.g. one with a single
+    // cennik, where the fallback already looks "selected" in the UI) would
+    // never sync at all, even manually.
+    const { data: allPropertyRatePlans } = await supabaseClient
       .from('rate_plans')
       .select('id, external_id, name')
       .eq('property_id', property.id)
       .not('external_id', 'is', null)
-      .in('id', selectedRatePlanIds)
+      .order('name')
 
-    if (!allRatePlans || allRatePlans.length === 0) {
+    if (!allPropertyRatePlans || allPropertyRatePlans.length === 0) {
+      console.log(`  ⚠️ No rate plans with external_id for ${property.name}`)
+      return { recordsCompared: 0, changesDetected: 0 }
+    }
+
+    const defaultRatePlanId = allPropertyRatePlans[0].id
+    const hasUnselectedUnits = units.some((u: any) => !u.selected_rate_plan_id)
+
+    const ratePlanIdsToSync = new Set(
+      units.map((u: any) => u.selected_rate_plan_id).filter((id: any) => id)
+    )
+    if (hasUnselectedUnits) ratePlanIdsToSync.add(defaultRatePlanId)
+
+    const allRatePlans = allPropertyRatePlans.filter((rp: any) => ratePlanIdsToSync.has(rp.id))
+
+    if (allRatePlans.length === 0) {
       console.log(`  ⚠️ No matching rate plans with external_id for ${property.name}`)
       return { recordsCompared: 0, changesDetected: 0 }
     }
 
-    console.log(`  📋 Rate plans for ${property.name}: ${allRatePlans.length} selected (of possibly more configured) — syncing selected only`)
+    console.log(`  📋 Rate plans for ${property.name}: ${allRatePlans.length} of ${allPropertyRatePlans.length} configured — syncing explicitly-selected + default fallback (${hasUnselectedUnits ? 'has unselected units' : 'all units have a selection'})`)
     console.log(`  📋 Plans:`, allRatePlans.map(rp => `"${rp.name}" (ext_id: ${rp.external_id})`))
 
     // Fetch prices from Hotres — split into chunks sized to stay under its
