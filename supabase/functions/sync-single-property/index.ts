@@ -358,7 +358,12 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
                 min: parseIntOrNull(d.min),
                 max: parseIntOrNull(d.max),
                 cta: parseIntOrNull(d.cta),
-                ctd: parseIntOrNull(d.ctd)
+                ctd: parseIntOrNull(d.ctd),
+                // synced_at has DEFAULT NOW(), but that only fires on INSERT —
+                // an upsert that hits the onConflict UPDATE path leaves it at
+                // whatever it was on first insert, making it useless as a
+                // "last synced" signal. Set it explicitly on every write.
+                synced_at: new Date().toISOString()
               })
               totalDates++
             }
