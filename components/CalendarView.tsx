@@ -442,8 +442,10 @@ export const CalendarView: React.FC = () => {
         if (pageError) { console.error('❌ Error fetching prices:', pageError); break; }
         if (!page || page.length === 0) break;
         allData.push(...page);
-        if (page.length < PAGE_SIZE) break;
-        from += PAGE_SIZE;
+        // Advance by what we actually got, not PAGE_SIZE — Supabase's project-level
+        // "Max Rows" setting can cap a response well below PAGE_SIZE, and stopping
+        // whenever a page comes back short of PAGE_SIZE would truncate large properties.
+        from += page.length;
       }
     }
 
