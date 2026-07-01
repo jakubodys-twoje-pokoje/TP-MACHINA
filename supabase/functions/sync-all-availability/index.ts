@@ -283,6 +283,24 @@ async function syncPropertyAvailability(
   let changesDetected = 0
   let notificationsSent = 0
 
+  // Guard against overlapping runs: the cron fires every 3 minutes regardless
+  // of whether the previous invocation for this property finished. If Hotres
+  // is slow for a large property, two syncs can end up running concurrently,
+  // each computing its own before/after snapshot against a database the
+  // other is actively writing to — a race that manufactures false "changes"
+  // (and the notification/push floods that come with them). Skip this run
+  // if the previous one hasn't cleared the flag yet.
+  const { data: currentState } = await supabaseClient
+    .from('properties')
+    .select('availability_sync_in_progress')
+    .eq('id', property.id)
+    .single()
+
+  if (currentState?.availability_sync_in_progress) {
+    console.log(`  ⏭️  Skipping ${property.name} — previous availability sync still in progress`)
+    return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
+  }
+
   await supabaseClient
     .from('properties')
     .update({ availability_sync_in_progress: true })
