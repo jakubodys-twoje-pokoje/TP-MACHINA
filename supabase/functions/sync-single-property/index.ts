@@ -39,6 +39,43 @@ function parseFloatOrNull(value: any): number | null {
   return Number.isNaN(n) ? null : n
 }
 
+// Hotres' api_prices caps a single response at 5000 rows ({"result":"error",
+// "message":"The maximum result rows is 5000"} — an HTTP 404, not an empty
+// body). The row count scales with (days in range × units in the property),
+// and how "dense" the rate plan's configured prices are, so a fixed date
+// split (e.g. two ~180-day halves) works for small/sparse properties but
+// fails for larger ones or densely-configured cenniki. Split the full range
+// into chunks sized so days × unitCount stays safely under the cap,
+// regardless of property size or how much data a given rate plan has.
+function buildDateRangeChunks(startDate: string, endDate: string, unitCount: number): Array<{ from: string; till: string; label: string }> {
+  const HOTRES_MAX_ROWS = 5000
+  const SAFETY_FACTOR = 0.6 // stay well under the hard cap
+  const maxDaysPerChunk = Math.max(7, Math.floor((HOTRES_MAX_ROWS * SAFETY_FACTOR) / Math.max(unitCount, 1)))
+
+  const chunks: Array<{ from: string; till: string; label: string }> = []
+  let cursor = new Date(`${startDate}T00:00:00Z`)
+  const end = new Date(`${endDate}T00:00:00Z`)
+  let index = 1
+
+  while (cursor <= end) {
+    const chunkEnd = new Date(cursor)
+    chunkEnd.setUTCDate(chunkEnd.getUTCDate() + maxDaysPerChunk - 1)
+    if (chunkEnd > end) chunkEnd.setTime(end.getTime())
+
+    chunks.push({
+      from: cursor.toISOString().split('T')[0],
+      till: chunkEnd.toISOString().split('T')[0],
+      label: `chunk ${index}`
+    })
+
+    index++
+    cursor = new Date(chunkEnd)
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+
+  return chunks
+}
+
 async function fetchFromHotres(targetUrl: string): Promise<string> {
   const res = await fetch(targetUrl, {
     method: 'GET',
@@ -220,11 +257,11 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     console.log(`  📋 Rate plans for ${property.name}: ${allRatePlans.length} selected (of possibly more configured) — syncing selected only`)
     console.log(`  📋 Plans:`, allRatePlans.map(rp => `"${rp.name}" (ext_id: ${rp.external_id})`))
 
-    // Fetch prices from Hotres - split into two ranges (180 day API limit)
-    const dateRanges = [
-      { from: '2026-01-20', till: '2026-07-18', label: 'first half' },
-      { from: '2026-07-19', till: '2026-12-31', label: 'second half' }
-    ]
+    // Fetch prices from Hotres — split into chunks sized to stay under its
+    // 5000-row-per-request cap (see buildDateRangeChunks for why a fixed
+    // two-range split isn't reliable across property sizes / rate plan density).
+    const dateRanges = buildDateRangeChunks('2026-01-20', '2026-12-31', units.length)
+    console.log(`  🔪 Split 2026-01-20..2026-12-31 into ${dateRanges.length} chunk(s) for ${units.length} units`)
 
     // Create mapping of type_id to unit for lookup (trim to match availability sync
     // and guard against stray whitespace in external_type_id / Hotres type_id)
