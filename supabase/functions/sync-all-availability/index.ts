@@ -698,7 +698,15 @@ async function syncPropertyAvailability(
   }
 }
 
-// Sync prices/restrictions for a single property
+// Sync prices/restrictions for a single property — ALL rate plans, both date
+// ranges, fetched concurrently (mirrors sync-single-property/index.ts).
+// Sequential fetching (rate plan × range one at a time) was blowing past the
+// Edge Function's execution time limit for large properties (13+ rate plans
+// × 2 ranges = 26+ awaited round-trips), silently killing the run before it
+// ever reached later rate plans — they'd never get synced past whatever
+// range happened to be in flight when the timeout hit. Firing every
+// (rate plan × range) request in parallel bounds wall time to roughly the
+// slowest single request instead of the sum of all of them.
 async function syncPropertyPrices(property: Property, supabaseClient: any): Promise<{ recordsCompared: number; changesDetected: number; notificationsSent: number }> {
   try {
     console.log(`💰 Syncing prices for ${property.name} (${property.id})...`)
@@ -731,129 +739,112 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
     }
 
-    // Prefer "Booking" rate plan, but use first available if "Booking" doesn't exist
-    const bookingPlan = allRatePlans.find(rp => rp.name.toLowerCase().includes('booking'))
-    const targetRatePlan = bookingPlan || allRatePlans[0]
+    console.log(`  📋 Rate plans for ${property.name}: ${allRatePlans.length} total — syncing ALL`)
+    console.log(`  📋 Plans:`, allRatePlans.map(rp => `"${rp.name}" (ext_id: ${rp.external_id})`))
 
-    console.log(`  📋 Rate plans for ${property.name}:`, {
-      total: allRatePlans.length,
-      using: `"${targetRatePlan.name}" (id: ${targetRatePlan.id}, ext_id: ${targetRatePlan.external_id})`,
-      all: allRatePlans.map(rp => rp.name)
-    })
-
-    // Fetch prices from Hotres - alternating ranges (180 day API limit)
-    // Auto sync alternates: even runs = first half, odd runs = second half
-    // Range 1: 2026-01-20 to 2026-07-18 (180 days)
-    // Range 2: 2026-07-19 to 2026-12-31 (165 days)
-
-    const targetRatePlanId = targetRatePlan.id
-    const targetRateExternalId = targetRatePlan.external_id
-
-    // Determine which range to sync based on current minute (alternates every 3 minutes)
-    const currentMinute = new Date().getMinutes()
-    const useFirstHalf = currentMinute % 6 < 3 // First half for minutes 0-2, 6-8, 12-14, etc.
-
-    const range = useFirstHalf
-      ? { from: '2026-01-20', till: '2026-07-18', label: 'first half' }
-      : { from: '2026-07-19', till: '2026-12-31', label: 'second half' }
-
-    console.log(`  📅 Fetching prices ${range.label}: ${range.from} to ${range.till}`)
-    console.log(`  🔄 Will fetch prices for ${units.length} units (rate_id: ${targetRateExternalId})`)
-
-    // Collect all price records
-    const pricesByUnitDate = new Map<string, any>()
+    // Fetch prices from Hotres - split into two ranges (180 day API limit)
+    const dateRanges = [
+      { from: '2026-01-20', till: '2026-07-18', label: 'first half' },
+      { from: '2026-07-19', till: '2026-12-31', label: 'second half' }
+    ]
 
     // Create mapping of type_id to unit for lookup
     const unitMapByTypeId = new Map<string, any>()
     units.forEach(u => {
       if (u.external_type_id) {
-        unitMapByTypeId.set(String(u.external_type_id), u)
+        unitMapByTypeId.set(String(u.external_type_id).trim(), u)
       }
     })
 
-    try {
-      // Fetch prices for entire property (ONE request instead of one per unit)
-      const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&rate_id=${targetRateExternalId}&from=${range.from}&till=${range.till}`
+    const pricesByKey = new Map<string, any>()
+    let totalDates = 0
+    let skippedNoUnit = 0
+    const unmatchedTypeIds = new Set<string>()
 
-      const rawResponse = await fetchFromHotres(pricesUrl)
-      let pricesData = JSON.parse(rawResponse)
+    const fetchTasks = allRatePlans.flatMap((ratePlan: any) =>
+      dateRanges.map(range => ({ ratePlan, range }))
+    )
 
-      // Hotres returns array: [{rate_id, type_id, dates: [...]}, ...]
-      if (!Array.isArray(pricesData)) {
-        pricesData = [pricesData]
+    const fetchResults = await Promise.allSettled(
+      fetchTasks.map(async ({ ratePlan, range }: any) => {
+        console.log(`  📆 Fetching "${ratePlan.name}" ${range.label}: ${range.from} to ${range.till}`)
+        const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&rate_id=${ratePlan.external_id}&from=${range.from}&till=${range.till}`
+        const rawResponse = await fetchFromHotres(pricesUrl)
+        let pricesData = JSON.parse(rawResponse)
+        if (!Array.isArray(pricesData)) pricesData = [pricesData]
+        console.log(`  📥 "${ratePlan.name}" ${range.label}: ${pricesData.length} items`)
+        return { ratePlan, range, pricesData }
+      })
+    )
+
+    for (let i = 0; i < fetchResults.length; i++) {
+      const result = fetchResults[i]
+      const { ratePlan, range } = fetchTasks[i]
+
+      if (result.status === 'rejected') {
+        console.error(`  ❌ Failed "${ratePlan.name}" ${range.label}:`, (result as PromiseRejectedResult).reason?.message)
+        continue
       }
 
-      console.log(`  📦 Received ${pricesData.length} items from Hotres API`)
+      const { pricesData } = (result as PromiseFulfilledResult<any>).value
 
-      let processedUnits = 0
-      let totalDates = 0
-
-      // Process all items in array (one per unit type)
       for (const item of pricesData) {
         if (!item || !item.type_id) continue
 
-        const typeId = String(item.type_id)
+        const typeId = String(item.type_id).trim()
         const unit = unitMapByTypeId.get(typeId)
-
         if (!unit) {
-          console.warn(`  ⚠️  No unit found for type_id ${typeId}`)
+          skippedNoUnit += Array.isArray(item.dates) ? item.dates.length : 1
+          if (!unmatchedTypeIds.has(typeId)) {
+            unmatchedTypeIds.add(typeId)
+            console.warn(`  ⚠️ No unit matched for type_id "${typeId}" — records dropped`)
+          }
           continue
         }
 
         if (item.dates && Array.isArray(item.dates)) {
           for (const d of item.dates) {
-            const key = `${unit.id}:${d.date}`
-
-            // Store price data (keep first occurrence only)
-            if (!pricesByUnitDate.has(key)) {
-              pricesByUnitDate.set(key, {
+            const dateStr = normalizeDate(d.date)
+            const key = `${unit.id}:${dateStr}:${ratePlan.id}`
+            if (!pricesByKey.has(key)) {
+              pricesByKey.set(key, {
                 unit_id: unit.id,
-                rate_id: targetRatePlanId,
-                date: d.date,
-                price: d.price ? parseFloat(d.price) : null,
+                rate_id: ratePlan.id,
+                date: dateStr,
+                price: d.price !== null && d.price !== undefined && d.price !== '' ? parseFloat(d.price) : null,
                 min: d.min !== null && d.min !== undefined && d.min !== '' ? parseInt(d.min) : null,
                 max: d.max !== null && d.max !== undefined && d.max !== '' ? parseInt(d.max) : null,
-                cta: d.cta !== null && d.cta !== undefined ? parseInt(d.cta) : null,
-                ctd: d.ctd !== null && d.ctd !== undefined ? parseInt(d.ctd) : null
+                cta: d.cta !== null && d.cta !== undefined && d.cta !== '' ? parseInt(d.cta) : null,
+                ctd: d.ctd !== null && d.ctd !== undefined && d.ctd !== '' ? parseInt(d.ctd) : null
               })
               totalDates++
             }
           }
-          processedUnits++
         }
       }
-
-      console.log(`  ✓ Processed ${processedUnits} units with ${totalDates} total date records`)
-    } catch (error: any) {
-      console.error(`  ❌ Failed to fetch prices for ${property.name}:`, error.message)
     }
 
-    const pricesToUpsert = Array.from(pricesByUnitDate.values())
-    console.log(`  📦 Collected ${pricesToUpsert.length} unique price records (unit+date combinations)`)
-
-    // Show sample records with CTA/CTD/MIN
-    const samplesWithRestrictions = pricesToUpsert.filter(p =>
-      p.cta !== null || p.ctd !== null || p.min !== null
-    ).slice(0, 3)
-    if (samplesWithRestrictions.length > 0) {
-      console.log(`  📊 Sample records with CTA/CTD/MIN:`, samplesWithRestrictions)
+    console.log(`  📊 Total: ${totalDates} unique price records across all rate plans`)
+    if (skippedNoUnit > 0) {
+      console.warn(`  ⚠️ Skipped ${skippedNoUnit} records (${unmatchedTypeIds.size} unmatched type_id(s))`)
     }
+
+    const pricesToUpsert = Array.from(pricesByKey.values())
+    console.log(`  📦 Collected ${pricesToUpsert.length} unique price records (unit+date+rate_id combinations)`)
 
     // Upsert prices
+    let upsertedCount = 0
     if (pricesToUpsert.length > 0) {
       const BATCH_SIZE = 500
-      let upsertedCount = 0
       for (let i = 0; i < pricesToUpsert.length; i += BATCH_SIZE) {
         const batch = pricesToUpsert.slice(i, i + BATCH_SIZE)
-        const { data, error } = await supabaseClient
+        const { error } = await supabaseClient
           .from('prices')
           .upsert(batch, { onConflict: 'unit_id,rate_id,date' })
-          .select('id')
         if (error) {
           console.error(`  ❌ Error upserting prices batch ${i}-${i + batch.length}:`, error)
         } else {
           upsertedCount += batch.length
-          console.log(`  ✓ Upserted batch ${i}-${i + batch.length} (${batch.length} records)`)
         }
       }
       console.log(`  ✅ Synced ${upsertedCount} price records for ${property.name}`)
@@ -861,11 +852,10 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       console.log(`  ⚠️ No price records to upsert for ${property.name}`)
     }
 
-    return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
+    return { recordsCompared: upsertedCount, changesDetected: 0, notificationsSent: 0 }
   } catch (error: any) {
     console.error(`❌ Error syncing prices for ${property.name}:`, error.message)
     console.error(`❌ Stack trace:`, error.stack)
-    console.error(`❌ Full error:`, JSON.stringify(error, null, 2))
     return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
   }
 }
@@ -911,11 +901,35 @@ Deno.serve(async (req) => {
       )
     }
 
-    console.log(`🔄 Starting sync for ${properties.length} properties (availability only)...`)
+    // Availability runs every 3 minutes (this cron's normal cadence). Prices
+    // (all rate plans × both ranges, concurrently, per property) only run
+    // once an hour, at :00 — syncing 13+ rate plans for every property every
+    // 3 minutes would hammer the Hotres API far more than needed.
+    const syncPricesThisRun = new Date().getMinutes() === 0
+    console.log(`🔄 Starting sync for ${properties.length} properties (availability${syncPricesThisRun ? ' + prices' : ', prices skipped this run'})...`)
 
-    // Sync availability only — prices are synced manually via sync-single-property
+    // Availability and prices run concurrently per property. Price sync outcome
+    // is logged but doesn't affect the availability success/error bookkeeping
+    // below (which drives sync_logs/notifications) — a failed price sync for
+    // one property shouldn't be reported as an availability sync failure.
     const results = await Promise.allSettled(
-      properties.map(property => syncPropertyAvailability(property, supabaseClient))
+      properties.map(async (property) => {
+        const [availResult, priceResult] = await Promise.allSettled([
+          syncPropertyAvailability(property, supabaseClient),
+          syncPricesThisRun
+            ? syncPropertyPrices(property, supabaseClient)
+            : Promise.resolve({ recordsCompared: 0, changesDetected: 0, notificationsSent: 0 })
+        ])
+
+        if (priceResult.status === 'rejected') {
+          console.error(`❌ Price sync failed for ${property.name}:`, priceResult.reason?.message)
+        } else if (syncPricesThisRun) {
+          console.log(`💰 Price sync for ${property.name}: ${priceResult.value.recordsCompared} records upserted`)
+        }
+
+        if (availResult.status === 'rejected') throw availResult.reason
+        return availResult.value
+      })
     )
 
     // Collect successes, errors, and aggregate metrics

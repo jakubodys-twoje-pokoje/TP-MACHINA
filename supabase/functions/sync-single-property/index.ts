@@ -228,67 +228,81 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     let skippedNoUnit = 0
     const unmatchedTypeIds = new Set<string>()
 
-    // Fetch prices for ALL rate plans × both date ranges
-    for (const ratePlan of allRatePlans) {
-      for (const range of dateRanges) {
+    // Fetch prices for ALL rate plans × both date ranges — CONCURRENTLY.
+    // With 13+ rate plans × 2 ranges, doing this sequentially (26+ awaited
+    // round-trips to panel.hotres.pl) can blow past the Edge Function's
+    // execution time limit for large properties, silently killing the
+    // invocation before it ever reaches the later rate plans in the list —
+    // they never even get logged, let alone synced. Firing every
+    // (rate plan × range) request in parallel bounds the total wall time to
+    // roughly the slowest single request instead of the sum of all of them.
+    const fetchTasks = allRatePlans.flatMap(ratePlan =>
+      dateRanges.map(range => ({ ratePlan, range }))
+    )
+
+    const fetchResults = await Promise.allSettled(
+      fetchTasks.map(async ({ ratePlan, range }) => {
         console.log(`  📆 Fetching "${ratePlan.name}" ${range.label}: ${range.from} to ${range.till}`)
+        const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&rate_id=${ratePlan.external_id}&from=${range.from}&till=${range.till}`
+        const rawResponse = await fetchFromHotres(pricesUrl)
+        let pricesData = JSON.parse(rawResponse)
+        if (!Array.isArray(pricesData)) pricesData = [pricesData]
+        console.log(`  📥 "${ratePlan.name}" ${range.label}: ${pricesData.length} items`)
+        return { ratePlan, range, pricesData }
+      })
+    )
 
-        try {
-          const pricesUrl = `https://panel.hotres.pl/api_prices?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&rate_id=${ratePlan.external_id}&from=${range.from}&till=${range.till}`
+    for (let i = 0; i < fetchResults.length; i++) {
+      const result = fetchResults[i]
+      const { ratePlan, range } = fetchTasks[i]
 
-          const rawResponse = await fetchFromHotres(pricesUrl)
-          let pricesData = JSON.parse(rawResponse)
+      if (result.status === 'rejected') {
+        console.error(`  ❌ Failed "${ratePlan.name}" ${range.label}:`, result.reason?.message)
+        continue
+      }
 
-          if (!Array.isArray(pricesData)) {
-            pricesData = [pricesData]
+      const { pricesData } = result.value
+
+      // Log first date record to verify field names from Hotres
+      if (pricesData.length > 0 && pricesData[0].dates?.length > 0) {
+        console.log(`  🔬 Sample date record keys:`, Object.keys(pricesData[0].dates[0]))
+        console.log(`  🔬 Sample date record:`, JSON.stringify(pricesData[0].dates[0]))
+      }
+
+      for (const item of pricesData) {
+        if (!item || !item.type_id) continue
+
+        const typeId = String(item.type_id).trim()
+        const unit = unitMapByTypeId.get(typeId)
+        if (!unit) {
+          // Record is silently dropped because no unit matches this type_id.
+          // Log once per type_id so we can detect external_type_id mismatches.
+          skippedNoUnit += Array.isArray(item.dates) ? item.dates.length : 1
+          if (!unmatchedTypeIds.has(typeId)) {
+            unmatchedTypeIds.add(typeId)
+            console.warn(`  ⚠️ No unit matched for type_id "${typeId}" — records dropped. Known type_ids: [${Array.from(unitMapByTypeId.keys()).join(', ')}]`)
           }
+          continue
+        }
 
-          console.log(`  📥 "${ratePlan.name}" ${range.label}: ${pricesData.length} items`)
-
-          // Log first date record to verify field names from Hotres
-          if (pricesData.length > 0 && pricesData[0].dates?.length > 0) {
-            console.log(`  🔬 Sample date record keys:`, Object.keys(pricesData[0].dates[0]))
-            console.log(`  🔬 Sample date record:`, JSON.stringify(pricesData[0].dates[0]))
-          }
-
-          for (const item of pricesData) {
-            if (!item || !item.type_id) continue
-
-            const typeId = String(item.type_id).trim()
-            const unit = unitMapByTypeId.get(typeId)
-            if (!unit) {
-              // Record is silently dropped because no unit matches this type_id.
-              // Log once per type_id so we can detect external_type_id mismatches.
-              skippedNoUnit += Array.isArray(item.dates) ? item.dates.length : 1
-              if (!unmatchedTypeIds.has(typeId)) {
-                unmatchedTypeIds.add(typeId)
-                console.warn(`  ⚠️ No unit matched for type_id "${typeId}" — records dropped. Known type_ids: [${Array.from(unitMapByTypeId.keys()).join(', ')}]`)
-              }
-              continue
+        if (item.dates && Array.isArray(item.dates)) {
+          for (const d of item.dates) {
+            const dateStr = normalizeDate(d.date)
+            const key = `${unit.id}:${dateStr}:${ratePlan.id}`
+            if (!pricesByKey.has(key)) {
+              pricesByKey.set(key, {
+                unit_id: unit.id,
+                rate_id: ratePlan.id,
+                date: dateStr,
+                price: parseFloatOrNull(d.price),
+                min: parseIntOrNull(d.min),
+                max: parseIntOrNull(d.max),
+                cta: parseIntOrNull(d.cta),
+                ctd: parseIntOrNull(d.ctd)
+              })
+              totalDates++
             }
-
-            if (item.dates && Array.isArray(item.dates)) {
-              for (const d of item.dates) {
-                const dateStr = normalizeDate(d.date)
-                const key = `${unit.id}:${dateStr}:${ratePlan.id}`
-                if (!pricesByKey.has(key)) {
-                  pricesByKey.set(key, {
-                    unit_id: unit.id,
-                    rate_id: ratePlan.id,
-                    date: dateStr,
-                    price: parseFloatOrNull(d.price),
-                    min: parseIntOrNull(d.min),
-                    max: parseIntOrNull(d.max),
-                    cta: parseIntOrNull(d.cta),
-                    ctd: parseIntOrNull(d.ctd)
-                  })
-                  totalDates++
-                }
-              }
-            }
           }
-        } catch (error: any) {
-          console.error(`  ❌ Failed "${ratePlan.name}" ${range.label}:`, error.message)
         }
       }
     }
