@@ -9,7 +9,10 @@ interface Property {
   id: string
   name: string
   hotres_id: string
+  sync_from_date: string | null
 }
+
+const DEFAULT_SYNC_FROM_DATE = '2026-01-20'
 
 function normalizeDate(dateInput: string): string {
   try {
@@ -120,8 +123,11 @@ async function syncPropertyAvailability(property: Property, supabaseClient: any)
 
     console.log(`  📊 Found ${units.length} units for ${property.name}`)
 
-    // Fixed date range: 20.01.2026 to 31.12.2026
-    const fromDate = '2026-01-20'
+    // Date range: property.sync_from_date overrides the default start for
+    // properties that only started operating later — requesting data from
+    // before a property/rate plan existed can trip confusing errors from
+    // the Hotres API instead of just coming back empty.
+    const fromDate = property.sync_from_date || DEFAULT_SYNC_FROM_DATE
     const tillDate = '2026-12-31'
 
     const availUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`
@@ -269,8 +275,9 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
     // Fetch prices from Hotres — split into chunks sized to stay under its
     // 5000-row-per-request cap (see buildDateRangeChunks for why a fixed
     // two-range split isn't reliable across property sizes / rate plan density).
-    const dateRanges = buildDateRangeChunks('2026-01-20', '2026-12-31', units.length)
-    console.log(`  🔪 Split 2026-01-20..2026-12-31 into ${dateRanges.length} chunk(s) for ${units.length} units`)
+    const priceFromDate = property.sync_from_date || DEFAULT_SYNC_FROM_DATE
+    const dateRanges = buildDateRangeChunks(priceFromDate, '2026-12-31', units.length)
+    console.log(`  🔪 Split ${priceFromDate}..2026-12-31 into ${dateRanges.length} chunk(s) for ${units.length} units`)
 
     // Create mapping of type_id to unit for lookup (trim to match availability sync
     // and guard against stray whitespace in external_type_id / Hotres type_id)
@@ -480,7 +487,7 @@ Deno.serve(async (req) => {
 
       const { data: property, error: propertyError } = await supabaseClient
         .from('properties')
-        .select('id, name, hotres_id')
+        .select('id, name, hotres_id, sync_from_date')
         .eq('id', property_id)
         .single()
 
@@ -520,7 +527,7 @@ Deno.serve(async (req) => {
 
     const { data: properties, error: propertiesError } = await supabaseClient
       .from('properties')
-      .select('id, name, hotres_id')
+      .select('id, name, hotres_id, sync_from_date')
       .not('hotres_id', 'is', null)
 
     if (propertiesError) {
