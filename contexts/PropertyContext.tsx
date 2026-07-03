@@ -272,7 +272,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const importFromHotres = useCallback(async (oid: string, propertyId: string) => {
     const apiUser = "admin@twojepokoje.com.pl";
-    const apiPass = "Stinson@12121";
+    const apiPass = "Stinson@121";
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Musisz być zalogowany");
@@ -505,7 +505,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const refreshPropertyData = useCallback(async (oid: string, propertyId: string) => {
     const apiUser = "admin@twojepokoje.com.pl";
-    const apiPass = "Stinson@12121";
+    const apiPass = "Stinson@121";
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Musisz być zalogowany");
@@ -610,7 +610,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
     try {
         const apiUser = "admin@twojepokoje.com.pl";
-        const apiPass = "Stinson@12121";
+        const apiPass = "Stinson@121";
 
         const { data: units } = await supabase.from('units').select('id, name, external_id, external_type_id').eq('property_id', propertyId);
         if (!units || units.length === 0) throw new Error("Brak kwater w bazie.");
@@ -726,7 +726,7 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const syncRates = useCallback(async (oid: string, propertyId: string) => {
     const apiUser = "admin@twojepokoje.com.pl";
-    const apiPass = "Stinson@12121";
+    const apiPass = "Stinson@121";
     
     const targetUrl = `https://panel.hotres.pl/api_rates?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&lang=pl`;
     
