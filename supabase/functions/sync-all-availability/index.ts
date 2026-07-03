@@ -275,7 +275,7 @@ async function syncPropertyAvailability(
   supabaseClient: any
 ): Promise<{ recordsCompared: number; changesDetected: number; notificationsSent: number }> {
   const apiUser = "admin@twojepokoje.com.pl"
-  const apiPass = "Admin123@@"
+  const apiPass = "Stinson@12121"
   const oid = property.hotres_id
 
   // Initialize metrics tracking
@@ -723,7 +723,7 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
 
     const oid = property.hotres_id
     const apiUser = 'admin@twojepokoje.com.pl'
-    const apiPass = 'Admin123@@'
+    const apiPass = 'Stinson@12121'
 
     // Get units for this property
     const { data: units } = await supabaseClient

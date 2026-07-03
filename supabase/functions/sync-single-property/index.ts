@@ -107,7 +107,7 @@ async function syncPropertyAvailability(property: Property, supabaseClient: any)
 
     const oid = property.hotres_id
     const apiUser = 'admin@twojepokoje.com.pl'
-    const apiPass = 'Admin123@@'
+    const apiPass = 'Stinson@12121'
 
     // Get units for this property
     const { data: units } = await supabaseClient
@@ -223,7 +223,7 @@ async function syncPropertyPrices(property: Property, supabaseClient: any, syncA
 
     const oid = property.hotres_id
     const apiUser = 'admin@twojepokoje.com.pl'
-    const apiPass = 'Admin123@@'
+    const apiPass = 'Stinson@12121'
 
     // Get units for this property
     const { data: units } = await supabaseClient
