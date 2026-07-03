@@ -42,18 +42,22 @@ function parseFloatOrNull(value: any): number | null {
   return Number.isNaN(n) ? null : n
 }
 
-// Hotres' api_prices caps a single response at 5000 rows ({"result":"error",
-// "message":"The maximum result rows is 5000"} — an HTTP 404, not an empty
-// body). The row count scales with (days in range × units in the property),
-// and how "dense" the rate plan's configured prices are, so a fixed date
-// split (e.g. two ~180-day halves) works for small/sparse properties but
-// fails for larger ones or densely-configured cenniki. Split the full range
-// into chunks sized so days × unitCount stays safely under the cap,
-// regardless of property size or how much data a given rate plan has.
+// Hotres' api_prices has TWO per-request limits, both returned as HTTP 404
+// with a JSON error body rather than an empty result:
+//  1. max 5000 rows per response ("The maximum result rows is 5000") — row
+//     count scales with (days in range × units in the property), so the
+//     row-driven chunk size shrinks as the property grows;
+//  2. max 180 days per request ("The maximum period is 180 days") — a hard
+//     calendar cap that bites SMALL properties, where the row math alone
+//     would happily allow a single chunk spanning the whole year (e.g.
+//     6 units → 500-day chunk → 404 on every sync).
+// Split the full range into chunks that respect whichever limit is tighter.
 function buildDateRangeChunks(startDate: string, endDate: string, unitCount: number): Array<{ from: string; till: string; label: string }> {
   const HOTRES_MAX_ROWS = 5000
-  const SAFETY_FACTOR = 0.6 // stay well under the hard cap
-  const maxDaysPerChunk = Math.max(7, Math.floor((HOTRES_MAX_ROWS * SAFETY_FACTOR) / Math.max(unitCount, 1)))
+  const HOTRES_MAX_PERIOD_DAYS = 180
+  const SAFETY_FACTOR = 0.6 // stay well under the hard caps
+  const rowDrivenDays = Math.floor((HOTRES_MAX_ROWS * SAFETY_FACTOR) / Math.max(unitCount, 1))
+  const maxDaysPerChunk = Math.max(7, Math.min(rowDrivenDays, HOTRES_MAX_PERIOD_DAYS))
 
   const chunks: Array<{ from: string; till: string; label: string }> = []
   let cursor = new Date(`${startDate}T00:00:00Z`)
