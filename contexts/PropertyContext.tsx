@@ -606,7 +606,13 @@ export const PropertyProvider: React.FC<{ children: ReactNode }> = ({ children }
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error("Brak autoryzacji");
 
-    await supabase.from('properties').update({ availability_sync_in_progress: true }).eq('id', propertyId);
+    // Record when the lock was taken — if this tab dies mid-sync, the backend
+    // treats a lock older than a few minutes as abandoned instead of skipping
+    // the property forever.
+    await supabase.from('properties').update({
+      availability_sync_in_progress: true,
+      availability_sync_started_at: new Date().toISOString()
+    }).eq('id', propertyId);
 
     try {
         const apiUser = "admin@twojepokoje.com.pl";

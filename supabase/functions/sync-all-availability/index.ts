@@ -290,20 +290,42 @@ async function syncPropertyAvailability(
   // other is actively writing to — a race that manufactures false "changes"
   // (and the notification/push floods that come with them). Skip this run
   // if the previous one hasn't cleared the flag yet.
+  //
+  // BUT the lock must not outlive the run that took it: if that run dies
+  // without clearing the flag (edge function killed, browser closed during a
+  // manual sync), an unconditional skip excludes the property from every
+  // subsequent run forever. An honest sync finishes well under the edge
+  // function's execution limit, so a lock older than STALE_LOCK_MINUTES (or
+  // one with no start timestamp, i.e. taken by pre-timestamp code) is
+  // abandoned — take it over instead of skipping.
+  const STALE_LOCK_MINUTES = 10
+
   const { data: currentState } = await supabaseClient
     .from('properties')
-    .select('availability_sync_in_progress')
+    .select('availability_sync_in_progress, availability_sync_started_at')
     .eq('id', property.id)
     .single()
 
   if (currentState?.availability_sync_in_progress) {
-    console.log(`  ⏭️  Skipping ${property.name} — previous availability sync still in progress`)
-    return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
+    const startedAtMs = currentState.availability_sync_started_at
+      ? new Date(currentState.availability_sync_started_at).getTime()
+      : NaN
+    const lockAgeMinutes = (Date.now() - startedAtMs) / 60000
+
+    if (lockAgeMinutes < STALE_LOCK_MINUTES) {
+      console.log(`  ⏭️  Skipping ${property.name} — previous availability sync still in progress (started ${lockAgeMinutes.toFixed(1)} min ago)`)
+      return { recordsCompared: 0, changesDetected: 0, notificationsSent: 0 }
+    }
+
+    console.warn(`  🔓 ${property.name}: sync lock is stale (${Number.isNaN(startedAtMs) ? 'no start timestamp' : `${lockAgeMinutes.toFixed(0)} min old`}) — taking it over`)
   }
 
   await supabaseClient
     .from('properties')
-    .update({ availability_sync_in_progress: true })
+    .update({
+      availability_sync_in_progress: true,
+      availability_sync_started_at: new Date().toISOString()
+    })
     .eq('id', property.id)
 
   try {
