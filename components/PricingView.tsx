@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { RefreshCw, Trash2, Edit2, Loader2, ImageOff, ChevronDown, Save, X, Utensils, CalendarClock } from 'lucide-react';
+import { RefreshCw, Trash2, Edit2, Loader2, ImageOff, ChevronDown, Save, X, Utensils, CalendarClock, DownloadCloud } from 'lucide-react';
 import { RatePlan, Property, Unit } from '../types';
 import { useProperties } from '../contexts/PropertyContext';
 import { RatePlanMatrixModal } from './RatePlanMatrixModal';
@@ -30,6 +30,7 @@ export const PricingView: React.FC = () => {
   const [property, setProperty] = useState<Property | null>(null);
   const [loading, setLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isSyncingAllRatePlans, setIsSyncingAllRatePlans] = useState(false);
   const [expandedRateId, setExpandedRateId] = useState<string | null>(null);
   const [editingRateId, setEditingRateId] = useState<string | null>(null);
   const [editFormData, setEditFormData] = useState<Partial<RatePlan>>({});
@@ -193,6 +194,64 @@ export const PricingView: React.FC = () => {
     }
   }
 
+  // Force-syncs price data (MIN/CTA/CTD) for EVERY configured cennik on this
+  // property, ignoring the normal "selected + default only" logic used by
+  // the automatic sync. That normal logic leaves non-selected cenniki with
+  // no price data at all — fine for the automatic hourly refresh, but it
+  // means the "Cenniki na kalendarzu" picker shows those plans greyed out
+  // (no data) even when someone actually wants to pick one. This is the
+  // manual escape hatch to backfill all of them at once. Gated behind a
+  // password because it's expensive (one Hotres request per rate plan per
+  // date chunk) and shouldn't be clicked by accident.
+  const handleSyncAllRatePlans = async () => {
+    if (!property?.hotres_id) {
+      alert("Nie znaleziono OID w ustawieniach obiektu. Przejdź do 'Ustawień' i wpisz ID Hotres.");
+      return;
+    }
+
+    const password = window.prompt('Ta akcja pobierze WSZYSTKIE cenniki dla tego obiektu z Hotresa (kosztowne — po jednym zapytaniu na cennik). Podaj hasło, aby kontynuować:');
+    if (password === null) return;
+    if (password !== 'TAKCHCETOZMIENIC') {
+      alert('Błędne hasło.');
+      return;
+    }
+
+    setIsSyncingAllRatePlans(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert('Musisz być zalogowany aby wykonać synchronizację');
+        return;
+      }
+
+      const response = await fetch(
+        'https://uopdrhgkephrtpdxicts.supabase.co/functions/v1/sync-single-property',
+        {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ property_id: property.id, prices_only: true, all_rate_plans: true })
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Sync failed: ${response.status} ${errorText}`);
+      }
+
+      const result = await response.json();
+      const pricesMsg = result.prices?.success
+        ? `✓ ${result.prices.recordsCompared} rekordów cenowych`
+        : `✗ ${result.prices?.error || 'nieznany błąd'}`;
+      alert(`Pobrano WSZYSTKIE cenniki dla: ${property.name}\n\n${pricesMsg}`);
+
+      await fetchUnitsAndAvailablePlans();
+    } catch (err: any) {
+      alert(`Błąd synchronizacji wszystkich cenników: ${err.message}`);
+    } finally {
+      setIsSyncingAllRatePlans(false);
+    }
+  };
+
   const handleDelete = async (e: React.MouseEvent, rateId: string) => {
     e.stopPropagation();
     if (!confirm('Usunąć cennik?')) return;
@@ -302,6 +361,17 @@ export const PricingView: React.FC = () => {
             >
               {isSyncing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
               {isSyncing ? 'Pobieram...' : 'Pobierz z Hotres'}
+            </button>
+          )}
+          {isImported && (
+            <button
+              onClick={handleSyncAllRatePlans}
+              disabled={isSyncingAllRatePlans}
+              title="Wymusza pobranie cen dla WSZYSTKICH cenników tego obiektu (nie tylko wybranych) — wymaga hasła"
+              className="bg-amber-700 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-wait text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-colors text-sm"
+            >
+              {isSyncingAllRatePlans ? <Loader2 size={16} className="animate-spin" /> : <DownloadCloud size={16} />}
+              {isSyncingAllRatePlans ? 'Pobieram wszystkie...' : 'Pobierz WSZYSTKIE cenniki'}
             </button>
           )}
         </div>

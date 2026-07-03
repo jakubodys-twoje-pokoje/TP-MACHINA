@@ -211,8 +211,13 @@ async function syncPropertyAvailability(property: Property, supabaseClient: any)
   }
 }
 
-// Sync prices/restrictions for a single property
-async function syncPropertyPrices(property: Property, supabaseClient: any): Promise<{ recordsCompared: number; changesDetected: number }> {
+// Sync prices/restrictions for a single property.
+// syncAllRatePlans=true ignores unit selection entirely and pulls every
+// configured rate plan — the "Pobierz WSZYSTKIE cenniki" escape hatch, for
+// when the selected+default logic has left cenniki nobody explicitly chose
+// (but that someone wants to browse/pick from) without any price data,
+// showing up greyed-out in the rate plan picker.
+async function syncPropertyPrices(property: Property, supabaseClient: any, syncAllRatePlans: boolean = false): Promise<{ recordsCompared: number; changesDetected: number }> {
   try {
     console.log(`💰 Syncing prices for ${property.name} (${property.id})...`)
 
@@ -254,22 +259,29 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
       return { recordsCompared: 0, changesDetected: 0 }
     }
 
-    const defaultRatePlanId = allPropertyRatePlans[0].id
-    const hasUnselectedUnits = units.some((u: any) => !u.selected_rate_plan_id)
+    let allRatePlans: any[]
 
-    const ratePlanIdsToSync = new Set(
-      units.map((u: any) => u.selected_rate_plan_id).filter((id: any) => id)
-    )
-    if (hasUnselectedUnits) ratePlanIdsToSync.add(defaultRatePlanId)
+    if (syncAllRatePlans) {
+      allRatePlans = allPropertyRatePlans
+      console.log(`  📋 Rate plans for ${property.name}: ${allRatePlans.length} of ${allPropertyRatePlans.length} configured — FORCED sync of ALL rate plans`)
+    } else {
+      const defaultRatePlanId = allPropertyRatePlans[0].id
+      const hasUnselectedUnits = units.some((u: any) => !u.selected_rate_plan_id)
 
-    const allRatePlans = allPropertyRatePlans.filter((rp: any) => ratePlanIdsToSync.has(rp.id))
+      const ratePlanIdsToSync = new Set(
+        units.map((u: any) => u.selected_rate_plan_id).filter((id: any) => id)
+      )
+      if (hasUnselectedUnits) ratePlanIdsToSync.add(defaultRatePlanId)
 
-    if (allRatePlans.length === 0) {
-      console.log(`  ⚠️ No matching rate plans with external_id for ${property.name}`)
-      return { recordsCompared: 0, changesDetected: 0 }
+      allRatePlans = allPropertyRatePlans.filter((rp: any) => ratePlanIdsToSync.has(rp.id))
+
+      if (allRatePlans.length === 0) {
+        console.log(`  ⚠️ No matching rate plans with external_id for ${property.name}`)
+        return { recordsCompared: 0, changesDetected: 0 }
+      }
+
+      console.log(`  📋 Rate plans for ${property.name}: ${allRatePlans.length} of ${allPropertyRatePlans.length} configured — syncing explicitly-selected + default fallback (${hasUnselectedUnits ? 'has unselected units' : 'all units have a selection'})`)
     }
-
-    console.log(`  📋 Rate plans for ${property.name}: ${allRatePlans.length} of ${allPropertyRatePlans.length} configured — syncing explicitly-selected + default fallback (${hasUnselectedUnits ? 'has unselected units' : 'all units have a selection'})`)
     console.log(`  📋 Plans:`, allRatePlans.map(rp => `"${rp.name}" (ext_id: ${rp.external_id})`))
 
     // Fetch prices from Hotres — split into chunks sized to stay under its
@@ -432,11 +444,11 @@ async function syncPropertyPrices(property: Property, supabaseClient: any): Prom
   }
 }
 
-async function buildSyncResult(property: Property, supabaseClient: any, pricesOnly: boolean) {
+async function buildSyncResult(property: Property, supabaseClient: any, pricesOnly: boolean, allRatePlans: boolean = false) {
   // Sync prices always; skip availability when prices_only flag is set
   const [availResult, pricesResult] = await Promise.allSettled([
     pricesOnly ? Promise.resolve({ recordsCompared: 0, changesDetected: 0 }) : syncPropertyAvailability(property, supabaseClient),
-    syncPropertyPrices(property, supabaseClient)
+    syncPropertyPrices(property, supabaseClient, allRatePlans)
   ])
 
   return {
@@ -475,7 +487,7 @@ Deno.serve(async (req) => {
     // hotres_id, one at a time is still too slow for many properties, so
     // they're run concurrently via Promise.allSettled.
     const body = await req.json().catch(() => ({}))
-    const { property_id, prices_only } = body
+    const { property_id, prices_only, all_rate_plans } = body
 
     // Create Supabase client with service role
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
@@ -509,7 +521,7 @@ Deno.serve(async (req) => {
 
       console.log(`📋 Property found: ${property.name} (hotres_id: ${property.hotres_id})`)
 
-      const response = await buildSyncResult(property, supabaseClient, !!prices_only)
+      const response = await buildSyncResult(property, supabaseClient, !!prices_only, !!all_rate_plans)
 
       console.log(`✅ Sync complete for ${property.name}`)
       console.log(`📊 Results:`, JSON.stringify(response, null, 2))
@@ -520,10 +532,12 @@ Deno.serve(async (req) => {
       )
     }
 
-    // No property_id → scheduled full-portfolio run (the 10-minute cron calls
-    // this with { "prices_only": true } so it doesn't duplicate the
-    // separate 3-minute availability-only cron).
-    console.log(`🚀 Starting sync for ALL properties (prices_only=${!!prices_only})`)
+    // No property_id → full-portfolio run. The 10-minute cron calls this with
+    // { "prices_only": true } (selected + default rate plans only). The
+    // manual "Pobierz WSZYSTKIE cenniki" button calls it with
+    // { "prices_only": true, "all_rate_plans": true } to force-sync every
+    // configured rate plan for every property, regardless of selection.
+    console.log(`🚀 Starting sync for ALL properties (prices_only=${!!prices_only}, all_rate_plans=${!!all_rate_plans})`)
 
     const { data: properties, error: propertiesError } = await supabaseClient
       .from('properties')
@@ -542,7 +556,7 @@ Deno.serve(async (req) => {
     }
 
     const results = await Promise.allSettled(
-      properties.map((property: Property) => buildSyncResult(property, supabaseClient, !!prices_only))
+      properties.map((property: Property) => buildSyncResult(property, supabaseClient, !!prices_only, !!all_rate_plans))
     )
 
     const propertyResults = results.map((result, i) =>
