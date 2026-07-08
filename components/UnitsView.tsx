@@ -64,6 +64,7 @@ export const UnitsView: React.FC = () => {
       .from('units')
       .select('*')
       .eq('property_id', propertyId)
+      .order('display_order', { ascending: true, nullsFirst: false })
       .order('name');
     
     if (!error) setUnits(data || []);

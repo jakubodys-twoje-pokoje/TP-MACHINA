@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useMemo, useCallback, memo } from '
 import { useParams, useLocation } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { Property, Availability, Unit, Notification, Price, AISuggestion, RatePlan, GapRestriction } from '../types';
-import { Loader2, ChevronLeft, ChevronRight, RefreshCw, Sparkles, ArrowRight, CheckSquare, Square, X, Save, Shield } from 'lucide-react';
+import { Loader2, ChevronLeft, ChevronRight, RefreshCw, Sparkles, ArrowRight, CheckSquare, Square, X, Save, Shield, GripVertical, ArrowUp, ArrowDown } from 'lucide-react';
 import { RatePlanMatrixModal } from './RatePlanMatrixModal';
 import { recomputeGapRestrictions, fetchGapRestrictions as fetchGapRestrictionsSvc, saveGapOverride, pushGapRestrictionsToHotres, getPropertyGapMode, setPropertyGapMode, savePushRatePlanIds, getPropertyGapConfig, savePropertyGapConfig, DEFAULT_GAP_CONFIG } from '../services/gapProtection';
 import type { GapMode, GapConfigValues } from '../types';
@@ -95,6 +95,13 @@ export const CalendarView: React.FC = () => {
   const [allPricesRaw, setAllPricesRaw] = useState<Price[]>([]);
   // Rate plan matrix modal (per-unit rate plan selection)
   const [showRatePlanMatrix, setShowRatePlanMatrix] = useState(false);
+
+  // Manual unit ordering (platform-wide): draft list edited in the modal,
+  // persisted to units.display_order on save
+  const [showUnitOrderModal, setShowUnitOrderModal] = useState(false);
+  const [unitOrderDraft, setUnitOrderDraft] = useState<Unit[]>([]);
+  const [savingUnitOrder, setSavingUnitOrder] = useState(false);
+  const dragUnitIndexRef = useRef<number | null>(null);
   // Which rate plans to push to Hotres (push/override/restore)
   const [selectedPushRatePlanIds, setSelectedPushRatePlanIds] = useState<Set<string>>(new Set());
   const pushSelectionInitialized = useRef(false);
@@ -296,7 +303,12 @@ export const CalendarView: React.FC = () => {
     const { data: propData } = await supabase.from('properties').select('*').eq('id', propertyId).single();
     setProperty(propData);
 
-    const { data: unitsData } = await supabase.from('units').select('*').eq('property_id', propertyId).order('name');
+    const { data: unitsData } = await supabase
+      .from('units')
+      .select('*')
+      .eq('property_id', propertyId)
+      .order('display_order', { ascending: true, nullsFirst: false })
+      .order('name');
     if (unitsData) {
       setUnits(unitsData);
       const map = new Map<string, string>();
@@ -2651,8 +2663,54 @@ export const CalendarView: React.FC = () => {
         <span className="text-xs sm:text-sm">🗓 Cenniki na kalendarzu</span>
       </button>
       <p className="text-[10px] text-slate-500 text-center mt-1">Wybierz, który cennik wyświetla się dla każdej kwatery</p>
+      <button
+        onClick={openUnitOrderModal}
+        className="w-full mt-2 bg-slate-700 hover:bg-slate-600 text-slate-200 font-semibold py-2 px-3 sm:py-2.5 sm:px-5 rounded-lg shadow-md transition-all flex items-center justify-center gap-2"
+      >
+        <GripVertical size={14} />
+        <span className="text-xs sm:text-sm">Kolejność kwater</span>
+      </button>
+      <p className="text-[10px] text-slate-500 text-center mt-1">Ułóż ręcznie kolejność kwater na kalendarzu (wspólna dla wszystkich)</p>
     </div>
   );
+
+  // --- Manual unit ordering ---
+  const openUnitOrderModal = () => {
+    setUnitOrderDraft([...units]);
+    setShowUnitOrderModal(true);
+  };
+
+  const moveUnitInDraft = (from: number, to: number) => {
+    setUnitOrderDraft(prev => {
+      if (from === to || to < 0 || to >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  };
+
+  const saveUnitOrder = async () => {
+    setSavingUnitOrder(true);
+    try {
+      const results = await Promise.all(
+        unitOrderDraft.map((u, idx) =>
+          supabase.from('units').update({ display_order: idx }).eq('id', u.id)
+        )
+      );
+      const failed = results.find(r => r.error);
+      if (failed?.error) throw new Error(failed.error.message);
+
+      // Reorder local state in place — the calendar and the rate plan matrix
+      // both render from `units`, so they pick the new order up immediately
+      setUnits(unitOrderDraft.map((u, idx) => ({ ...u, display_order: idx })));
+      setShowUnitOrderModal(false);
+    } catch (err: any) {
+      alert(`Błąd zapisu kolejności: ${err.message}`);
+    } finally {
+      setSavingUnitOrder(false);
+    }
+  };
 
   // Single collapsible panel gathering the heavier actions so the calendar stays clean.
   // Includes: rate plan matrix, compare, verify quarter, push (with rate-plan selector),
@@ -3763,6 +3821,93 @@ export const CalendarView: React.FC = () => {
           onBulkSelect={handleBulkRatePlanChange}
           onClose={() => setShowRatePlanMatrix(false)}
         />
+      )}
+
+      {/* Unit ordering modal — drag rows (or use arrows) and save; the order
+          is stored in units.display_order, shared by all users and reused by
+          every units listing (calendar, rate plan matrix, pricing) */}
+      {showUnitOrderModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-3 sm:p-4">
+          <div className="bg-slate-800 rounded-xl shadow-2xl w-full max-w-md max-h-[85vh] flex flex-col border border-indigo-600">
+            <div className="flex items-center justify-between p-4 border-b border-slate-700">
+              <div>
+                <h2 className="text-lg font-bold text-indigo-400 flex items-center gap-2">
+                  <GripVertical size={18} /> Kolejność kwater
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">Przeciągnij wiersze lub użyj strzałek. Kolejność jest wspólna dla wszystkich użytkowników.</p>
+              </div>
+              <button onClick={() => setShowUnitOrderModal(false)} className="text-slate-400 hover:text-white p-1" aria-label="Zamknij">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3 space-y-1">
+              {unitOrderDraft.map((unit, idx) => (
+                <div
+                  key={unit.id}
+                  draggable
+                  onDragStart={() => { dragUnitIndexRef.current = idx; }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    const from = dragUnitIndexRef.current;
+                    if (from !== null && from !== idx) {
+                      moveUnitInDraft(from, idx);
+                      dragUnitIndexRef.current = idx;
+                    }
+                  }}
+                  onDragEnd={() => { dragUnitIndexRef.current = null; }}
+                  className="flex items-center gap-2 bg-slate-900/70 border border-slate-700 rounded-lg px-2 py-1.5 cursor-grab active:cursor-grabbing"
+                >
+                  <GripVertical size={14} className="text-slate-500 flex-shrink-0" />
+                  <span className="text-slate-500 text-[10px] font-mono w-5 text-right flex-shrink-0">{idx + 1}.</span>
+                  <span className="text-white text-xs sm:text-sm truncate flex-1" title={unit.name}>{unit.name}</span>
+                  <button
+                    onClick={() => moveUnitInDraft(idx, idx - 1)}
+                    disabled={idx === 0}
+                    className="text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed p-1"
+                    title="W górę"
+                  >
+                    <ArrowUp size={14} />
+                  </button>
+                  <button
+                    onClick={() => moveUnitInDraft(idx, idx + 1)}
+                    disabled={idx === unitOrderDraft.length - 1}
+                    className="text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed p-1"
+                    title="W dół"
+                  >
+                    <ArrowDown size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="p-4 border-t border-slate-700 flex items-center justify-between gap-3">
+              <button
+                onClick={() => setUnitOrderDraft(prev => [...prev].sort((a, b) => a.name.localeCompare(b.name, 'pl')))}
+                className="text-xs text-slate-400 hover:text-slate-200 underline underline-offset-2"
+                title="Przywróć porządek alfabetyczny (zapisze się dopiero po kliknięciu Zapisz)"
+              >
+                Sortuj alfabetycznie
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowUnitOrderModal(false)}
+                  className="bg-slate-600 hover:bg-slate-700 text-white font-semibold py-2 px-4 rounded-lg transition text-sm"
+                >
+                  Anuluj
+                </button>
+                <button
+                  onClick={saveUnitOrder}
+                  disabled={savingUnitOrder}
+                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-wait text-white font-bold py-2 px-4 rounded-lg transition text-sm flex items-center gap-2"
+                >
+                  {savingUnitOrder && <Loader2 size={14} className="animate-spin" />}
+                  Zapisz kolejność
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Bulk Edit Modal */}

@@ -61,6 +61,7 @@ export const PricingView: React.FC = () => {
       .from('units')
       .select('*')
       .eq('property_id', propertyId)
+      .order('display_order', { ascending: true, nullsFirst: false })
       .order('name');
     if (!unitsData) return;
     setUnits(unitsData);
