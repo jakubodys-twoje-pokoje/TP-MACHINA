@@ -238,7 +238,13 @@ export const CalendarView: React.FC = () => {
     savePushRatePlanIds(propertyId, ids).catch(() => {});
   }, [selectedPushRatePlanIds, propertyId]);
 
-  // Auto-scroll to position selected date at 1/3 of viewport
+  // Auto-scroll: on the FIRST load of the full view, center today's column in
+  // the viewport (selectedDate defaults to today, so it sits at index 30).
+  // Every later reposition — date navigation, and any entry via a
+  // notification (which sets location.state.selectedDate) — keeps the
+  // original behavior of placing the selected date at 1/3 of the viewport.
+  const hasCenteredOnTodayRef = useRef(false);
+
   useEffect(() => {
     if (scrollContainerRef.current && !loadingAvailability) {
       // Cell width varies by screen: 70px mobile (increased for better readability), 75px tablet, 90px desktop
@@ -248,9 +254,21 @@ export const CalendarView: React.FC = () => {
 
       // Selected date is 30 days from start (1 month before)
       const daysBeforeSelected = 30;
-      // Scroll so selected date appears at 1/3 of container width
       const containerWidth = scrollContainerRef.current.clientWidth;
-      const scrollPosition = (daysBeforeSelected * dayWidth) - (containerWidth / 3);
+
+      const cameFromNotification = Boolean((location.state as any)?.selectedDate);
+      let scrollPosition: number;
+
+      if (!hasCenteredOnTodayRef.current && !cameFromNotification) {
+        // Center of today's column, accounting for the sticky room-name
+        // column that covers the left edge of the viewport
+        const stickyColWidth = isMobile ? 70 : isTablet ? 80 : 120;
+        scrollPosition = (daysBeforeSelected * dayWidth) + (dayWidth / 2) - (containerWidth - stickyColWidth) / 2;
+      } else {
+        // Scroll so selected date appears at 1/3 of container width
+        scrollPosition = (daysBeforeSelected * dayWidth) - (containerWidth / 3);
+      }
+      hasCenteredOnTodayRef.current = true;
 
       scrollContainerRef.current.scrollLeft = Math.max(0, scrollPosition);
       if (topScrollRef.current) {
