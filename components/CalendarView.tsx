@@ -133,10 +133,19 @@ export const CalendarView: React.FC = () => {
   // Bulk edit mode state
   const [bulkEditMode, setBulkEditMode] = useState(false);
   const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set()); // Set of "unitId_date" keys
-  const [showBulkEditModal, setShowBulkEditModal] = useState(false);
   const [bulkEditCTA, setBulkEditCTA] = useState<number | null>(null);
   const [bulkEditCTD, setBulkEditCTD] = useState<number | null>(null);
   const [bulkEditMIN, setBulkEditMIN] = useState<number | null>(null);
+
+  // Excel-like drag selection ("celownik") in bulk edit mode: the anchor of
+  // the rectangle being dragged (row/col indices into filteredUnits/dates;
+  // mode 'row'/'col' spans the full axis, for drags started on the unit-name
+  // column or the day header), the selection that existed before the drag
+  // started (kept when Ctrl/Cmd is held, otherwise replaced), and whether the
+  // pointer actually moved (distinguishes click from drag on mouseup).
+  const dragAnchorRef = useRef<{ row: number; col: number; mode: 'cell' | 'row' | 'col' } | null>(null);
+  const dragBaseRef = useRef<Set<string>>(new Set());
+  const didDragRef = useRef(false);
 
   // Hotres sync counter - separate for each property
   const getHotresSyncCount = (propertyId: string | null): { count: number; hourStart: number } => {
@@ -656,40 +665,96 @@ export const CalendarView: React.FC = () => {
     if (bulkEditMode) {
       // Exiting bulk edit mode - clear selection
       setSelectedCells(new Set());
+    } else {
+      // Entering: start with clean panel inputs
+      setBulkEditCTA(null);
+      setBulkEditCTD(null);
+      setBulkEditMIN(null);
     }
     setBulkEditMode(!bulkEditMode);
   };
 
-  const handleCellClick = useCallback((unitId: string, dateStr: string) => {
-    if (bulkEditMode) {
-      const key = `${unitId}_${dateStr}`;
-      setSelectedCells(prev => {
-        const newSet = new Set(prev);
-        if (newSet.has(key)) {
-          newSet.delete(key);
-        } else {
-          newSet.add(key);
-        }
-        return newSet;
-      });
-    } else {
-      // Normal mode - open modal (existing behavior)
-      // This will be handled in the cell onClick
-    }
-  }, [bulkEditMode]);
+  // Build the rectangle spanned by the drag anchor and the current cell, on
+  // top of the pre-drag selection. 'row' mode spans all dates, 'col' mode all
+  // units — that's the Excel-style "select whole rows/columns" behavior when
+  // the drag starts on the unit-name column or the day header.
+  const buildRectSelection = (anchor: { row: number; col: number; mode: 'cell' | 'row' | 'col' }, row: number, col: number): Set<string> => {
+    const rowFrom = anchor.mode === 'col' ? 0 : Math.min(anchor.row, row);
+    const rowTo = anchor.mode === 'col' ? filteredUnits.length - 1 : Math.max(anchor.row, row);
+    const colFrom = anchor.mode === 'row' ? 0 : Math.min(anchor.col, col);
+    const colTo = anchor.mode === 'row' ? dates.length - 1 : Math.max(anchor.col, col);
 
-  const handleOpenBulkEditModal = () => {
-    if (selectedCells.size === 0) {
-      alert('Zaznacz przynajmniej jedną komórkę');
-      return;
+    const next = new Set<string>();
+    dragBaseRef.current.forEach(key => next.add(key));
+    for (let r = rowFrom; r <= rowTo; r++) {
+      const unit = filteredUnits[r];
+      if (!unit) continue;
+      for (let c = colFrom; c <= colTo; c++) {
+        const date = dates[c];
+        if (!date) continue;
+        next.add(`${unit.id}_${toLocalDateStr(date)}`);
+      }
     }
-
-    // Reset bulk edit values
-    setBulkEditCTA(null);
-    setBulkEditCTD(null);
-    setBulkEditMIN(null);
-    setShowBulkEditModal(true);
+    return next;
   };
+
+  const startDragSelection = (e: React.MouseEvent, row: number, col: number, mode: 'cell' | 'row' | 'col') => {
+    if (!bulkEditMode || e.button !== 0) return;
+    e.preventDefault(); // no text selection while sweeping
+    dragAnchorRef.current = { row, col, mode };
+    const base = new Set<string>();
+    if (e.ctrlKey || e.metaKey) selectedCells.forEach(key => base.add(key));
+    dragBaseRef.current = base;
+    didDragRef.current = false;
+    setSelectedCells(buildRectSelection(dragAnchorRef.current, row, col));
+  };
+
+  const extendDragSelection = (row: number, col: number) => {
+    const anchor = dragAnchorRef.current;
+    if (!anchor) return;
+    if (row !== anchor.row || col !== anchor.col) didDragRef.current = true;
+    setSelectedCells(buildRectSelection(anchor, row, col));
+  };
+
+  // Finish the drag on mouseup anywhere (the pointer often leaves the table
+  // mid-drag). A Ctrl+click without movement on an already-selected cell
+  // toggles it OFF, Excel-style. Escape clears the whole selection.
+  useEffect(() => {
+    if (!bulkEditMode) return;
+
+    const onMouseUp = () => {
+      const anchor = dragAnchorRef.current;
+      if (anchor && !didDragRef.current && anchor.mode === 'cell') {
+        const unit = filteredUnits[anchor.row];
+        const date = dates[anchor.col];
+        if (unit && date) {
+          const key = `${unit.id}_${toLocalDateStr(date)}`;
+          if (dragBaseRef.current.has(key)) {
+            setSelectedCells(prev => {
+              const next = new Set(prev);
+              next.delete(key);
+              return next;
+            });
+          }
+        }
+      }
+      dragAnchorRef.current = null;
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        dragAnchorRef.current = null;
+        setSelectedCells(new Set());
+      }
+    };
+
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [bulkEditMode, filteredUnits, dates]);
 
   const handleApplyBulkEdit = () => {
     // Apply changes to all selected cells
@@ -716,10 +781,12 @@ export const CalendarView: React.FC = () => {
       });
     });
 
-    // Close modal and exit bulk edit mode
-    setShowBulkEditModal(false);
-    setBulkEditMode(false);
+    // Keep bulk edit mode active (the user often edits several ranges in a
+    // row) — just clear the selection and the panel inputs.
     setSelectedCells(new Set());
+    setBulkEditCTA(null);
+    setBulkEditCTD(null);
+    setBulkEditMIN(null);
 
     alert(`✓ Zastosowano zmiany dla ${selectedCells.size} komórek`);
   };
@@ -2297,9 +2364,10 @@ export const CalendarView: React.FC = () => {
         }));
       });
       await Promise.all(ops);
-      setShowBulkEditModal(false);
-      setBulkEditMode(false);
       setSelectedCells(new Set());
+      setBulkEditCTA(null);
+      setBulkEditCTD(null);
+      setBulkEditMIN(null);
       alert(`✓ Zapisano ${ops.length} override(ów) ochrony luk.\nKliknij „Przelicz ochronę luk", aby je zastosować.`);
     } catch (err: any) {
       alert(`✗ Błąd zapisu override: ${err.message}`);
@@ -2965,16 +3033,6 @@ export const CalendarView: React.FC = () => {
                   )}
                 </button>
 
-                {bulkEditMode && selectedCells.size > 0 && (
-                  <button
-                    onClick={handleOpenBulkEditModal}
-                    className="flex items-center gap-1 sm:gap-2 px-2 py-1 sm:px-3 sm:py-2 text-[10px] sm:text-xs bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors font-medium whitespace-nowrap"
-                  >
-                    <Save size={12} className="sm:w-3.5 sm:h-3.5" />
-                    <span className="hidden sm:inline">Zmień wiele ({selectedCells.size})</span>
-                    <span className="sm:hidden">✓ ({selectedCells.size})</span>
-                  </button>
-                )}
               </>
             )}
 
@@ -3220,9 +3278,12 @@ export const CalendarView: React.FC = () => {
                   return (
                     <th
                       key={idx}
+                      onMouseDown={(e) => bulkEditMode && startDragSelection(e, 0, idx, 'col')}
+                      onMouseEnter={() => bulkEditMode && extendDragSelection(0, idx)}
+                      title={bulkEditMode ? 'Zaznacz całą kolumnę (przeciągnij po nagłówkach, by zaznaczyć kilka dni)' : undefined}
                       className={`p-1 sm:p-2 text-center text-[10px] sm:text-xs font-medium border-r border-border min-w-[70px] sm:min-w-[75px] lg:min-w-[90px] ${
                         isToday ? 'bg-indigo-600/50 ring-2 ring-inset ring-indigo-400' : isSelected ? 'bg-indigo-900/50' : 'bg-surface'
-                      }`}
+                      } ${bulkEditMode ? 'cursor-crosshair select-none hover:bg-indigo-800/40' : ''}`}
                     >
                       {isToday ? (
                         <>
@@ -3249,11 +3310,16 @@ export const CalendarView: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredUnits.map((unit) => {
+              {filteredUnits.map((unit, unitIdx) => {
                 const unitAvailability = allUnitsAvailability.get(unit.id);
                 return (
                   <tr key={unit.id} className="border-t border-border hover:bg-slate-800/30">
-                    <td className="sticky left-0 z-20 bg-surface p-1 sm:p-2 border-r border-border min-w-[70px] sm:min-w-[80px] lg:min-w-[120px]">
+                    <td
+                      onMouseDown={(e) => bulkEditMode && startDragSelection(e, unitIdx, 0, 'row')}
+                      onMouseEnter={() => bulkEditMode && extendDragSelection(unitIdx, 0)}
+                      title={bulkEditMode ? 'Zaznacz cały wiersz (przeciągnij po nazwach, by zaznaczyć kilka kwater)' : undefined}
+                      className={`sticky left-0 z-20 bg-surface p-1 sm:p-2 border-r border-border min-w-[70px] sm:min-w-[80px] lg:min-w-[120px] ${bulkEditMode ? 'cursor-crosshair select-none hover:bg-indigo-800/40' : ''}`}
+                    >
                       <div className="text-[10px] sm:text-[11px] lg:text-xs font-medium text-white">{unit.name}</div>
                     </td>
                     {dates.map((date, idx) => {
@@ -3291,10 +3357,11 @@ export const CalendarView: React.FC = () => {
                       return (
                         <td
                           key={idx}
-                          onClick={() => bulkEditMode && handleCellClick(unit.id, dateStr)}
+                          onMouseDown={(e) => bulkEditMode && startDragSelection(e, unitIdx, idx, 'cell')}
+                          onMouseEnter={() => bulkEditMode && extendDragSelection(unitIdx, idx)}
                           className={`p-1 border-r border-border ${
                             isToday ? 'bg-indigo-500/25 shadow-[inset_2px_0_0_0_rgba(129,140,248,0.6),inset_-2px_0_0_0_rgba(129,140,248,0.6)]' : isSelected ? 'bg-indigo-900/30' : ''
-                          } ${notifBoxClass} ${bulkEditMode ? 'cursor-pointer hover:bg-indigo-800/40' : ''} ${
+                          } ${notifBoxClass} ${bulkEditMode ? 'cursor-crosshair select-none hover:bg-indigo-800/40' : ''} ${
                             isCellSelected ? 'bg-indigo-600/50 ring-2 ring-indigo-400 ring-inset' : ''
                           }`}
                         >
@@ -3361,7 +3428,7 @@ export const CalendarView: React.FC = () => {
                               : '';
 
                             return (
-                              <div className={`flex flex-col gap-1 rounded ${gapBorder}`} title={gapR ? gapTitle : undefined}>
+                              <div className={`flex flex-col gap-1 rounded ${gapBorder} ${bulkEditMode ? 'pointer-events-none' : ''}`} title={gapR ? gapTitle : undefined}>
                                 {/* Colored cell with 0/1 */}
                                 <div
                                   className={cellClass}
@@ -3765,84 +3832,84 @@ export const CalendarView: React.FC = () => {
         />
       )}
 
-      {/* Bulk Edit Modal */}
-      {showBulkEditModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-800 rounded-xl shadow-2xl max-w-md w-full p-6 border border-green-600">
-            <h2 className="text-xl font-bold text-green-500 mb-4 flex items-center gap-2">
-              ✏️ Zmień wiele ({selectedCells.size} komórek)
+      {/* Bulk edit side panel — appears as soon as a range is selected in
+          bulk edit mode; edits apply to the whole selection. Fixed to the
+          right edge so it never covers the sticky room-name column, above
+          the table but below modals (z-40 vs z-50). */}
+      {bulkEditMode && selectedCells.size > 0 && (
+        <div className="fixed right-2 sm:right-4 bottom-2 sm:bottom-4 z-40 w-64 sm:w-72 max-w-[calc(100vw-1rem)] bg-slate-800 rounded-xl shadow-2xl border border-green-600 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold text-green-500 flex items-center gap-1.5">
+              ✏️ Zaznaczono {selectedCells.size} {selectedCells.size === 1 ? 'komórkę' : 'komórek'}
             </h2>
-
-            <p className="text-sm text-slate-300 mb-6">
-              Ustaw wartości dla zaznaczonych komórek. <br />
-              Pola pozostawione puste nie zostaną zmienione.
-            </p>
-
-            <div className="space-y-4 mb-6">
-              {/* CTA */}
-              <div className="space-y-2">
-                <label className="block text-xs font-bold text-slate-400 uppercase">CTA (Check-in Advance)</label>
-                <select
-                  value={bulkEditCTA === null ? '' : bulkEditCTA}
-                  onChange={(e) => setBulkEditCTA(e.target.value === '' ? null : parseInt(e.target.value))}
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg p-2.5 text-white text-sm outline-none focus:ring-2 focus:ring-green-500"
-                >
-                  <option value="">— Bez zmian —</option>
-                  <option value="0">0 (Wyłączone)</option>
-                  <option value="1">1 (Włączone)</option>
-                </select>
-              </div>
-
-              {/* CTD */}
-              <div className="space-y-2">
-                <label className="block text-xs font-bold text-slate-400 uppercase">CTD (Check-out Departure)</label>
-                <select
-                  value={bulkEditCTD === null ? '' : bulkEditCTD}
-                  onChange={(e) => setBulkEditCTD(e.target.value === '' ? null : parseInt(e.target.value))}
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg p-2.5 text-white text-sm outline-none focus:ring-2 focus:ring-green-500"
-                >
-                  <option value="">— Bez zmian —</option>
-                  <option value="0">0 (Wyłączone)</option>
-                  <option value="1">1 (Włączone)</option>
-                </select>
-              </div>
-
-              {/* MIN */}
-              <div className="space-y-2">
-                <label className="block text-xs font-bold text-slate-400 uppercase">MIN nocy</label>
-                <input
-                  type="number"
-                  min="0"
-                  placeholder="Bez zmian"
-                  value={bulkEditMIN === null ? '' : bulkEditMIN}
-                  onChange={(e) => setBulkEditMIN(e.target.value === '' ? null : parseInt(e.target.value))}
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg p-2.5 text-white text-sm outline-none focus:ring-2 focus:ring-green-500"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowBulkEditModal(false)}
-                className="flex-1 bg-slate-600 hover:bg-slate-700 text-white font-semibold py-2.5 px-4 rounded-lg transition"
-              >
-                Anuluj
-              </button>
-              <button
-                onClick={handleApplyBulkEdit}
-                className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 px-4 rounded-lg transition"
-              >
-                Zastosuj zmiany
-              </button>
-            </div>
             <button
-              onClick={handleSaveGapOverrides}
-              className="w-full mt-3 bg-purple-700 hover:bg-purple-600 text-white font-semibold py-2.5 px-4 rounded-lg transition flex items-center justify-center gap-2"
-              title="Zapisz zaznaczone wartości jako trwały override ochrony luk (przeżywa przeliczenie)"
+              onClick={() => setSelectedCells(new Set())}
+              className="text-slate-400 hover:text-white p-0.5"
+              title="Wyczyść zaznaczenie (Esc)"
             >
-              <Shield size={16} /> Zapisz jako override ochrony luk
+              <X size={16} />
             </button>
           </div>
+
+          <p className="text-[11px] text-slate-400">
+            Pola pozostawione puste nie zostaną zmienione.
+          </p>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">CTA</label>
+              <select
+                value={bulkEditCTA === null ? '' : bulkEditCTA}
+                onChange={(e) => setBulkEditCTA(e.target.value === '' ? null : parseInt(e.target.value))}
+                className="w-full bg-slate-700 border border-slate-600 rounded-lg p-2 text-white text-xs outline-none focus:ring-2 focus:ring-green-500"
+              >
+                <option value="">— Bez zmian —</option>
+                <option value="0">0 (Wył.)</option>
+                <option value="1">1 (Wł.)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">CTD</label>
+              <select
+                value={bulkEditCTD === null ? '' : bulkEditCTD}
+                onChange={(e) => setBulkEditCTD(e.target.value === '' ? null : parseInt(e.target.value))}
+                className="w-full bg-slate-700 border border-slate-600 rounded-lg p-2 text-white text-xs outline-none focus:ring-2 focus:ring-green-500"
+              >
+                <option value="">— Bez zmian —</option>
+                <option value="0">0 (Wył.)</option>
+                <option value="1">1 (Wł.)</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">MIN nocy</label>
+            <input
+              type="number"
+              min="0"
+              placeholder="Bez zmian"
+              value={bulkEditMIN === null ? '' : bulkEditMIN}
+              onChange={(e) => setBulkEditMIN(e.target.value === '' ? null : parseInt(e.target.value))}
+              className="w-full bg-slate-700 border border-slate-600 rounded-lg p-2 text-white text-xs outline-none focus:ring-2 focus:ring-green-500"
+            />
+          </div>
+
+          <button
+            onClick={handleApplyBulkEdit}
+            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-3 rounded-lg transition text-sm"
+          >
+            Zastosuj zmiany
+          </button>
+          <button
+            onClick={handleSaveGapOverrides}
+            className="w-full bg-purple-700 hover:bg-purple-600 text-white font-semibold py-2 px-3 rounded-lg transition flex items-center justify-center gap-1.5 text-xs"
+            title="Zapisz zaznaczone wartości jako trwały override ochrony luk (przeżywa przeliczenie)"
+          >
+            <Shield size={14} /> Zapisz jako override ochrony luk
+          </button>
+          <p className="text-[10px] text-slate-500 leading-snug">
+            Przeciągnij po komórkach, nazwach kwater lub nagłówkach dat, aby zaznaczyć zakres. Ctrl+przeciąganie dodaje do zaznaczenia.
+          </p>
         </div>
       )}
 
