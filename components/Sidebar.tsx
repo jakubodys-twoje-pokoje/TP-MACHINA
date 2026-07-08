@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2, AlertTriangle, Bell, Kanban, BadgePercent, FileText, CheckCircle, XCircle, Trash2, ChevronDown, ChevronRight, Calculator } from 'lucide-react';
+import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2, AlertTriangle, Bell, Kanban, BadgePercent, FileText, CheckCircle, XCircle, Trash2, ChevronDown, ChevronRight, Calculator, Search } from 'lucide-react';
 import { useProperties } from '../contexts/PropertyContext';
 
 interface SidebarProps {
@@ -19,6 +19,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
   const [showLogsModal, setShowLogsModal] = useState(false);
   const [expandedLogs, setExpandedLogs] = useState<Set<number>>(new Set());
   const [expandedProperties, setExpandedProperties] = useState<Set<string>>(new Set());
+  const [propertySearch, setPropertySearch] = useState('');
+
+  // Accent-insensitive match so "sloneczny" finds "Słoneczny" (ł needs its own
+  // mapping — NFD doesn't decompose it)
+  const normalizeForSearch = (s: string) =>
+    s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ł/g, 'l');
+
+  const filteredProperties = propertySearch.trim()
+    ? properties.filter(p => normalizeForSearch(p.name).includes(normalizeForSearch(propertySearch.trim())))
+    : properties;
 
   const pathParts = location.pathname.split('/');
   const activePropertyId = pathParts[1] === 'property' ? pathParts[2] : null;
@@ -110,6 +120,25 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
         </NavLink>
 
         <div className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider px-2 sm:px-3 mb-2">Twoje Obiekty</div>
+        <div className="relative px-1 sm:px-2 mb-2">
+          <Search size={13} className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+          <input
+            type="text"
+            value={propertySearch}
+            onChange={e => setPropertySearch(e.target.value)}
+            placeholder="Szukaj obiektu..."
+            className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-7 sm:pl-8 pr-7 py-1.5 sm:py-2 text-xs sm:text-sm text-white placeholder:text-slate-500 outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          {propertySearch && (
+            <button
+              onClick={() => setPropertySearch('')}
+              className="absolute right-2.5 sm:right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+              title="Wyczyść"
+            >
+              <X size={13} />
+            </button>
+          )}
+        </div>
         {loading ? (
           <div className="flex justify-center py-4"><Loader2 className="animate-spin text-slate-500" /></div>
         ) : error ? (
@@ -119,8 +148,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
            </div>
         ) : properties.length === 0 ? (
           <div className="text-slate-500 text-xs sm:text-sm text-center py-4 italic">Brak obiektów</div>
+        ) : filteredProperties.length === 0 ? (
+          <div className="text-slate-500 text-xs sm:text-sm text-center py-4 italic">Brak obiektów dla „{propertySearch.trim()}"</div>
         ) : (
-          properties.map(property => {
+          filteredProperties.map(property => {
             const propertyUnreadCount = unreadCountByProperty.get(property.id) || 0;
             const isExpanded = expandedProperties.has(property.id);
 

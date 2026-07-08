@@ -3203,15 +3203,28 @@ export const CalendarView: React.FC = () => {
                     <th
                       key={idx}
                       className={`p-1 sm:p-2 text-center text-[10px] sm:text-xs font-medium border-r border-border min-w-[70px] sm:min-w-[75px] lg:min-w-[90px] ${
-                        isSelected ? 'bg-indigo-900/50' : isToday ? 'bg-indigo-900/30' : 'bg-surface'
+                        isToday ? 'bg-indigo-600/50 ring-2 ring-inset ring-indigo-400' : isSelected ? 'bg-indigo-900/50' : 'bg-surface'
                       }`}
                     >
-                      <div className="text-slate-300 font-bold text-[10px] sm:text-xs">
-                        {date.getDate()}
-                      </div>
-                      <div className="text-slate-500 text-[8px] sm:text-[10px]">
-                        {date.toLocaleDateString('pl-PL', { weekday: 'short' })}
-                      </div>
+                      {isToday ? (
+                        <>
+                          <div className="mx-auto w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-indigo-500 text-white font-bold text-[10px] sm:text-xs flex items-center justify-center shadow-lg shadow-indigo-900/50">
+                            {date.getDate()}
+                          </div>
+                          <div className="text-indigo-200 font-bold uppercase text-[8px] sm:text-[10px] tracking-wide">
+                            dziś
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-slate-300 font-bold text-[10px] sm:text-xs">
+                            {date.getDate()}
+                          </div>
+                          <div className="text-slate-500 text-[8px] sm:text-[10px]">
+                            {date.toLocaleDateString('pl-PL', { weekday: 'short' })}
+                          </div>
+                        </>
+                      )}
                     </th>
                   );
                 })}
@@ -3262,7 +3275,7 @@ export const CalendarView: React.FC = () => {
                           key={idx}
                           onClick={() => bulkEditMode && handleCellClick(unit.id, dateStr)}
                           className={`p-1 border-r border-border ${
-                            isSelected ? 'bg-indigo-900/30' : isToday ? 'bg-indigo-900/20' : ''
+                            isToday ? 'bg-indigo-500/25 shadow-[inset_2px_0_0_0_rgba(129,140,248,0.6),inset_-2px_0_0_0_rgba(129,140,248,0.6)]' : isSelected ? 'bg-indigo-900/30' : ''
                           } ${notifBoxClass} ${bulkEditMode ? 'cursor-pointer hover:bg-indigo-800/40' : ''} ${
                             isCellSelected ? 'bg-indigo-600/50 ring-2 ring-indigo-400 ring-inset' : ''
                           }`}
