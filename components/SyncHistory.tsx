@@ -173,7 +173,14 @@ export const SyncHistory: React.FC = () => {
       const result = await response.json();
       console.log('Manual sync result:', result);
 
-      alert(`Synchronizacja zakończona!\n✓ Sukces: ${result.success_count}\n✗ Błędy: ${result.error_count}`);
+      // The backend skips entirely during the nightly downtime (01:00-04:00
+      // Polish time) and returns { skipped: true } without any counters —
+      // blindly printing success_count would show "undefined".
+      if (result.skipped) {
+        alert('Synchronizacja pominięta — nocna przerwa 01:00–04:00 czasu polskiego.\nSpróbuj ponownie po 04:00.');
+      } else {
+        alert(`Synchronizacja zakończona!\n✓ Sukces: ${result.success_count ?? 0}\n✗ Błędy: ${result.error_count ?? 0}`);
+      }
 
       // Refresh history after sync
       await fetchSyncHistory();
