@@ -96,6 +96,140 @@ function buildDateRangeChunks(startDate: string, endDate: string, unitCount: num
   return chunks
 }
 
+// Read availability rows page by page with a stable sort. Same reasoning as in
+// sync-all-availability: an unpaginated select silently stops at the project
+// row cap, which for a large property means the "before" snapshot covers only
+// a slice of it and every change outside that slice is invisible.
+async function fetchAvailabilityRows(
+  supabaseClient: any,
+  unitIds: string[],
+  fromDate: string,
+  tillDate: string,
+  columns: string
+): Promise<any[]> {
+  const UNIT_CHUNK = 50
+  const PAGE_SIZE = 10000
+  const rows: any[] = []
+
+  for (let i = 0; i < unitIds.length; i += UNIT_CHUNK) {
+    const chunk = unitIds.slice(i, i + UNIT_CHUNK)
+    let offset = 0
+
+    while (true) {
+      const { data, error } = await supabaseClient
+        .from('availability')
+        .select(columns)
+        .in('unit_id', chunk)
+        .gte('date', fromDate)
+        .lte('date', tillDate)
+        .order('unit_id', { ascending: true })
+        .order('date', { ascending: true })
+        .range(offset, offset + PAGE_SIZE - 1)
+
+      if (error) throw error
+      if (!data || data.length === 0) break
+
+      rows.push(...data)
+      offset += data.length
+    }
+  }
+
+  return rows
+}
+
+// Turn per-date status changes into notifications, collapsing runs of
+// consecutive days into one entry per unit. Mirrors sync-all-availability so a
+// manual sync produces exactly the same notifications the automatic one would.
+async function createAvailabilityNotifications(
+  supabaseClient: any,
+  changesByUnit: Map<string, Array<{ date: string; toStatus: string }>>
+): Promise<number> {
+  let notificationsSent = 0
+
+  for (const [unitId, changes] of changesByUnit.entries()) {
+    const { data: unitData } = await supabaseClient
+      .from('units')
+      .select('id, name, property_id, properties(id, name)')
+      .eq('id', unitId)
+      .single()
+
+    if (!unitData || !unitData.properties) continue
+
+    const sortedChanges = [...changes].sort((a, b) => a.date.localeCompare(b.date))
+    const ranges: Array<{ startDate: string; endDate: string; changeType: 'available' | 'blocked' }> = []
+    let currentRange: { startDate: string; endDate: string; changeType: 'available' | 'blocked' } | null = null
+
+    for (const change of sortedChanges) {
+      const changeType: 'available' | 'blocked' = change.toStatus === 'booked' ? 'blocked' : 'available'
+
+      if (!currentRange) {
+        currentRange = { startDate: change.date, endDate: change.date, changeType }
+        continue
+      }
+
+      const dayDiff =
+        (new Date(change.date).getTime() - new Date(currentRange.endDate).getTime()) / (1000 * 60 * 60 * 24)
+
+      if (dayDiff === 1 && changeType === currentRange.changeType) {
+        currentRange.endDate = change.date
+      } else {
+        ranges.push({ ...currentRange })
+        currentRange = { startDate: change.date, endDate: change.date, changeType }
+      }
+    }
+
+    if (currentRange) ranges.push(currentRange)
+
+    for (const range of ranges) {
+      const notificationData = {
+        property_id: unitData.properties.id,
+        unit_id: unitData.id,
+        property_name: unitData.properties.name,
+        unit_name: unitData.name,
+        change_type: range.changeType,
+        start_date: range.startDate,
+        end_date: range.endDate,
+        is_read: false
+      }
+
+      const { error: notifError } = await supabaseClient.from('notifications').insert(notificationData)
+
+      if (notifError) {
+        console.error('Failed to create notification:', notifError)
+        continue
+      }
+
+      try {
+        const pushResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/send-push-notification`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+          },
+          body: JSON.stringify({
+            property_id: notificationData.property_id,
+            unit_id: notificationData.unit_id,
+            property_name: notificationData.property_name,
+            unit_name: notificationData.unit_name,
+            change_type: notificationData.change_type,
+            start_date: notificationData.start_date,
+            end_date: notificationData.end_date
+          })
+        })
+
+        if (pushResponse.ok) {
+          notificationsSent++
+          console.log(`📲 Push sent for ${notificationData.property_name} - ${notificationData.unit_name}`)
+        }
+      } catch (pushError) {
+        console.error('Failed to send push notification:', pushError)
+      }
+    }
+  }
+
+  return notificationsSent
+}
+
 async function fetchFromHotres(targetUrl: string): Promise<string> {
   const res = await fetch(targetUrl, {
     method: 'GET',
@@ -173,6 +307,19 @@ async function syncPropertyAvailability(property: Property, supabaseClient: any)
       }
     })
 
+    // BEFORE snapshot. A manual sync used to overwrite availability blind, so a
+    // booking that arrived between two automatic runs was written here without
+    // ever being compared — and the next automatic run then saw no difference.
+    // That is how a real change could vanish without a single notification.
+    const unitIds = units.map((u: any) => u.id)
+    const beforeSnapshot = new Map<string, string>()
+    const existingRows = await fetchAvailabilityRows(
+      supabaseClient, unitIds, fromDate, tillDate, 'unit_id, date, status'
+    )
+    existingRows.forEach((row: any) => {
+      beforeSnapshot.set(`${row.unit_id}_${normalizeDate(row.date)}`, row.status)
+    })
+
     // Process availability data
     const rowsToUpsert: any[] = []
 
@@ -187,13 +334,14 @@ async function syncPropertyAvailability(property: Property, supabaseClient: any)
           const date = normalizeDate(d.date)
           const available = d.available
 
-          // MUST match sync-all-availability, which writes 'booked' for a
-          // taken date. This wrote 'blocked' instead — a value the calendar
-          // does not recognise as taken (it tests status === 'booked'), so
-          // every booked date silently rendered as free after a manual sync,
-          // and the next automatic run saw 'blocked' -> 'booked' as a change
-          // for every one of them.
-          const isBooked = !(available === 1 || available === '1' || available === true)
+          // MUST match sync-all-availability byte for byte, both in the value
+          // written ('booked', not 'blocked' — the calendar tests for
+          // status === 'booked') and in the threshold: taken means Hotres
+          // reports zero free, not "anything other than exactly one". With
+          // "!== 1" a unit with 2 free rooms was booked here and available
+          // there, so the two syncs kept overwriting each other and every run
+          // reported a change that was nothing but the disagreement itself.
+          const isBooked = (available === 0 || available === '0' || available === false)
           const status = isBooked ? 'booked' : 'available'
 
           rowsToUpsert.push({
@@ -218,17 +366,49 @@ async function syncPropertyAvailability(property: Property, supabaseClient: any)
           .from('availability')
           .upsert(batch, { onConflict: 'unit_id,date' })
 
+        // Throw rather than log: the change detection below notifies about
+        // what this loop was supposed to persist, so a swallowed write error
+        // would announce a booking that never made it into the database.
         if (error) {
           console.error(`  ❌ Error upserting availability batch ${i}-${i + batch.length}:`, error)
-        } else {
-          upsertedCount += batch.length
+          throw error
         }
+
+        upsertedCount += batch.length
       }
 
       console.log(`  ✅ Synced ${upsertedCount} availability records for ${property.name}`)
     }
 
-    return { recordsCompared: rowsToUpsert.length, changesDetected: 0 }
+    // Detect changes against the BEFORE snapshot. Only keys that existed
+    // beforehand count — a date appearing for the first time (the sync window
+    // rolling forward) is new data, not a status change.
+    const changesByUnit = new Map<string, Array<{ date: string; toStatus: string }>>()
+    let changesDetected = 0
+
+    for (const row of rowsToUpsert) {
+      const previousStatus = beforeSnapshot.get(`${row.unit_id}_${row.date}`)
+      if (previousStatus === undefined || previousStatus === row.status) continue
+
+      changesDetected++
+      const forUnit = changesByUnit.get(row.unit_id)
+      if (forUnit) {
+        forUnit.push({ date: row.date, toStatus: row.status })
+      } else {
+        changesByUnit.set(row.unit_id, [{ date: row.date, toStatus: row.status }])
+      }
+    }
+
+    console.log(
+      `  🔍 ${property.name}: snapshot przed=${beforeSnapshot.size}, zapisano=${rowsToUpsert.length}, zmiany=${changesDetected}`
+    )
+
+    if (changesDetected > 0) {
+      const notificationsSent = await createAvailabilityNotifications(supabaseClient, changesByUnit)
+      console.log(`  🔔 ${property.name}: ${changesDetected} zmian, ${notificationsSent} powiadomień push`)
+    }
+
+    return { recordsCompared: rowsToUpsert.length, changesDetected }
   } catch (error: any) {
     console.error(`❌ Error syncing availability for ${property.name}:`, error.message)
     console.error(`❌ Stack trace:`, error.stack)
