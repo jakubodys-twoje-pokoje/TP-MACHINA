@@ -12,7 +12,20 @@ interface Property {
   sync_from_date: string | null
 }
 
-const DEFAULT_SYNC_FROM_DATE = '2026-01-20'
+// Hotres rejects ranges anchored in the past by returning an EMPTY JSON
+// array rather than an error, so a start date that drifts further into the
+// past every day eventually makes every sync return nothing while still
+// looking successful. Always start from today (Warsaw, so the window never
+// starts "yesterday" for Hotres around midnight); properties whose
+// sync_from_date lies in the FUTURE still honour it.
+function warsawToday(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Warsaw' })
+}
+
+function resolveSyncStart(syncFromDate: string | null): string {
+  const today = warsawToday()
+  return syncFromDate && syncFromDate > today ? syncFromDate : today
+}
 
 function normalizeDate(dateInput: string): string {
   try {
@@ -127,11 +140,9 @@ async function syncPropertyAvailability(property: Property, supabaseClient: any)
 
     console.log(`  📊 Found ${units.length} units for ${property.name}`)
 
-    // Date range: property.sync_from_date overrides the default start for
-    // properties that only started operating later — requesting data from
-    // before a property/rate plan existed can trip confusing errors from
-    // the Hotres API instead of just coming back empty.
-    const fromDate = property.sync_from_date || DEFAULT_SYNC_FROM_DATE
+    // Date range: from today onward (see resolveSyncStart). A future
+    // sync_from_date still wins, for properties that only open later.
+    const fromDate = resolveSyncStart(property.sync_from_date)
     const tillDate = '2026-12-31'
 
     const availUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`
@@ -142,8 +153,14 @@ async function syncPropertyAvailability(property: Property, supabaseClient: any)
     const availData = JSON.parse(rawResponse)
 
     if (!Array.isArray(availData)) {
-      console.log(`  ❌ Invalid availability response (not an array)`)
-      return { recordsCompared: 0, changesDetected: 0 }
+      throw new Error('Nieprawidłowa odpowiedź availability z Hotresa (nie jest tablicą)')
+    }
+
+    // Empty array = Hotres rejected the range; never a valid answer for a
+    // property that has units. Throw so the caller reports a failure instead
+    // of a success with 0 records.
+    if (availData.length === 0) {
+      throw new Error(`Hotres zwrócił pustą odpowiedź dla zakresu ${fromDate}..${tillDate} (odrzucony zakres dat?)`)
     }
 
     console.log(`  ✓ Hotres API returned ${availData.length} units`)
@@ -211,7 +228,9 @@ async function syncPropertyAvailability(property: Property, supabaseClient: any)
   } catch (error: any) {
     console.error(`❌ Error syncing availability for ${property.name}:`, error.message)
     console.error(`❌ Stack trace:`, error.stack)
-    return { recordsCompared: 0, changesDetected: 0 }
+    // Re-throw: swallowing this reported a successful sync of 0 records,
+    // which is exactly how the Hotres empty-response failure stayed hidden.
+    throw error
   }
 }
 
@@ -291,7 +310,7 @@ async function syncPropertyPrices(property: Property, supabaseClient: any, syncA
     // Fetch prices from Hotres — split into chunks sized to stay under its
     // 5000-row-per-request cap (see buildDateRangeChunks for why a fixed
     // two-range split isn't reliable across property sizes / rate plan density).
-    const priceFromDate = property.sync_from_date || DEFAULT_SYNC_FROM_DATE
+    const priceFromDate = resolveSyncStart(property.sync_from_date)
     const dateRanges = buildDateRangeChunks(priceFromDate, '2026-12-31', units.length)
     console.log(`  🔪 Split ${priceFromDate}..2026-12-31 into ${dateRanges.length} chunk(s) for ${units.length} units`)
 

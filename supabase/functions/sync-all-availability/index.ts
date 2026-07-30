@@ -52,6 +52,44 @@ function isWithinAllowedHours(): boolean {
   return isAllowed
 }
 
+// Hotres' api_availability answers a range it doesn't accept with an EMPTY
+// JSON array instead of an error: ranges that start in the past and/or span
+// more than its per-request period limit. The old fixed window
+// (2026-01-20..2026-12-31) drifted one day further into the past every day
+// until Hotres started replying []. That empty array parsed fine, matched no
+// units, upserted nothing — and still wrote a "success" row with 0 records,
+// so availability froze with no error visible anywhere.
+// Ask only from today onward, split into chunks under the period limit.
+const HOTRES_MAX_PERIOD_DAYS = 175
+
+// Today in Warsaw (not UTC), so the window never starts "yesterday" for
+// Hotres around midnight. 'en-CA' formats as YYYY-MM-DD.
+function warsawToday(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Warsaw' })
+}
+
+function buildDateChunks(startDate: string, endDate: string, maxDays = HOTRES_MAX_PERIOD_DAYS): Array<{ from: string; till: string }> {
+  const chunks: Array<{ from: string; till: string }> = []
+  let cursor = new Date(`${startDate}T00:00:00Z`)
+  const end = new Date(`${endDate}T00:00:00Z`)
+
+  while (cursor <= end) {
+    const chunkEnd = new Date(cursor)
+    chunkEnd.setUTCDate(chunkEnd.getUTCDate() + maxDays - 1)
+    if (chunkEnd > end) chunkEnd.setTime(end.getTime())
+
+    chunks.push({
+      from: cursor.toISOString().split('T')[0],
+      till: chunkEnd.toISOString().split('T')[0],
+    })
+
+    cursor = new Date(chunkEnd)
+    cursor.setUTCDate(cursor.getUTCDate() + 1)
+  }
+
+  return chunks
+}
+
 function normalizeDate(dateInput: string): string {
   try {
     if (!dateInput) return ''
@@ -357,35 +395,58 @@ async function syncPropertyAvailability(
     console.log(`📋 ${property.name}: ${units.length} units in database`)
     console.log(`📋 Unit mapping keys:`, Array.from(unitMap.keys()).join(', '))
 
-    // Fetch availability from Hotres API (always full range)
-    const fromDate = '2026-01-20'
+    // Fetch availability from Hotres \u2014 from today onward, chunked (see
+    // buildDateChunks for why the old fixed past-anchored range stopped
+    // returning anything)
+    const fromDate = warsawToday()
     const tillDate = '2026-12-31'
+    const chunks = buildDateChunks(fromDate, tillDate)
 
-    const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${fromDate}&till=${tillDate}`
-    const rawResponse = await fetchFromHotres(targetUrl)
-
-    // Parse response
-    const jsonText = rawResponse.trim().replace(/^\uFEFF/, '')
-    let jsonData: any
-    try {
-      jsonData = JSON.parse(jsonText)
-      if (typeof jsonData === 'string') jsonData = JSON.parse(jsonData)
-    } catch (e) {
-      throw new Error("Failed to parse Hotres response")
+    // Guards against the hardcoded end-of-2026 horizon silently expiring:
+    // once today passes tillDate there is nothing left to ask for.
+    if (chunks.length === 0) {
+      throw new Error(`Pusty zakres synchronizacji (${fromDate}..${tillDate}) — zaktualizuj datę końcową w kodzie`)
     }
 
-    if (jsonData && jsonData.result === 'error') {
-      throw new Error(`Hotres API Error: ${jsonData.message}`)
-    }
+    const itemsToProcess: any[] = []
 
-    // Extract items to process
-    let itemsToProcess: any[] = []
-    if (Array.isArray(jsonData)) {
-      itemsToProcess = jsonData
-    } else if (typeof jsonData === 'object' && jsonData !== null) {
-      const vals = Object.values(jsonData)
-      const foundArr = vals.find(v => Array.isArray(v) && v.length > 0 && ((v as any)[0].type_id || (v as any)[0].dates))
-      itemsToProcess = foundArr ? (foundArr as any[]) : vals.filter((v: any) => v && (v.type_id || v.dates))
+    for (const chunk of chunks) {
+      const targetUrl = `https://panel.hotres.pl/api_availability?user=${encodeURIComponent(apiUser)}&password=${encodeURIComponent(apiPass)}&oid=${oid}&from=${chunk.from}&till=${chunk.till}`
+      const rawResponse = await fetchFromHotres(targetUrl)
+
+      // Parse response
+      const jsonText = rawResponse.trim().replace(/^\uFEFF/, '')
+      let jsonData: any
+      try {
+        jsonData = JSON.parse(jsonText)
+        if (typeof jsonData === 'string') jsonData = JSON.parse(jsonData)
+      } catch (e) {
+        throw new Error(`Failed to parse Hotres response (${chunk.from}..${chunk.till})`)
+      }
+
+      if (jsonData && jsonData.result === 'error') {
+        throw new Error(`Hotres API Error: ${jsonData.message}`)
+      }
+
+      // Extract items from this chunk
+      let chunkItems: any[] = []
+      if (Array.isArray(jsonData)) {
+        chunkItems = jsonData
+      } else if (typeof jsonData === 'object' && jsonData !== null) {
+        const vals = Object.values(jsonData)
+        const foundArr = vals.find(v => Array.isArray(v) && v.length > 0 && ((v as any)[0].type_id || (v as any)[0].dates))
+        chunkItems = foundArr ? (foundArr as any[]) : vals.filter((v: any) => v && (v.type_id || v.dates))
+      }
+
+      // An empty response is never a legitimate answer for a property that
+      // has units \u2014 it's how Hotres rejects a range. Fail loudly so it lands
+      // in sync_history as an error instead of passing as "0 records synced".
+      if (chunkItems.length === 0) {
+        throw new Error(`Hotres zwr\u00F3ci\u0142 pust\u0105 odpowied\u017A dla zakresu ${chunk.from}..${chunk.till} (odrzucony zakres dat?)`)
+      }
+
+      console.log(`  \uD83D\uDCE5 ${property.name} ${chunk.from}..${chunk.till}: ${chunkItems.length} pozycji`)
+      itemsToProcess.push(...chunkItems)
     }
 
     // Fetch existing availability records (BEFORE snapshot for this property)
@@ -491,6 +552,13 @@ async function syncPropertyAvailability(
         console.log(`💡 Possible matches (with normalization):`)
         suggestions.forEach(s => console.log(s))
       }
+    }
+
+    // Nothing to write for a property that has units means every returned
+    // type_id failed to match (see the unmatched diagnostics above) — another
+    // way this sync used to "succeed" while writing nothing at all.
+    if (rowsToUpsert.length === 0) {
+      throw new Error(`Brak rekordów do zapisu — żaden type_id z Hotresa nie pasuje do kwater w bazie (API: ${Array.from(apiTypeIds).join(', ') || 'brak'})`)
     }
 
     // Upsert in batches
