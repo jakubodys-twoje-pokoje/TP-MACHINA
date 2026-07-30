@@ -187,10 +187,14 @@ async function syncPropertyAvailability(property: Property, supabaseClient: any)
           const date = normalizeDate(d.date)
           const available = d.available
 
-          let status = 'blocked'
-          if (available === 1 || available === '1' || available === true) {
-            status = 'available'
-          }
+          // MUST match sync-all-availability, which writes 'booked' for a
+          // taken date. This wrote 'blocked' instead — a value the calendar
+          // does not recognise as taken (it tests status === 'booked'), so
+          // every booked date silently rendered as free after a manual sync,
+          // and the next automatic run saw 'blocked' -> 'booked' as a change
+          // for every one of them.
+          const isBooked = !(available === 1 || available === '1' || available === true)
+          const status = isBooked ? 'booked' : 'available'
 
           rowsToUpsert.push({
             unit_id: unit.id,
