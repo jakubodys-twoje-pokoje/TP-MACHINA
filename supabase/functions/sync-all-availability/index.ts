@@ -90,6 +90,60 @@ function buildDateChunks(startDate: string, endDate: string, maxDays = HOTRES_MA
   return chunks
 }
 
+// Read availability rows for a set of units over a date range.
+// A plain query here was quietly wrong in two ways, and together they made
+// change detection (and therefore notifications) fail on any sizeable
+// property:
+//  1. Supabase caps rows per response (project-level "Max Rows"). A big
+//     property is far past it — 78 units x 155 days is ~12k rows — so the
+//     before/after snapshots only ever contained the first slice of the
+//     property and every change outside that slice was invisible.
+//  2. Without an explicit ORDER BY, Postgres is free to return rows in a
+//     different order per query — especially right after a bulk upsert
+//     rewrites them. So the "before" and "after" slices could cover
+//     different subsets of rows, which both hides real changes and can
+//     invent phantom ones.
+// Page through with a stable sort, chunking unit ids to keep URLs short.
+async function fetchAvailabilityRows(
+  supabaseClient: any,
+  unitIds: string[],
+  fromDate: string,
+  tillDate: string,
+  columns: string
+): Promise<any[]> {
+  const UNIT_CHUNK = 50
+  const PAGE_SIZE = 1000
+  const rows: any[] = []
+
+  for (let i = 0; i < unitIds.length; i += UNIT_CHUNK) {
+    const chunk = unitIds.slice(i, i + UNIT_CHUNK)
+    let offset = 0
+
+    while (true) {
+      const { data, error } = await supabaseClient
+        .from('availability')
+        .select(columns)
+        .in('unit_id', chunk)
+        .gte('date', fromDate)
+        .lte('date', tillDate)
+        .order('unit_id', { ascending: true })
+        .order('date', { ascending: true })
+        .range(offset, offset + PAGE_SIZE - 1)
+
+      if (error) throw error
+      if (!data || data.length === 0) break
+
+      rows.push(...data)
+      // Advance by what actually arrived: the project row cap can be lower
+      // than PAGE_SIZE, and treating a short page as the last one would
+      // truncate exactly the large properties this is meant to fix.
+      offset += data.length
+    }
+  }
+
+  return rows
+}
+
 function normalizeDate(dateInput: string): string {
   try {
     if (!dateInput) return ''
@@ -451,16 +505,13 @@ async function syncPropertyAvailability(
 
     // Fetch existing availability records (BEFORE snapshot for this property)
     const unitIds = units.map((u: any) => u.id)
-    const { data: existingRows } = await supabaseClient
-      .from('availability')
-      .select('id, unit_id, date, status, reservation_id')
-      .in('unit_id', unitIds)
-      .gte('date', fromDate)
-      .lte('date', tillDate)
+    const existingRows = await fetchAvailabilityRows(
+      supabaseClient, unitIds, fromDate, tillDate, 'id, unit_id, date, status, reservation_id'
+    )
 
     const dbMap = new Map<string, any>()
     const beforePropertySnapshot = new Map<string, { status: string }>()
-    existingRows?.forEach((row: any) => {
+    existingRows.forEach((row: any) => {
       const key = `${row.unit_id}_${normalizeDate(row.date)}`
       dbMap.set(key, row)
       beforePropertySnapshot.set(key, { status: row.status })
@@ -574,15 +625,12 @@ async function syncPropertyAvailability(
     }
 
     // Take AFTER snapshot for this property to detect changes
-    const { data: afterRows } = await supabaseClient
-      .from('availability')
-      .select('unit_id, date, status')
-      .in('unit_id', unitIds)
-      .gte('date', fromDate)
-      .lte('date', tillDate)
+    const afterRows = await fetchAvailabilityRows(
+      supabaseClient, unitIds, fromDate, tillDate, 'unit_id, date, status'
+    )
 
     const afterPropertySnapshot = new Map<string, { status: string }>()
-    afterRows?.forEach((row: any) => {
+    afterRows.forEach((row: any) => {
       const key = `${row.unit_id}_${normalizeDate(row.date)}`
       afterPropertySnapshot.set(key, { status: row.status })
     })
