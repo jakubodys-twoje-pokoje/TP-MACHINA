@@ -638,6 +638,13 @@ async function syncPropertyAvailability(
       afterPropertySnapshot.set(key, { status: row.status })
     })
 
+    // Change detection only ever fires for keys present in BOTH snapshots, so
+    // log their sizes: a before-snapshot that is empty or much smaller than
+    // the after-snapshot means the comparison silently has nothing to compare
+    // against (rather than "nothing changed"), which looks identical from the
+    // outside — 0 changes, 0 notifications, no error.
+    console.log(`  🔍 ${property.name}: snapshot przed=${beforePropertySnapshot.size}, po=${afterPropertySnapshot.size}, zapisano=${rowsToUpsert.length}`)
+
     // Detect changes by comparing before and after snapshots
     const propertyChanges: Array<{
       unitId: string
