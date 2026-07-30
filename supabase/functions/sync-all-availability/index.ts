@@ -112,7 +112,10 @@ async function fetchAvailabilityRows(
   columns: string
 ): Promise<any[]> {
   const UNIT_CHUNK = 50
-  const PAGE_SIZE = 1000
+  // Large page on purpose: when the project has no row cap this costs one
+  // request per chunk instead of a dozen, and when a cap is in force the
+  // "advance by rows actually returned" loop below still walks the rest.
+  const PAGE_SIZE = 10000
   const rows: any[] = []
 
   for (let i = 0; i < unitIds.length; i += UNIT_CHUNK) {
