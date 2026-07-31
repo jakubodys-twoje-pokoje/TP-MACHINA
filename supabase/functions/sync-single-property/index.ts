@@ -192,10 +192,32 @@ async function createAvailabilityNotifications(
         is_read: false
       }
 
+      // See fix_notification_dedupe.sql: the unique index this replaces had no
+      // time component, so a range was gagged forever after its first
+      // notification. Skip only a repeat from the last hour.
+      const dedupeSince = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+      const { data: recentDuplicate } = await supabaseClient
+        .from('notifications')
+        .select('id')
+        .eq('property_id', notificationData.property_id)
+        .eq('unit_id', notificationData.unit_id)
+        .eq('change_type', notificationData.change_type)
+        .eq('start_date', notificationData.start_date)
+        .eq('end_date', notificationData.end_date)
+        .gte('created_at', dedupeSince)
+        .limit(1)
+
+      if (recentDuplicate && recentDuplicate.length > 0) {
+        console.log(`  ⏭️  Powiadomienie pominięte (duplikat z ostatniej godziny): ${notificationData.unit_name} ${notificationData.start_date}..${notificationData.end_date}`)
+        continue
+      }
+
       const { error: notifError } = await supabaseClient.from('notifications').insert(notificationData)
 
       if (notifError) {
-        console.error('Failed to create notification:', notifError)
+        console.error(
+          `❌ Nie udało się zapisać powiadomienia (${notifError.code || 'brak kodu'}): ${notifError.message} — ${notificationData.property_name} / ${notificationData.unit_name} ${notificationData.start_date}..${notificationData.end_date}`
+        )
         continue
       }
 

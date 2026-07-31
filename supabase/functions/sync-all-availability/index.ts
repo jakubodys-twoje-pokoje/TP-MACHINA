@@ -739,13 +739,38 @@ async function syncPropertyAvailability(
           is_read: false
         }
 
+        // Skip only a genuine repeat from a concurrent or re-run sync, not the
+        // same dates being rebooked later. The unique index this replaces had
+        // no time component, so it silently gagged a range forever after its
+        // first notification (see fix_notification_dedupe.sql).
+        const dedupeSince = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+        const { data: recentDuplicate } = await supabaseClient
+          .from('notifications')
+          .select('id')
+          .eq('property_id', notificationData.property_id)
+          .eq('unit_id', notificationData.unit_id)
+          .eq('change_type', notificationData.change_type)
+          .eq('start_date', notificationData.start_date)
+          .eq('end_date', notificationData.end_date)
+          .gte('created_at', dedupeSince)
+          .limit(1)
+
+        if (recentDuplicate && recentDuplicate.length > 0) {
+          console.log(`  ⏭️  Powiadomienie pominięte (duplikat z ostatniej godziny): ${notificationData.unit_name} ${notificationData.start_date}..${notificationData.end_date}`)
+          continue
+        }
+
         // Insert notification
         const { error: notifError } = await supabaseClient
           .from('notifications')
           .insert(notificationData)
 
         if (notifError) {
-          console.error('Failed to create notification:', notifError)
+          // Loud on purpose: a swallowed insert error means the change was
+          // detected and then lost, which looks identical to "nothing changed".
+          console.error(
+            `❌ Nie udało się zapisać powiadomienia (${notifError.code || 'brak kodu'}): ${notifError.message} — ${notificationData.property_name} / ${notificationData.unit_name} ${notificationData.start_date}..${notificationData.end_date}`
+          )
           continue
         }
 
