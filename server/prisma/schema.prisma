@@ -1,0 +1,620 @@
+// Eksporter 3000 - znormalizowany zrzut STATYCZNYCH danych obiektu z Hotres.
+//
+// Baza jest przystankiem w migracji na własny PMS: wszystko, co Hotres wie
+// o obiekcie, wyląduje tu w typowanych kolumnach zamiast w blobach JSON.
+//
+// Świadomie NIE trzymamy: dostępności, kalendarza cen, blokad, rezerwacji,
+// gości, płatności, faktur i wiadomości - to dane dynamiczne, idą osobno.
+//
+// Świadomie NIE trzymamy też pól `auth` i `apikey` z api_object - to poświadczenia
+// dostępowe, nie dane obiektu.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Obiekt
+// ---------------------------------------------------------------------------
+
+model Property {
+  id  Int    @id @default(autoincrement())
+  /// Identyfikator obiektu w Hotres (oid)
+  oid String @unique
+
+  identifier   String?
+  categoryId   String?
+  type         String?
+  currency     String?
+  defaultLang  String?
+  contractDate DateTime?
+
+  logo   String?
+  photo  String?
+  photoS String?
+
+  googleX Float?
+  googleY Float?
+
+  child1 Boolean?
+  child2 Boolean?
+  child3 Boolean?
+
+  address     String?
+  city        String?
+  zip         String?
+  phone       String?
+  phonePrefix String?
+  phone2      String?
+  phone2Prefix String?
+  email       String?
+  www         String?
+
+  companyName    String?
+  companyNip     String?
+  companyAddress String?
+  companyCity    String?
+  companyZip     String?
+
+  arrivalHour      String?
+  departureHour    String?
+  todayArrivalHour String?
+
+  vatTax     String?
+  vatInvoice Boolean?
+  active     Boolean?
+  test       Boolean?
+  places     Boolean?
+
+  hotresAddDate DateTime?
+
+  firstSeenAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  translations PropertyTranslation[]
+  photos       PropertyPhoto[]
+  params       Param[]
+  facilities   Facility[]
+  roomTypes    RoomType[]
+  rooms        Room[]
+  ratePlans    RatePlan[]
+  addons       Addon[]
+  vouchers     Voucher[]
+  tickets      Ticket[]
+  reviews      Review[]
+  informator   InformatorItem[]
+  users        PropertyUser[]
+  runs         ExportRun[]
+}
+
+model PropertyTranslation {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+  lang       String
+
+  description String?
+  terms       String?
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, lang])
+}
+
+model PropertyPhoto {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+  src        String
+  url        String?
+  position   Int?
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, src])
+}
+
+/// Parametry konfiguracyjne obiektu (api_params, klucze be_*).
+model Param {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+  key        String
+  value      String?
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, key])
+}
+
+/// Słownik udogodnień z api_definitions.
+model Facility {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+  hotresId   String
+  code       String?
+  icon       String?
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, hotresId])
+}
+
+// ---------------------------------------------------------------------------
+// Standardy / typy pokoi
+// ---------------------------------------------------------------------------
+
+model RoomType {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+  /// type_id w Hotres
+  hotresId   String
+
+  single    Int?
+  double    Int?
+  sofa      Int?
+  bunkBed   Int?
+  extraBed  Int?
+  maxAdults Int?
+
+  area        Float?
+  bedroomCnt  Int?
+  bathroomCnt Int?
+  roomsCnt    Int?
+  floor       Int?
+
+  priceFrom Float?
+  category  String?
+  tags      String?
+
+  address String?
+  city    String?
+  zip     String?
+  googleX Float?
+  googleY Float?
+
+  ytUrl  String?
+  photo  String?
+  photoS String?
+
+  translations RoomTypeTranslation[]
+  photos       RoomTypePhoto[]
+  facilities   RoomTypeFacility[]
+  rooms        Room[]
+  addonLinks   AddonRoomType[]
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, hotresId])
+}
+
+model RoomTypeTranslation {
+  id         Int    @id @default(autoincrement())
+  roomTypeId Int
+  lang       String
+
+  title           String?
+  advert          String?
+  description     String?
+  instructions    String?
+  extrainfo       String?
+  promo           String?
+  niceurl         String?
+  metaTitle       String?
+  metaDescription String?
+
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([roomTypeId, lang])
+}
+
+model RoomTypePhoto {
+  id         Int    @id @default(autoincrement())
+  roomTypeId Int
+  src        String
+  url        String?
+  position   Int?
+
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([roomTypeId, src])
+}
+
+/// Rozbicie pola `facilities` ("22,7,73") na relację.
+model RoomTypeFacility {
+  id         Int    @id @default(autoincrement())
+  roomTypeId Int
+  facilityId String
+
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([roomTypeId, facilityId])
+}
+
+// ---------------------------------------------------------------------------
+// Pokoje fizyczne
+// ---------------------------------------------------------------------------
+
+model Room {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+  /// room_id w Hotres
+  hotresId   String
+  /// type_id w Hotres - trzymane osobno, bo pokój bywa wcześniej niż standard
+  typeHotresId String?
+  roomTypeId   Int?
+
+  code     String?
+  single   Int?
+  double   Int?
+  sofa     Int?
+  bunkBed  Int?
+  extraBed Int?
+  state    String?
+
+  priority      Int?
+  priorityAlloc Int?
+
+  custom1 String?
+  custom2 String?
+  custom3 String?
+
+  property Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  roomType RoomType? @relation(fields: [roomTypeId], references: [id], onDelete: SetNull)
+
+  @@unique([propertyId, hotresId])
+}
+
+// ---------------------------------------------------------------------------
+// Plany cenowe (same definicje - BEZ kalendarza cen)
+// ---------------------------------------------------------------------------
+
+model RatePlan {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+  /// rate_id w Hotres
+  hotresId   String
+
+  currency    String?
+  isPackage   Boolean?
+  board       String?
+  minimumStay Int?
+  maximumStay Int?
+  categoryId  String?
+  price       Float?
+  lastPrice   Float?
+  tags        String?
+  photo       String?
+  photoS      String?
+  customUrl   String?
+
+  translations RatePlanTranslation[]
+  photos       RatePlanPhoto[]
+  addonLinks   AddonRatePlan[]
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, hotresId])
+}
+
+model RatePlanTranslation {
+  id         Int    @id @default(autoincrement())
+  ratePlanId Int
+  lang       String
+
+  title           String?
+  advert          String?
+  description     String?
+  niceurl         String?
+  metaTitle       String?
+  metaDescription String?
+
+  ratePlan RatePlan @relation(fields: [ratePlanId], references: [id], onDelete: Cascade)
+
+  @@unique([ratePlanId, lang])
+}
+
+model RatePlanPhoto {
+  id         Int    @id @default(autoincrement())
+  ratePlanId Int
+  src        String
+  url        String?
+  position   Int?
+
+  ratePlan RatePlan @relation(fields: [ratePlanId], references: [id], onDelete: Cascade)
+
+  @@unique([ratePlanId, src])
+}
+
+// ---------------------------------------------------------------------------
+// Dodatki / upselling
+// ---------------------------------------------------------------------------
+
+model Addon {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+  /// addon_id w Hotres
+  hotresId   String
+
+  code     String?
+  mode     String?
+  groupsId String?
+  template String?
+  photo    String?
+
+  price       Float?
+  priceChild1 Float?
+  priceChild2 Float?
+  priceChild3 Float?
+  tax         String?
+  stock       Int?
+
+  included      Boolean?
+  upselling     Boolean?
+  bookingengine Boolean?
+  ondiscount    Boolean?
+  visible       Boolean?
+  active        Boolean?
+
+  minNights  Int?
+  maxNights  Int?
+  minAdults  Int?
+  maxAdults  Int?
+  minAdvance Int?
+  maxAdvance Int?
+
+  dateFrom      DateTime?
+  dateTo        DateTime?
+  arrivalFrom   DateTime?
+  arrivalTo     DateTime?
+  departureFrom DateTime?
+  departureTo   DateTime?
+  excludeFrom   DateTime?
+  excludeTo     DateTime?
+
+  ratePlanLinks AddonRatePlan[]
+  roomTypeLinks AddonRoomType[]
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, hotresId])
+}
+
+/// Rozbicie `rates_ids` na relację. Id z Hotres trzymamy zawsze, relację
+/// dowiązujemy tylko gdy dany cennik faktycznie istnieje w bazie.
+model AddonRatePlan {
+  id             Int    @id @default(autoincrement())
+  addonId        Int
+  rateHotresId   String
+  ratePlanId     Int?
+
+  addon    Addon     @relation(fields: [addonId], references: [id], onDelete: Cascade)
+  ratePlan RatePlan? @relation(fields: [ratePlanId], references: [id], onDelete: SetNull)
+
+  @@unique([addonId, rateHotresId])
+}
+
+/// Rozbicie `rooms_types_ids` na relację.
+model AddonRoomType {
+  id           Int    @id @default(autoincrement())
+  addonId      Int
+  typeHotresId String
+  roomTypeId   Int?
+
+  addon    Addon     @relation(fields: [addonId], references: [id], onDelete: Cascade)
+  roomType RoomType? @relation(fields: [roomTypeId], references: [id], onDelete: SetNull)
+
+  @@unique([addonId, typeHotresId])
+}
+
+// ---------------------------------------------------------------------------
+// Vouchery i bilety
+// ---------------------------------------------------------------------------
+
+model Voucher {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+  hotresId   String
+
+  amount    Float?
+  currency  String?
+  validDays Int?
+  priority  Int?
+  gift      Boolean?
+  photo     String?
+  photoS    String?
+
+  translations VoucherTranslation[]
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, hotresId])
+}
+
+model VoucherTranslation {
+  id        Int    @id @default(autoincrement())
+  voucherId Int
+  lang      String
+
+  title           String?
+  description     String?
+  niceurl         String?
+  metaTitle       String?
+  metaDescription String?
+
+  voucher Voucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  @@unique([voucherId, lang])
+}
+
+model Ticket {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+  hotresId   String
+
+  price    Float?
+  currency String?
+  stock    Int?
+  maxCnt   Int?
+  date     DateTime?
+  priority Int?
+  photo    String?
+  photoS   String?
+
+  translations TicketTranslation[]
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, hotresId])
+}
+
+model TicketTranslation {
+  id       Int    @id @default(autoincrement())
+  ticketId Int
+  lang     String
+
+  title       String?
+  description String?
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@unique([ticketId, lang])
+}
+
+// ---------------------------------------------------------------------------
+// Treści i konta
+// ---------------------------------------------------------------------------
+
+/// Opinie nie mają identyfikatora w API - tożsamość składamy z surowej daty,
+/// autora i źródła. Pola tożsamości są NOT NULL (pusty string zamiast null),
+/// bo w SQLite NULL-e w indeksie unikalnym są sobie nierówne i upsert
+/// dokładałby duplikaty przy każdym przebiegu.
+model Review {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+
+  addDateRaw String @default("")
+  author     String @default("")
+  source     String @default("")
+
+  addDate     DateTime?
+  rate        Float?
+  description String?
+  lang        String?
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, addDateRaw, author, source])
+}
+
+/// Kafle informatora - również bez id po stronie Hotres.
+model InformatorItem {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+  lang       String
+
+  title       String
+  advert      String?
+  template    String?
+  width       String?
+  description String?
+  icon        String?
+  photo       String?
+  addDate     DateTime?
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, lang, title])
+}
+
+model PropertyUser {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+  uid        String
+
+  name       String?
+  email      String?
+  loginCount Int?
+  loginDate  DateTime?
+  active     Boolean?
+  addDate    DateTime?
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, uid])
+}
+
+// ---------------------------------------------------------------------------
+// Metadane przebiegów eksportu
+// ---------------------------------------------------------------------------
+
+model ExportRun {
+  id         Int    @id @default(autoincrement())
+  oid        String
+  propertyId Int?
+
+  status      String   @default("running") // running | ok | error | aborted
+  langs       String // csv
+  groups      String // csv
+  withDetails Boolean  @default(true)
+
+  requests   Int      @default(0)
+  startedAt  DateTime @default(now())
+  finishedAt DateTime?
+  durationMs Int?
+
+  failureMessage String?
+
+  stats    ExportStat[]
+  errors   ExportError[]
+  unmapped UnmappedField[]
+
+  property Property? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+}
+
+/// Ile rekordów danej grupy zapisał przebieg.
+model ExportStat {
+  id    Int    @id @default(autoincrement())
+  runId Int
+  group String
+
+  fetched Int @default(0)
+  written Int @default(0)
+  removed Int @default(0)
+
+  run ExportRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, group])
+}
+
+model ExportError {
+  id    Int    @id @default(autoincrement())
+  runId Int
+
+  group    String
+  action   String
+  hotresId String?
+  lang     String?
+  message  String
+  /// Błąd nieblokujący: endpoint opcjonalny albo 404 na pojedynczym elemencie.
+  soft     Boolean @default(false)
+
+  run ExportRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+}
+
+/// Pola, które Hotres zwrócił, a których schemat nie zna. Przy pełnej
+/// normalizacji to jedyny sposób, żeby zmiana w API nie zniknęła po cichu.
+model UnmappedField {
+  id    Int    @id @default(autoincrement())
+  runId Int
+
+  group  String
+  field  String
+  sample String?
+
+  run ExportRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, group, field])
+}

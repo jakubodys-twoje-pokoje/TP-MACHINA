@@ -1,216 +1,120 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { ServiceOfflineError, streamExport, type ExportEvent } from './hotresExport';
 
-// Serwis strzela do Hotres przez funkcję Edge, więc podstawiamy sesję Supabase.
-vi.mock('./supabaseClient', () => ({
-  supabase: {
-    auth: {
-      getSession: async () => ({ data: { session: { access_token: 'test-token' } } }),
+/** Odpowiedź serwisu jako strumień - `chunks` mogą dzielić linie w dowolnym miejscu. */
+function ndjsonResponse(chunks: string[]): Response {
+  const encoder = new TextEncoder();
+  let index = 0;
+
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      getReader: () => ({
+        read: async () =>
+          index < chunks.length
+            ? { done: false, value: encoder.encode(chunks[index++]) }
+            : { done: true, value: undefined },
+        releaseLock: () => {},
+      }),
     },
-  },
-}));
-
-import { runHotresExport, buildHotresUrl, toArray } from './hotresExport';
-
-/** Rejestruje wywołania i odpowiada zgodnie z mapą action → payload. */
-function mockHotres(responses: Record<string, any>) {
-  const calls: { action: string; params: URLSearchParams }[] = [];
-
-  const fetchMock = vi.fn(async (_proxyUrl: string, init: any) => {
-    const target = new URL(JSON.parse(init.body).url);
-    const action = target.pathname.replace(/^\//, '');
-    calls.push({ action, params: target.searchParams });
-
-    const responder = responses[action];
-    if (responder === undefined) {
-      return {
-        ok: false,
-        json: async () => ({ error: `HTTP 404 nieznany endpoint ${action}` }),
-      };
-    }
-
-    const payload = typeof responder === 'function' ? responder(target.searchParams) : responder;
-    if (payload instanceof Error) {
-      return { ok: false, json: async () => ({ error: payload.message }) };
-    }
-
-    return { ok: true, json: async () => ({ data: JSON.stringify(payload) }) };
-  });
-
-  vi.stubGlobal('fetch', fetchMock);
-  return calls;
+  } as unknown as Response;
 }
 
-beforeEach(() => {
-  vi.stubGlobal('fetch', vi.fn());
-});
+async function collect(): Promise<ExportEvent[]> {
+  const events: ExportEvent[] = [];
+  for await (const event of streamExport({
+    oid: '474',
+    langs: ['pl'],
+    groups: ['rooms'],
+    withDetails: true,
+    delayMs: 0,
+  })) {
+    events.push(event);
+  }
+  return events;
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('buildHotresUrl', () => {
-  it('dokleja dane logowania, oid i parametry', () => {
-    const url = new URL(buildHotresUrl('api_roomtype', '474', { type_id: 29411, lang: 'pl' }));
-    expect(url.origin + url.pathname).toBe('https://panel.hotres.pl/api_roomtype');
-    expect(url.searchParams.get('oid')).toBe('474');
-    expect(url.searchParams.get('type_id')).toBe('29411');
-    expect(url.searchParams.get('lang')).toBe('pl');
-    expect(url.searchParams.get('user')).toBeTruthy();
-    expect(url.searchParams.get('password')).toBeTruthy();
+describe('streamExport', () => {
+  it('czyta zdarzenia linia po linii', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ndjsonResponse([
+          '{"type":"progress","completed":1,"total":2,"message":"Pokoje","level":"ok"}\n',
+          '{"type":"done","summary":{"runId":7},"counts":{"rooms":2}}\n',
+        ]),
+      ),
+    );
+
+    const events = await collect();
+
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({ type: 'progress', message: 'Pokoje' });
+    expect(events[1]).toMatchObject({ type: 'done' });
   });
 
-  it('pomija puste parametry', () => {
-    const url = new URL(buildHotresUrl('api_rates', '474', { lang: '', tag: undefined as any }));
-    expect(url.searchParams.has('lang')).toBe(false);
-    expect(url.searchParams.has('tag')).toBe(false);
-  });
-});
+  it('skleja linię rozciętą między porcjami strumienia', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ndjsonResponse([
+          '{"type":"progress","completed":1,',
+          '"total":2,"message":"Sklejone","level":"ok"}\n{"type":"progress",',
+          '"completed":2,"total":2,"message":"Drugie","level":"ok"}\n',
+        ]),
+      ),
+    );
 
-describe('toArray', () => {
-  it('normalizuje tablicę, pojedynczy obiekt i null', () => {
-    expect(toArray([1, 2])).toEqual([1, 2]);
-    expect(toArray({ a: 1 })).toEqual([{ a: 1 }]);
-    expect(toArray(null)).toEqual([]);
-  });
-});
+    const events = await collect();
 
-describe('runHotresExport', () => {
-  it('pobiera listę per język i dociąga szczegóły dla każdego elementu', async () => {
-    const calls = mockHotres({
-      api_roomstypes: [{ type_id: '29411' }, { type_id: '29412' }],
-      api_roomtype: (params: URLSearchParams) => ({
-        type_id: params.get('type_id'),
-        lang: params.get('lang'),
-      }),
-    });
-
-    const result = await runHotresExport({
-      oid: '474',
-      langs: ['pl', 'en'],
-      groups: ['roomstypes'],
-      delayMs: 0,
-    });
-
-    // 2 listy (pl, en) + 2 typy × 2 języki
-    expect(calls.filter(call => call.action === 'api_roomstypes')).toHaveLength(2);
-    expect(calls.filter(call => call.action === 'api_roomtype')).toHaveLength(4);
-    expect(result.requests).toBe(6);
-
-    expect(Object.keys(result.data.roomstypes)).toEqual(['pl', 'en']);
-    expect(Object.keys(result.data.roomtypes.pl)).toEqual(['29411', '29412']);
-    expect(result.data.roomtypes.en['29411'].lang).toBe('en');
-    expect(result.counts.roomstypes).toBe(2);
-    expect(result.counts.roomtypes).toBe(2);
-    expect(result.errors).toHaveLength(0);
+    expect(events.map((event: any) => event.message)).toEqual(['Sklejone', 'Drugie']);
   });
 
-  it('nie dociąga szczegółów przy withDetails=false', async () => {
-    const calls = mockHotres({ api_roomstypes: [{ type_id: '29411' }] });
+  it('oddaje ostatnią linię bez znaku końca', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ndjsonResponse(['{"type":"error","message":"Brak OID obiektu"}']),
+      ),
+    );
 
-    const result = await runHotresExport({
-      oid: '474',
-      langs: ['pl'],
-      groups: ['roomstypes'],
-      withDetails: false,
-      delayMs: 0,
-    });
+    const events = await collect();
 
-    expect(calls.filter(call => call.action === 'api_roomtype')).toHaveLength(0);
-    expect(result.data.roomtypes).toBeUndefined();
+    expect(events).toEqual([{ type: 'error', message: 'Brak OID obiektu' }]);
   });
 
-  it('błąd grupy opcjonalnej jest miękki, a wymaganej twardy', async () => {
-    mockHotres({
-      api_rooms: new Error('HTTP 500 padło'),
-      api_reviews: new Error('HTTP 500 padło'),
-    });
+  it('ignoruje puste linie', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ndjsonResponse(['\n\n{"type":"progress","completed":1,"total":1,"message":"X","level":"ok"}\n\n']),
+      ),
+    );
 
-    const result = await runHotresExport({
-      oid: '474',
-      langs: ['pl'],
-      groups: ['rooms', 'reviews'],
-      delayMs: 0,
-    });
-
-    expect(result.errors).toHaveLength(2);
-    expect(result.errors.find(error => error.action === 'api_rooms')?.soft).toBe(false);
-    expect(result.errors.find(error => error.action === 'api_reviews')?.soft).toBe(true);
+    expect(await collect()).toHaveLength(1);
   });
 
-  it('404 na pojedynczym elemencie nie przerywa eksportu', async () => {
-    mockHotres({
-      api_rates: [{ rate_id: '1' }, { rate_id: '2' }],
-      api_rate: (params: URLSearchParams) =>
-        params.get('rate_id') === '2'
-          ? new Error('HTTP 404 not found')
-          : { rate_id: '1' },
-    });
+  it('brak serwisu to czytelny błąd z podpowiedzią', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    }));
 
-    const result = await runHotresExport({
-      oid: '474',
-      langs: ['pl'],
-      groups: ['rates'],
-      delayMs: 0,
-    });
-
-    expect(Object.keys(result.data.rateDetails.pl)).toEqual(['1']);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].soft).toBe(true);
+    await expect(collect()).rejects.toThrow(ServiceOfflineError);
+    await expect(collect()).rejects.toThrow('cd server && npm run dev');
   });
 
-  it('traktuje { result: "error" } z HTTP 200 jako błąd', async () => {
-    mockHotres({ api_rooms: { result: 'error', message: 'Brak dostępu do obiektu' } });
+  it('przerwanie przez użytkownika nie udaje braku serwisu', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      const error = new Error('aborted');
+      error.name = 'AbortError';
+      throw error;
+    }));
 
-    const result = await runHotresExport({
-      oid: '474',
-      langs: ['pl'],
-      groups: ['rooms'],
-      delayMs: 0,
-    });
-
-    expect(result.errors[0].message).toBe('Brak dostępu do obiektu');
-    expect(result.errors[0].soft).toBe(false);
-  });
-
-  it('raportuje postęp i rozszerza licznik kroków o szczegóły', async () => {
-    mockHotres({
-      api_roomstypes: [{ type_id: '1' }, { type_id: '2' }],
-      api_roomtype: { type_id: '1' },
-    });
-
-    const totals: number[] = [];
-    await runHotresExport({
-      oid: '474',
-      langs: ['pl'],
-      groups: ['roomstypes'],
-      delayMs: 0,
-      onProgress: ({ total }) => totals.push(total),
-    });
-
-    // start: 1 lista → po poznaniu listy: 1 + 2 szczegóły
-    expect(totals[0]).toBe(1);
-    expect(totals[totals.length - 1]).toBe(3);
-  });
-
-  it('przerywa eksport po abort()', async () => {
-    mockHotres({ api_rooms: [], api_addons: [] });
-    const controller = new AbortController();
-    controller.abort();
-
-    await expect(
-      runHotresExport({
-        oid: '474',
-        langs: ['pl'],
-        groups: ['rooms', 'addons'],
-        delayMs: 0,
-        signal: controller.signal,
-      }),
-    ).rejects.toThrow('Eksport przerwany');
-  });
-
-  it('waliduje wejście', async () => {
-    await expect(runHotresExport({ oid: '', langs: ['pl'] })).rejects.toThrow('Brak OID');
-    await expect(runHotresExport({ oid: '474', langs: [] })).rejects.toThrow('język');
-    await expect(runHotresExport({ oid: '474', groups: [] })).rejects.toThrow('grupę');
+    await expect(collect()).rejects.toThrow('aborted');
   });
 });

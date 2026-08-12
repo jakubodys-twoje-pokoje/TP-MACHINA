@@ -1,72 +1,61 @@
-# Eksport z Hotres
+# Eksport z Hotres (Eksporter 3000)
 
-Narzędzie w Machinie do zrzucenia **wszystkich statycznych danych obiektu** z Hotres —
-pod migrację na własny PMS.
+Tymczasowe narzędzie migracyjne: pobiera **wszystkie statyczne** dane obiektu z Hotres
+i zapisuje je do **lokalnej bazy SQLite pod Prismą** — nie do Supabase.
 
-- Widok: **Obiekt → Eksport Hotres** (`/property/:id/export`)
+- Widok w Machinie: **Obiekt → Eksport Hotres** (`/property/:id/export`)
 - GUI: `components/HotresExportView.tsx`
-- Logika: `services/hotresExport.ts` (+ testy `services/hotresExport.test.ts`)
+- Klient serwisu: `services/hotresExport.ts` (+ testy)
+- Serwis + baza: `server/` — szczegóły w [`server/README.md`](../server/README.md)
 
-## Co pobiera
+## Architektura
 
-| Grupa | Endpoint | Zawartość |
-|---|---|---|
-| Obiekt | `api_object` | adres, kontakt, dane firmy, galeria, opis, regulamin, godziny doby |
-| Parametry | `api_params` | pełna konfiguracja `be_*` |
-| Słowniki | `api_definitions` | udogodnienia, ikony, kategorie |
-| Pokoje fizyczne | `api_rooms` | numery, łóżka, piętro, stan, pola własne |
-| Standardy | `api_roomstypes` + `api_roomtype` | lista typów + pełne opisy, galerie, meta |
-| Plany cenowe | `api_rates` + `api_rate` | metadane cenników (**bez** kalendarza cen) |
-| Dodatki | `api_addons` | ceny, stany, reguły sprzedaży |
-| Vouchery | `api_vouchers` + `api_voucher` | vouchery i opisy |
-| Bilety | `api_tickets` + `api_ticket` | wydarzenia, limity, stany |
-| Opinie | `api_reviews` | publiczne opinie (maks. 300) |
-| Informator | `api_informator` | kafle informacyjne dla gości |
-| Użytkownicy | `api_users` | konta z dostępem do obiektu |
-
-Endpointy oznaczone jako wielojęzyczne pobierane są dla każdego zaznaczonego języka
-(`pl`, `en`, `de`, `cz`, `sk`, `ua`, `ru`, `fr`, `es`, `it`).
-
-## Czego NIE pobiera — świadomie
-
-`api_availability`, `api_prices`, `api_blocks`, `api_reservations`,
-`api_reservationdetails`, `api_guests`, `api_payments`, `api_invoices`, `api_messages`.
-
-To dane dynamiczne i transakcyjne — idą osobnym, jednorazowym eksportem. Hotres limituje
-liczbę zapytań na godzinę, więc ten widok celowo ich nie dotyka.
-
-## Jak działa
-
-1. Wybierasz zakres (grupy), języki i czy dociągać szczegóły per element.
-2. Zapytania lecą przez funkcję Edge `hotres-proxy` (te same dane dostępowe, co reszta aplikacji).
-3. Między zapytaniami trzymany jest stały odstęp (domyślnie 350 ms) — do wyboru w GUI.
-4. Postęp widać na pasku i w konsoli na żywo; eksport można przerwać.
-5. Wynik pobierasz jako `all.json` (całość + manifest) albo per grupa.
-
-### Struktura `all.json`
-
-```jsonc
-{
-  "oid": "474",
-  "exported_at": "2026-08-12T09:00:00.000Z",
-  "langs": ["pl", "en"],
-  "requests": 42,
-  "counts": { "roomstypes": 8, "roomtypes": 8 },
-  "errors": [],
-  "excluded": [{ "action": "api_availability", "reason": "dostępność - dane dynamiczne" }],
-  "data": {
-    "params": { "be_currency": "PLN" },          // endpoint bez tłumaczeń → surowa odpowiedź
-    "roomstypes": { "pl": [], "en": [] },        // endpoint tłumaczony → mapa lang → odpowiedź
-    "roomtypes":  { "pl": { "29411": {} } }      // szczegóły → mapa lang → id → odpowiedź
-  }
-}
+```
+Machina (Vite SPA)                  server/ (Node + Express + Prisma)
+  HotresExportView  ──POST /api/export──►  runExport
+        ▲                                    ├─► panel.hotres.pl   (bezpośrednio, bez proxy)
+        └──── NDJSON: postęp na żywo ────────┤
+                                             └─► SQLite (Prisma)
 ```
 
-## Błędy
+Prisma nie działa w przeglądarce, więc pobieranie i zapis dzieją się w serwisie,
+a GUI tylko steruje i słucha postępu. Efekt uboczny, który jest zaletą:
+poświadczenia Hotres wyszły z bundla do `server/.env`, a funkcja Edge `hotres-proxy`
+nie bierze w tym udziale.
 
-- **twarde** (czerwone) — endpoint wymagany nie odpowiedział; dane grupy są niepełne,
-- **miękkie** (szare) — endpoint opcjonalny albo 404 na pojedynczym elemencie
-  (Hotres potrafi trzymać na liście element, którego szczegóły już nie istnieją).
+## Uruchomienie
 
-Eksport nigdy nie przerywa się przez pojedynczy błędny endpoint — wszystko ląduje
-w sekcji `errors` w wyniku.
+```bash
+cd server && npm install && npm run db:push && npm run dev
+```
+
+Bez działającego serwisu widok w Machinie nie udaje, że działa — pokazuje komunikat
+i dokładnie te komendy.
+
+## Co widać w GUI
+
+- **Co siedzi w bazie** — liczniki per tabela + `Pobierz export.json` (pełny zrzut z bazy)
+- **Konfiguracja** — OID, języki, odstęp między zapytaniami, przełącznik szczegółów
+- **Zakres danych** — grupy zaciągane z `/api/catalogue`, więc katalog nie jest duplikowany
+- **Postęp na żywo** — pasek, konsola i przycisk „Przerwij" (rozłączenie przerywa przebieg w serwisie)
+- **Podsumowanie przebiegu** — zapisane/usunięte rekordy per grupa, błędy twarde i miękkie,
+  oraz pola, których schemat nie zna
+- **Historia przebiegów** — z tabeli `ExportRun`
+
+## Zakres
+
+Pobierane: `api_object`, `api_params`, `api_definitions`, `api_roomstypes` + `api_roomtype`,
+`api_rooms`, `api_rates` + `api_rate`, `api_addons`, `api_vouchers` + `api_voucher`,
+`api_tickets` + `api_ticket`, `api_reviews`, `api_informator`, `api_users`.
+
+Pomijane świadomie: `api_availability`, `api_prices`, `api_blocks`, `api_reservations`,
+`api_guests`, `api_payments`, `api_invoices`, `api_messages` — dane dynamiczne
+i transakcyjne, osobny eksport.
+
+Niezapisywane: `auth` i `apikey` z `api_object` — to poświadczenia, nie dane obiektu.
+
+## Uwaga na później
+
+To narzędzie jest **tymczasowe**. Kiedy migracja się skończy, do usunięcia idzie
+cały katalog `server/`, widok, klient i wpis w routingu — nic z tego nie jest wplecione
+w resztę Machiny poza jednym linkiem w Sidebarze.
