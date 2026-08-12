@@ -30,7 +30,7 @@ export const ExportView: React.FC<{
   catalogue: Catalogue;
   oid: string;
   onOidChange: (oid: string) => void;
-  onFinished: () => void;
+  onFinished: (oid: string) => void;
 }> = ({ catalogue, oid, onOidChange, onFinished }) => {
   const [langs, setLangs] = useState<string[]>(['pl']);
   const [selected, setSelected] = useState<Set<string>>(
@@ -108,7 +108,9 @@ export const ExportView: React.FC<{
         }
       }
       getRuns(oid.trim()).then(setRuns).catch(() => {});
-      onFinished();
+      // Oddajemy OID, na którym faktycznie poszedł eksport - stan w App mógłby
+      // być inny, gdyby ktoś w międzyczasie ruszył pole.
+      onFinished(oid.trim());
     } catch (err: any) {
       if (err?.name === 'AbortError') append('Przerwano przez użytkownika.', 'warn');
       else setError(err.message ?? String(err));
@@ -158,7 +160,7 @@ export const ExportView: React.FC<{
             <input
               type="text"
               value={oid}
-              onChange={event => onOidChange(event.target.value)}
+              onChange={event => onOidChange(event.target.value.trim())}
               disabled={running}
               placeholder="np. 4268"
               className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-white font-mono outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"

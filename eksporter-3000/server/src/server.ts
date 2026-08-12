@@ -15,6 +15,7 @@ import cors from 'cors';
 
 import { EXCLUDED, GROUPS, LANGS } from './catalogue.js';
 import { assertCredentials, isLoggedIn, login, logout, readCredentials, requireAuth } from './auth.js';
+import { normalizeOid } from './coerce.js';
 import { prisma, readCounts, readSnapshot } from './db.js';
 import { runExport } from './runExport.js';
 
@@ -142,7 +143,7 @@ app.patch('/api/properties/:oid/migration', async (req, res) => {
   }
 
   const property = await prisma.property.findUnique({
-    where: { oid: String(req.params.oid) },
+    where: { oid: normalizeOid(req.params.oid) },
     select: { id: true },
   });
   if (!property) {
@@ -214,7 +215,7 @@ app.post('/api/export', async (req, res) => {
 });
 
 app.get('/api/runs', async (req, res) => {
-  const oid = req.query.oid ? String(req.query.oid) : undefined;
+  const oid = req.query.oid ? normalizeOid(req.query.oid) : undefined;
   const runs = await prisma.exportRun.findMany({
     where: oid ? { oid } : undefined,
     orderBy: { startedAt: 'desc' },
@@ -239,7 +240,7 @@ app.get('/api/runs/:id', async (req, res) => {
 /** Liczniki per tabela - kafelki "co siedzi w bazie". */
 app.get('/api/properties/:oid/snapshot', async (req, res) => {
   const property = await prisma.property.findUnique({
-    where: { oid: String(req.params.oid) },
+    where: { oid: normalizeOid(req.params.oid) },
     select: { id: true, oid: true, city: true, email: true, currency: true, updatedAt: true },
   });
   if (!property) {
@@ -251,7 +252,7 @@ app.get('/api/properties/:oid/snapshot', async (req, res) => {
 
 /** Komplet danych obiektu - GUI renderuje z tego wszystkie widoki. */
 app.get('/api/properties/:oid/data', async (req, res) => {
-  const snapshot = await readSnapshot(String(req.params.oid));
+  const snapshot = await readSnapshot(normalizeOid(req.params.oid));
   if (!snapshot) {
     res.status(404).json({ error: 'Obiekt nie był jeszcze eksportowany' });
     return;
@@ -261,7 +262,7 @@ app.get('/api/properties/:oid/data', async (req, res) => {
 
 /** To samo, ale jako plik do pobrania. */
 app.get('/api/properties/:oid/export.json', async (req, res) => {
-  const snapshot = await readSnapshot(String(req.params.oid));
+  const snapshot = await readSnapshot(normalizeOid(req.params.oid));
   if (!snapshot) {
     res.status(404).json({ error: 'Obiekt nie był jeszcze eksportowany' });
     return;

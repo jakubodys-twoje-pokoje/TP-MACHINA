@@ -94,3 +94,15 @@ export function sample(value: unknown): string | null {
   const text = typeof value === 'object' ? JSON.stringify(value) : String(value);
   return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 }
+
+/**
+ * Normalizuje identyfikator obiektu.
+ *
+ * OID-y bywają wklejane z list i potrafią przyjechać ze spacją, tabulatorem
+ * albo znakiem końca linii. Bez tego eksport zapisywał obiekt pod przyciętym
+ * OID-em, a GUI pytało potem o wersję ze spacją i dostawało 404 - czyli
+ * "pobrałem, a danych nie ma".
+ */
+export function normalizeOid(value: unknown): string {
+  return String(value ?? '').trim();
+}

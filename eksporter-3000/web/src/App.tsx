@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   BedDouble, Boxes, Database, DoorClosed, Gift, Info, LogOut, Loader2, MessageSquareQuote,
@@ -61,6 +61,10 @@ export const App: React.FC = () => {
   const [data, setData] = useState<any>(null);
   const [loadingData, setLoadingData] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Obiekt jest w bazie, tylko coś innego padło - inny komunikat niż "brak danych". */
+  const [notFound, setNotFound] = useState(false);
+  /** Numer ostatniego żądania - starsza odpowiedź nie może nadpisać nowszej. */
+  const loadSeq = useRef(0);
 
   // --- sesja ---------------------------------------------------------------
 
@@ -91,22 +95,39 @@ export const App: React.FC = () => {
   }, [authorized, handleUnauthorized, loadProperties]);
 
   const loadData = useCallback(
-    (targetOid: string) => {
+    (rawOid: string) => {
+      const targetOid = rawOid.trim();
+      const seq = ++loadSeq.current;
+
       if (!targetOid) {
         setData(null);
+        setNotFound(false);
+        setError(null);
         return;
       }
+
       setLoadingData(true);
       setError(null);
+
       getPropertyData(targetOid)
-        .then(setData)
+        .then(loaded => {
+          if (seq !== loadSeq.current) return;
+          setData(loaded);
+          setNotFound(false);
+        })
         .catch(err => {
           if (handleUnauthorized(err)) return;
+          if (seq !== loadSeq.current) return;
           setData(null);
           // 404 to normalna sytuacja: obiekt jeszcze nie był pobierany.
-          setError(err.message ?? String(err));
+          // Każdy inny błąd to awaria i trzeba go pokazać wprost.
+          const message = err.message ?? String(err);
+          setNotFound(message.includes('nie był jeszcze eksportowany'));
+          setError(message);
         })
-        .finally(() => setLoadingData(false));
+        .finally(() => {
+          if (seq === loadSeq.current) setLoadingData(false);
+        });
     },
     [handleUnauthorized],
   );
@@ -271,8 +292,9 @@ export const App: React.FC = () => {
             catalogue={catalogue}
             oid={oid}
             onOidChange={setOid}
-            onFinished={() => {
-              loadData(oid);
+            onFinished={exportedOid => {
+              setOid(exportedOid);
+              loadData(exportedOid);
               loadProperties();
             }}
           />
@@ -282,20 +304,43 @@ export const App: React.FC = () => {
           </div>
         ) : !hasData ? (
           <div className="bg-surface border border-border rounded-xl p-6">
-            <h2 className="text-lg font-bold text-white mb-2">Brak danych dla tego obiektu</h2>
+            <h2 className="text-lg font-bold text-white mb-2">
+              {!oid
+                ? 'Nie wybrano obiektu'
+                : notFound
+                  ? 'Brak danych dla tego obiektu'
+                  : 'Nie udało się wczytać danych'}
+            </h2>
             <p className="text-slate-400 text-sm mb-4">
-              {oid
-                ? `Obiekt ${oid} nie był jeszcze pobierany z Hotresa.`
-                : 'Wpisz OID obiektu w polu po lewej.'}
-              {error && <span className="block text-slate-600 text-xs mt-2">{error}</span>}
+              {!oid ? (
+                'Wybierz obiekt z listy albo wpisz OID w polu po lewej.'
+              ) : notFound ? (
+                <>
+                  Obiekt <span className="font-mono text-slate-300">{oid}</span> nie był jeszcze
+                  pobierany z Hotresa.
+                </>
+              ) : (
+                <span className="text-red-400">{error}</span>
+              )}
             </p>
-            <button
-              type="button"
-              onClick={() => setSection('export')}
-              className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
-            >
-              Przejdź do pobierania
-            </button>
+            <div className="flex gap-2">
+              {oid && (
+                <button
+                  type="button"
+                  onClick={() => loadData(oid)}
+                  className="border border-slate-700 hover:border-slate-600 text-slate-300 px-4 py-2.5 rounded-lg text-sm transition-colors"
+                >
+                  Spróbuj ponownie
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setSection(oid ? 'export' : 'properties')}
+                className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+              >
+                {oid ? 'Przejdź do pobierania' : 'Pokaż listę obiektów'}
+              </button>
+            </div>
           </div>
         ) : (
           <>

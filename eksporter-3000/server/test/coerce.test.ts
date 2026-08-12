@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { bool, csv, date, float, int, str, toArray, unknownKeys } from '../src/coerce.js';
+import { bool, csv, date, float, int, normalizeOid, str, toArray, unknownKeys } from '../src/coerce.js';
 
 describe('coerce', () => {
   it('str: puste stringi to null', () => {
@@ -52,5 +52,16 @@ describe('coerce', () => {
   it('unknownKeys: wyłapuje pola spoza schematu', () => {
     expect(unknownKeys({ a: 1, b: 2, nowosc: 3 }, new Set(['a', 'b']))).toEqual(['nowosc']);
     expect(unknownKeys([1, 2], new Set())).toEqual([]);
+  });
+});
+
+describe('normalizeOid', () => {
+  it('obcina białe znaki - OID-y wklejane z list mają je nagminnie', () => {
+    expect(normalizeOid('4573 ')).toBe('4573');
+    expect(normalizeOid(' 4573')).toBe('4573');
+    expect(normalizeOid('4573\n')).toBe('4573');
+    expect(normalizeOid('\t4573\r\n')).toBe('4573');
+    expect(normalizeOid(4573)).toBe('4573');
+    expect(normalizeOid(null)).toBe('');
   });
 });

@@ -4,6 +4,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { GROUP_KEYS, LANGS, orderGroups } from './catalogue.js';
+import { normalizeOid } from './coerce.js';
 import { createHotresClient } from './hotres.js';
 import { fetchAll, type ProgressEvent, type RunError } from './fetchAll.js';
 import { IMPORTERS, type ImportContext } from './importers.js';
@@ -37,7 +38,7 @@ export interface RunSummary {
 }
 
 function validate(options: RunOptions): { langs: string[]; groups: string[] } {
-  const oid = String(options.oid ?? '').trim();
+  const oid = normalizeOid(options.oid);
   if (!oid) throw new Error('Brak OID obiektu');
 
   const langs = (options.langs?.length ? options.langs : ['pl']).map(lang => lang.trim());
@@ -54,7 +55,7 @@ function validate(options: RunOptions): { langs: string[]; groups: string[] } {
 export async function runExport(options: RunOptions): Promise<RunSummary> {
   const { prisma, onProgress, signal } = options;
   const { langs, groups } = validate(options);
-  const oid = String(options.oid).trim();
+  const oid = normalizeOid(options.oid);
   const withDetails = options.withDetails ?? true;
   const startedAt = Date.now();
 
