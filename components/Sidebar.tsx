@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2, AlertTriangle, Bell, Kanban, BadgePercent, FileText, CheckCircle, XCircle, Trash2, ChevronDown, ChevronRight, Calculator, Search } from 'lucide-react';
+import { Building, Settings, BedDouble, Calendar, Plus, Home, X, Globe, Type, Loader2, AlertTriangle, Bell, Kanban, BadgePercent, FileText, CheckCircle, XCircle, Trash2, ChevronDown, ChevronRight, Calculator, Search, Database } from 'lucide-react';
 import { useProperties } from '../contexts/PropertyContext';
 
 interface SidebarProps {
@@ -200,6 +200,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
                       <NavLink to={`/property/${property.id}/units`} onClick={handleNavLinkClick} className={({isActive}) => `flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-[10px] sm:text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><BedDouble size={12} className="sm:w-3.5 sm:h-3.5" /> Kwatery</NavLink>
                       <NavLink to={`/property/${property.id}/pricing`} onClick={handleNavLinkClick} className={({isActive}) => `flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-[10px] sm:text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><BadgePercent size={12} className="sm:w-3.5 sm:h-3.5" /> Cenniki</NavLink>
                       <NavLink to={`/property/${property.id}/commission`} onClick={handleNavLinkClick} className={({isActive}) => `flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-[10px] sm:text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><Calculator size={12} className="sm:w-3.5 sm:h-3.5" /> Kalkulator prowizji</NavLink>
+                      <NavLink to={`/property/${property.id}/export`} onClick={handleNavLinkClick} className={({isActive}) => `flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-[10px] sm:text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><Database size={12} className="sm:w-3.5 sm:h-3.5" /> Eksport Hotres</NavLink>
                       <NavLink to={`/property/${property.id}/details`} onClick={handleNavLinkClick} className={({isActive}) => `flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded-md text-[10px] sm:text-xs ${isActive ? 'text-indigo-400 bg-indigo-500/10' : 'text-slate-500 hover:text-slate-300'}`}><Settings size={12} className="sm:w-3.5 sm:h-3.5" /> Ustawienia</NavLink>
                   </div>
                 )}
