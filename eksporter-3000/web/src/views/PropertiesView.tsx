@@ -1,22 +1,16 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
-  ChevronRight, Clock, Loader2, Plus, StickyNote, Zap,
+  Check, ChevronRight, Clock, Loader2, Plus, StickyNote, Zap,
 } from 'lucide-react';
 import { Card, Empty, PageHeader, SearchBox } from '../ui';
 import {
-  MIGRATION_LABELS, setMigration, streamExport,
+  MIGRATION_LABELS, setMigration, setMigrationStep, streamExport,
   type Catalogue, type MigrationStatus, type PropertyRow,
 } from '../api';
-import { matches } from '../helpers';
+import { matches, plural } from '../helpers';
 
 /** 1 obiekt / 2 obiekty / 5 obiektów - inaczej przycisk czyta się koślawo. */
-export function obiekty(count: number): string {
-  if (count === 1) return '1 obiekt';
-  const rest = count % 100;
-  const last = count % 10;
-  const few = last >= 2 && last <= 4 && !(rest >= 12 && rest <= 14);
-  return `${count} ${few ? 'obiekty' : 'obiektów'}`;
-}
+export const obiekty = (count: number) => plural(count, ['obiekt', 'obiekty', 'obiektów']);
 
 type QueueStatus = 'czeka' | 'pobieram' | 'gotowe' | 'błąd';
 
@@ -90,6 +84,23 @@ export const PropertiesView: React.FC<{
     [properties, query, statusFilter],
   );
 
+  const { totalSteps, totalDoneSteps, overallPercent, fullyDone } = useMemo(() => {
+    let steps = 0;
+    let done = 0;
+    let complete = 0;
+    for (const property of properties) {
+      steps += property.migrationStepCount;
+      done += property.migrationDoneCount;
+      if (property.migrationPercent === 100) complete++;
+    }
+    return {
+      totalSteps: steps,
+      totalDoneSteps: done,
+      overallPercent: steps === 0 ? 0 : Math.round((done / steps) * 100),
+      fullyDone: complete,
+    };
+  }, [properties]);
+
   const byStatus = useMemo(() => {
     const counts: Record<string, number> = { todo: 0, in_progress: 0, done: 0, skipped: 0 };
     for (const property of properties) counts[property.migrationStatus] = (counts[property.migrationStatus] ?? 0) + 1;
@@ -98,6 +109,11 @@ export const PropertiesView: React.FC<{
 
   const changeStatus = async (oid: string, status: MigrationStatus) => {
     await setMigration(oid, { status });
+    onRefresh();
+  };
+
+  const toggleStep = async (oid: string, step: string, done: boolean) => {
+    await setMigrationStep(oid, step, done);
     onRefresh();
   };
 
@@ -194,9 +210,12 @@ export const PropertiesView: React.FC<{
         <div className="bg-surface border border-border rounded-xl p-4 mb-5">
           <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
             <div className="text-sm text-slate-300">
-              Przepisane do nowego PMS:{' '}
-              <strong className="text-emerald-400">{byStatus.done}</strong>
-              <span className="text-slate-500"> z {properties.length}</span>
+              Przepisane sekcje:{' '}
+              <strong className="text-emerald-400">{overallPercent}%</strong>
+              <span className="text-slate-500">
+                {' '}({totalDoneSteps} z {totalSteps}) · obiekty gotowe w całości:{' '}
+                {fullyDone} z {properties.length}
+              </span>
             </div>
             <div className="flex gap-1.5 flex-wrap">
               <button
@@ -226,14 +245,10 @@ export const PropertiesView: React.FC<{
               ))}
             </div>
           </div>
-          <div className="h-2 bg-slate-900 rounded-full overflow-hidden flex">
+          <div className="h-2 bg-slate-900 rounded-full overflow-hidden">
             <div
               className="h-full bg-emerald-500 transition-all"
-              style={{ width: `${(byStatus.done / properties.length) * 100}%` }}
-            />
-            <div
-              className="h-full bg-amber-500 transition-all"
-              style={{ width: `${(byStatus.in_progress / properties.length) * 100}%` }}
+              style={{ width: `${overallPercent}%` }}
             />
           </div>
         </div>
@@ -377,6 +392,21 @@ export const PropertiesView: React.FC<{
                   <Stat label="dodatki" value={property._count.addons} />
                 </div>
 
+                <div className="text-right min-w-[64px]">
+                  <div
+                    className={`text-lg font-bold ${
+                      property.migrationPercent === 100
+                        ? 'text-emerald-400'
+                        : property.migrationPercent > 0
+                          ? 'text-amber-400'
+                          : 'text-slate-600'
+                    }`}
+                  >
+                    {property.migrationPercent}%
+                  </div>
+                  <div className="text-[9px] uppercase text-slate-600">przepisane</div>
+                </div>
+
                 <div className="flex items-center gap-1.5">
                   <select
                     value={property.migrationStatus}
@@ -421,6 +451,41 @@ export const PropertiesView: React.FC<{
                   >
                     <ChevronRight size={16} />
                   </button>
+                </div>
+
+                <div className="w-full flex flex-wrap gap-1.5 pt-2 border-t border-slate-800">
+                  {property.migrationSteps.map(step => (
+                    <button
+                      key={step.key}
+                      type="button"
+                      onClick={() => toggleStep(property.oid, step.key, !step.checked)}
+                      disabled={step.auto}
+                      title={
+                        step.auto
+                          ? 'Nie ma czego przepisywać - zaliczone automatycznie'
+                          : `${step.total ?? ''} do przepisania`
+                      }
+                      className={`inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-lg border transition-colors ${
+                        step.auto
+                          ? 'border-slate-800 text-slate-600 cursor-default'
+                          : step.done
+                            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                            : 'border-slate-700 text-slate-400 hover:text-white hover:border-slate-600'
+                      }`}
+                    >
+                      <span
+                        className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${
+                          step.done ? 'bg-emerald-500/80 border-emerald-400' : 'border-slate-600'
+                        }`}
+                      >
+                        {step.done && <Check size={9} className="text-slate-950" />}
+                      </span>
+                      {step.label}
+                      {step.total !== null && (
+                        <span className="text-slate-600">{step.auto ? '—' : step.total}</span>
+                      )}
+                    </button>
+                  ))}
                 </div>
 
                 {noteFor === property.oid && (

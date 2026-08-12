@@ -75,6 +75,21 @@ export interface PropertyRow {
   migrationNote: string | null;
   migrationUpdatedAt: string | null;
   migrationUpdatedBy: string | null;
+  migrationSteps: MigrationStepState[];
+  migrationPercent: number;
+  migrationDoneCount: number;
+  migrationStepCount: number;
+}
+
+export interface MigrationStepState {
+  key: string;
+  label: string;
+  /** Ile rekordów jest do przepisania; null = krok bezilościowy (obiekt). */
+  total: number | null;
+  checked: boolean;
+  done: boolean;
+  /** Zaliczony automatycznie, bo sekcja jest pusta. */
+  auto: boolean;
 }
 
 export type MigrationStatus = 'todo' | 'in_progress' | 'done' | 'skipped';
@@ -85,6 +100,13 @@ export const MIGRATION_LABELS: Record<MigrationStatus, string> = {
   done: 'Przepisane',
   skipped: 'Pomijamy',
 };
+
+export const setMigrationStep = (oid: string, step: string, done: boolean) =>
+  request<{ ok: true }>(`/api/properties/${encodeURIComponent(oid)}/migration/step`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ step, done }),
+  });
 
 export const setMigration = (oid: string, patch: { status?: MigrationStatus; note?: string }) =>
   request<{ oid: string }>(`/api/properties/${encodeURIComponent(oid)}/migration`, {
@@ -102,6 +124,18 @@ export const getRuns = (oid: string) =>
 
 export const exportJsonUrl = (oid: string) =>
   `/api/properties/${encodeURIComponent(oid)}/export.json`;
+
+/** ZIP ze zdjęciami - całego obiektu albo pojedynczej galerii. */
+export const photosZipUrl = (
+  oid: string,
+  scope?: { roomType?: string; ratePlan?: string },
+) => {
+  const params = new URLSearchParams();
+  if (scope?.roomType) params.set('roomType', scope.roomType);
+  if (scope?.ratePlan) params.set('ratePlan', scope.ratePlan);
+  const query = params.toString();
+  return `/api/properties/${encodeURIComponent(oid)}/photos.zip${query ? `?${query}` : ''}`;
+};
 
 // --- eksport (strumień NDJSON) -------------------------------------------
 

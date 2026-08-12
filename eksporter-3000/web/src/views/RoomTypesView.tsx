@@ -5,6 +5,7 @@ import {
 } from '../ui';
 import { ROOMTYPE_GROUPS, ROOMTYPE_TEXTS, ROOM_FIELDS } from '../fields';
 import { buildDefinitionMap, matches, titleOf } from '../helpers';
+import { photosZipUrl } from '../api';
 
 export const RoomTypesView: React.FC<{ data: any }> = ({ data }) => {
   const [query, setQuery] = useState('');
@@ -40,6 +41,7 @@ export const RoomTypesView: React.FC<{ data: any }> = ({ data }) => {
           {filtered.map(type => (
             <RoomTypeCard
               key={type.id}
+              oid={data.oid}
               type={type}
               facilityMap={facilityMap}
               allFields={allFields}
@@ -52,10 +54,11 @@ export const RoomTypesView: React.FC<{ data: any }> = ({ data }) => {
 };
 
 const RoomTypeCard: React.FC<{
+  oid: string;
   type: any;
   facilityMap: Map<string, string>;
   allFields: any[];
-}> = ({ type, facilityMap, allFields }) => {
+}> = ({ oid, type, facilityMap, allFields }) => {
   const langs: string[] = (type.translations ?? []).map((item: any) => item.lang);
   const [lang, setLang] = useState(langs[0] ?? 'pl');
   const translation = (type.translations ?? []).find((item: any) => item.lang === lang);
@@ -157,7 +160,10 @@ const RoomTypeCard: React.FC<{
         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">
           Galeria ({type.photos?.length ?? 0})
         </h3>
-        <PhotoGrid photos={type.photos ?? []} />
+        <PhotoGrid
+          photos={type.photos ?? []}
+          zipUrl={photosZipUrl(oid, { roomType: type.hotresId })}
+        />
       </div>
 
       <div>

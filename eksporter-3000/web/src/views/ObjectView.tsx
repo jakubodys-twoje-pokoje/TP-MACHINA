@@ -4,6 +4,7 @@ import {
   Card, CopyRecordButton, Empty, FieldTable, LangTabs, PageHeader, PhotoGrid,
 } from '../ui';
 import { PROPERTY_GROUPS, PROPERTY_TEXTS } from '../fields';
+import { photosZipUrl } from '../api';
 
 export const ObjectView: React.FC<{ data: any }> = ({ data }) => {
   const langs: string[] = (data.translations ?? []).map((item: any) => item.lang);
@@ -50,7 +51,7 @@ export const ObjectView: React.FC<{ data: any }> = ({ data }) => {
       </Card>
 
       <Card title={`Galeria obiektu (${data.photos?.length ?? 0})`}>
-        <PhotoGrid photos={data.photos ?? []} />
+        <PhotoGrid photos={data.photos ?? []} zipUrl={photosZipUrl(data.oid)} />
       </Card>
 
       {(data.photos?.length ?? 0) === 0 && (

@@ -100,6 +100,7 @@ model Property {
   migrationNote      String?
   migrationUpdatedAt DateTime?
   migrationUpdatedBy String?
+  migrationSteps     MigrationStep[]
 
   translations PropertyTranslation[]
   photos       PropertyPhoto[]
@@ -682,6 +683,26 @@ model PropertyUser {
   property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
   @@unique([propertyId, uid])
+}
+
+/// Odhaczanie sekcji przepisanych do nowego PMS.
+///
+/// Postęp liczymy kumulatywnie z tych kroków. Sekcja bez danych liczy się jako
+/// zrobiona automatycznie - i to jest wyliczane przy odczycie, a nie zapisywane,
+/// żeby po dociągnięciu nowych danych krok sam wrócił do niezrobionych.
+model MigrationStep {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+  /// Klucz kroku, np. "roomTypes" - lista w src/migration.ts
+  step       String
+
+  done      Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, step])
 }
 
 // ---------------------------------------------------------------------------

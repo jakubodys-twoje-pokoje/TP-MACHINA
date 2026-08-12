@@ -53,3 +53,15 @@ export function formatDuration(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return '—';
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
+
+/**
+ * Polska odmiana liczebnika: 1 zdjęcie / 2 zdjęcia / 5 zdjęć.
+ * Formy podajemy w kolejności: pojedyncza, mnoga "few" (2-4), mnoga "many".
+ */
+export function plural(count: number, forms: [string, string, string]): string {
+  if (count === 1) return `${count} ${forms[0]}`;
+  const rest = count % 100;
+  const last = count % 10;
+  const few = last >= 2 && last <= 4 && !(rest >= 12 && rest <= 14);
+  return `${count} ${few ? forms[1] : forms[2]}`;
+}

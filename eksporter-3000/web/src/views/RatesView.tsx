@@ -5,6 +5,7 @@ import {
 } from '../ui';
 import { RATE_DISCOUNT_FIELDS, RATE_FIELDS, RATE_TEXTS } from '../fields';
 import { matches, titleOf } from '../helpers';
+import { photosZipUrl } from '../api';
 
 export const RatesView: React.FC<{ data: any }> = ({ data }) => {
   const [query, setQuery] = useState('');
@@ -46,7 +47,7 @@ export const RatesView: React.FC<{ data: any }> = ({ data }) => {
 
           <div className="space-y-2">
             {filtered.map(rate => (
-              <RateCard key={rate.id} rate={rate} />
+              <RateCard key={rate.id} oid={data.oid} rate={rate} />
             ))}
           </div>
         </>
@@ -55,7 +56,7 @@ export const RatesView: React.FC<{ data: any }> = ({ data }) => {
   );
 };
 
-const RateCard: React.FC<{ rate: any }> = ({ rate }) => {
+const RateCard: React.FC<{ oid: string; rate: any }> = ({ oid, rate }) => {
   const langs: string[] = (rate.translations ?? []).map((item: any) => item.lang);
   const [lang, setLang] = useState(langs[0] ?? 'pl');
   const translation = (rate.translations ?? []).find((item: any) => item.lang === lang);
@@ -138,7 +139,10 @@ const RateCard: React.FC<{ rate: any }> = ({ rate }) => {
         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">
           Galeria ({rate.photos?.length ?? 0})
         </h3>
-        <PhotoGrid photos={rate.photos ?? []} />
+        <PhotoGrid
+          photos={rate.photos ?? []}
+          zipUrl={photosZipUrl(oid, { ratePlan: rate.hotresId })}
+        />
       </div>
     </Expandable>
   );

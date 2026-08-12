@@ -8,7 +8,9 @@
  */
 
 import React, { useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Copy, ExternalLink, Inbox } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, Download, ExternalLink, Inbox } from 'lucide-react';
+import { htmlToText } from './htmlToText';
+import { plural } from './helpers';
 
 // ---------------------------------------------------------------------------
 // kopiowanie
@@ -88,6 +90,8 @@ export function rawValue(value: unknown, kind: FieldKind = 'text'): string {
   if (kind === 'bool') return value ? 'tak' : 'nie';
   if (kind === 'date') return formatDate(value);
   if (kind === 'datetime') return formatDate(value, true);
+  // Pola HTML kopiujemy jako czysty tekst - nikt nie wkleja znaczników do PMS-a.
+  if (kind === 'html') return htmlToText(String(value));
   return String(value);
 }
 
@@ -219,45 +223,74 @@ export const CopyRecordButton: React.FC<{ fields: Field[]; row: Record<string, a
 
 /** Opis z Hotresa bywa HTML-em - pokazujemy i wersję złożoną, i źródło. */
 export const HtmlBlock: React.FC<{ html: string }> = ({ html }) => {
-  const [showSource, setShowSource] = useState(false);
+  const [mode, setMode] = useState<'rendered' | 'text' | 'source'>('rendered');
   const looksLikeHtml = /<[a-z][\s\S]*>/i.test(html);
 
   if (!html?.trim()) return <EmptyValue />;
 
+  const plain = htmlToText(html);
+  const view = looksLikeHtml ? mode : 'text';
+
   return (
     <div className="min-w-0">
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
         {looksLikeHtml && (
-          <button
-            type="button"
-            onClick={() => setShowSource(value => !value)}
-            className="text-[11px] text-slate-500 hover:text-indigo-300 border border-slate-700 rounded px-1.5 py-0.5"
-          >
-            {showSource ? 'Pokaż złożone' : 'Pokaż kod HTML'}
-          </button>
+          <div className="flex bg-slate-900 border border-slate-700 rounded p-0.5">
+            {([
+              ['rendered', 'Złożone'],
+              ['text', 'Czysty tekst'],
+              ['source', 'HTML'],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setMode(value)}
+                className={`text-[11px] px-2 py-0.5 rounded transition-colors ${
+                  mode === value ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         )}
-        <CopyButton value={html} label="Kopiuj treść" />
+        {/* Teksty bywają wklejane z Worda i naszpikowane stylami - do nowego
+            PMS-a prawie zawsze chce się sam tekst. */}
+        <CopyButton value={plain} label="Kopiuj czysty tekst" />
+        {looksLikeHtml && <CopyButton value={html} label="Kopiuj z HTML" />}
       </div>
-      {showSource || !looksLikeHtml ? (
-        <pre className="bg-slate-950 border border-slate-800 rounded-lg p-3 text-[12px] text-slate-300 whitespace-pre-wrap break-words max-h-96 overflow-auto">
-          {html}
-        </pre>
-      ) : (
+
+      {view === 'rendered' ? (
         <div
           className="prose bg-slate-950/60 border border-slate-800 rounded-lg p-4 max-h-96 overflow-auto"
           dangerouslySetInnerHTML={{ __html: html }}
         />
+      ) : (
+        <pre className="bg-slate-950 border border-slate-800 rounded-lg p-3 text-[12px] text-slate-300 whitespace-pre-wrap break-words max-h-96 overflow-auto">
+          {view === 'text' ? plain : html}
+        </pre>
       )}
     </div>
   );
 };
 
-export const PhotoGrid: React.FC<{ photos: { src: string; url?: string | null }[] }> = ({
-  photos,
-}) => {
+export const PhotoGrid: React.FC<{
+  photos: { src: string; url?: string | null }[];
+  /** Adres ZIP-a z tą galerią - serwis pobiera pliki po swojej stronie. */
+  zipUrl?: string;
+}> = ({ photos, zipUrl }) => {
   if (!photos?.length) return <Empty text="Brak zdjęć" />;
 
   return (
+    <>
+    {zipUrl && (
+      <a
+        href={zipUrl}
+        className="inline-flex items-center gap-2 mb-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 px-3 py-1.5 rounded-lg text-xs transition-colors"
+      >
+        <Download size={13} /> Pobierz {plural(photos.length, ['zdjęcie', 'zdjęcia', 'zdjęć'])} jako ZIP
+      </a>
+    )}
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
       {photos.map((photo, index) => (
         <div key={photo.src} className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
@@ -287,6 +320,7 @@ export const PhotoGrid: React.FC<{ photos: { src: string; url?: string | null }[
         </div>
       ))}
     </div>
+    </>
   );
 };
 

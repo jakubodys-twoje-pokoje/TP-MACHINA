@@ -56,7 +56,7 @@ jednym kliknięciem**, a puste pola są pokazane wprost jako „puste", nigdy uk
 
 | Widok | Źródło | Co zawiera |
 |---|---|---|
-| Obiekty | baza | lista wszystkich pobranych klientów: etykieta, OID, liczniki, data i status ostatniego pobrania, **status przepisywania z notatką**, wyszukiwarka, filtry oraz **wsadowe pobieranie wielu OID-ów naraz** |
+| Obiekty | baza | lista wszystkich pobranych klientów: etykieta, OID, liczniki, data i status ostatniego pobrania, **kumulatywny postęp przepisywania** (odhaczanie sekcji + procent), notatki, wyszukiwarka, filtry oraz **wsadowe pobieranie wielu OID-ów naraz** |
 | Pobieranie | — | pojedynczy eksport z pełną kontrolą zakresu, postęp na żywo, historia przebiegów |
 | Obiekt | `api_object` | kontakt, adres, dane do faktur, doba hotelowa, opisy, galeria |
 | Standardy | `api_roomstypes` + `api_roomtype` | łóżka, metraż, wyposażenie (po nazwach), opisy per język, galeria, przypisane pokoje |
@@ -70,6 +70,20 @@ jednym kliknięciem**, a puste pola są pokazane wprost jako „puste", nigdy uk
 | Użytkownicy | `api_users` | konta z dostępem do obiektu |
 | Parametry | `api_params` | surowa konfiguracja `be_*` |
 | Słowniki (legendy) | `api_definitions` | wyposażenie, waluty, kraje - zamiana numerów na nazwy |
+
+### Dwie rzeczy, które oszczędzają najwięcej klikania
+
+**Czysty tekst.** Opisy w Hotresie są pisane w edytorze WYSIWYG i bywają
+naszpikowane stylami, twardymi spacjami i pustymi akapitami. Każde pole HTML ma
+przełącznik *Złożone / Czysty tekst / HTML* i przycisk **Kopiuj czysty tekst** -
+listy stają się punktami, style znikają. „Kopiuj wszystkie pola" też kopiuje
+tekst, nie znaczniki.
+
+**Zdjęcia jako ZIP.** Hotres daje tylko adresy URL, więc serwis pobiera pliki po
+swojej stronie i pakuje je w foldery (`obiekt/`, `standardy/<id>-<nazwa>/`,
+`cenniki/<id>-<nazwa>/`, `vouchery/`, `bilety/`). Można wziąć całość albo
+pojedynczą galerię. Zdjęcia, których nie udało się pobrać, nie wywracają
+archiwum - lądują w pliku `BLEDY.txt` w środku.
 
 ## Czego NIE pobieramy — świadomie
 
@@ -90,11 +104,17 @@ dostępowe, nie dane obiektu.
 tłumaczenia siedzą w tabelach `*Translation`, a listy w rodzaju
 `facilities: "22,7,73"` czy `rates_ids` są rozbite na relacje.
 
-**Status przepisywania jest nasz, nie Hotresa.** Każdy obiekt ma status
-(do zrobienia / w trakcie / przepisane / pomijamy) i notatkę - to jedyne dane
-w bazie, których nie da się odtworzyć z Hotresa. Eksport ich nie nadpisuje
-(pilnuje tego test), ale **kasowanie pliku bazy je traci** - przy 50 klientach
-to jest ta rzecz, którą warto backupować.
+**Postęp przepisywania jest nasz, nie Hotresa.** Każdy obiekt ma status
+(do zrobienia / w trakcie / przepisane / pomijamy), notatkę oraz **odhaczane
+sekcje** (obiekt, standardy, pokoje, cenniki, dodatki, vouchery, bilety,
+informator). Procent liczy się kumulatywnie z tych sekcji, a **sekcja bez danych
+zalicza się automatycznie** - nie ma czego przepisywać. To wyliczenie dzieje się
+przy odczycie, więc gdy pusta dotąd sekcja dostanie dane, krok sam wraca do
+niezrobionych.
+
+To jedyne dane w bazie, których nie da się odtworzyć z Hotresa. Eksport ich nie
+nadpisuje (pilnuje tego test), ale **kasowanie pliku bazy je traci** - przy 50
+klientach to jest ta rzecz, którą warto backupować.
 
 **Hotres nie zwraca nazwy obiektu.** Etykietę na liście składamy z tego, co jest:
 identyfikator tekstowy → nazwa firmy → miejscowość → sam OID.
@@ -210,6 +230,6 @@ web/src/views/            po jednym widoku na rodzaj danych
 ## Testy
 
 ```bash
-cd server && npm test        # 34 testy: rzutowanie, klient Hotres, pełny przebieg na SQLite
-cd web && npm test           # 5 testów: parsowanie wklejonej listy OID-ów
+cd server && npm test        # 42 testy: rzutowanie, klient Hotres, pełny przebieg na SQLite
+cd web && npm test           # 13 testów: HTML → czysty tekst, parsowanie listy OID-ów, odmiana liczebników
 ```
