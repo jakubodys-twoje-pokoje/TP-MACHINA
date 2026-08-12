@@ -10,7 +10,6 @@ import { PricingView } from './components/PricingView';
 import { CommissionView } from './components/CommissionView';
 import { Dashboard } from './components/Dashboard';
 import { WorkflowView } from './components/WorkflowView';
-import { HotresExportView } from './components/HotresExportView';
 import { Loader2 } from 'lucide-react';
 import { PropertyProvider } from './contexts/PropertyContext';
 
@@ -66,7 +65,6 @@ const App: React.FC = () => {
             <Route path="/property/:id/pricing" element={<PricingView />} />
             <Route path="/property/:id/commission" element={<CommissionView />} />
             <Route path="/property/:id/calendar" element={<CalendarView />} />
-            <Route path="/property/:id/export" element={<HotresExportView />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Layout>

@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Style budowane razem z aplikacją - narzędzie ma działać także wtedy,
+   gdy przeglądarka nie ma dostępu do internetu poza tym serwerem. */
+@layer base {
+  body {
+    @apply bg-background text-slate-50;
+  }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #0f172a; }
+::-webkit-scrollbar-thumb { background: #334155; border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+/* Opisy z Hotresa przychodzą jako HTML - niech będą czytelne. */
+.prose { color: #cbd5e1; line-height: 1.7; overflow-wrap: break-word; }
+.prose p { margin-bottom: 0.9em; }
+.prose strong, .prose b { color: #f1f5f9; font-weight: 600; }
+.prose h1, .prose h2, .prose h3 { color: #fff; margin: 1.2em 0 0.5em; font-weight: 700; }
+.prose ul { list-style: disc; padding-left: 1.5em; margin-bottom: 1em; }
+.prose ol { list-style: decimal; padding-left: 1.5em; margin-bottom: 1em; }
+.prose a { color: #818cf8; text-decoration: underline; }
+.prose img { max-width: 100%; border-radius: 8px; }
+.prose table { width: 100%; border-collapse: collapse; margin-bottom: 1em; }
+.prose td, .prose th { border: 1px solid #334155; padding: 6px 10px; }

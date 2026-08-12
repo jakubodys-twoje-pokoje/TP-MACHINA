@@ -61,6 +61,9 @@ const OBJECT_KEYS = new Set([
   'company_name', 'company_nip', 'company_address', 'company_city', 'company_zip',
   'photo', 'photo_s', 'photos', 'arrival_hour', 'departure_hour', 'today_arrival_hour',
   'vat_tax', 'vat_invoice', 'add_date', 'description', 'terms', 'active', 'test', 'places',
+  'child_1_from', 'child_1_to', 'child_1_adult', 'child_1_ispers',
+  'child_2_from', 'child_2_to', 'child_2_adult', 'child_2_ispers',
+  'child_3_from', 'child_3_to', 'child_3_adult', 'child_3_ispers', 'rooms_max_pers',
   // Poświadczenia - świadomie NIE zapisujemy ich w bazie.
   'auth', 'apikey',
 ]);
@@ -109,6 +112,19 @@ export async function importObject(ctx: ImportContext, group: FetchedGroup): Pro
     test: bool(canonical.test),
     places: bool(canonical.places),
     hotresAddDate: date(canonical.add_date),
+    child1From: int(canonical.child_1_from),
+    child1To: int(canonical.child_1_to),
+    child1Adult: bool(canonical.child_1_adult),
+    child1IsPers: bool(canonical.child_1_ispers),
+    child2From: int(canonical.child_2_from),
+    child2To: int(canonical.child_2_to),
+    child2Adult: bool(canonical.child_2_adult),
+    child2IsPers: bool(canonical.child_2_ispers),
+    child3From: int(canonical.child_3_from),
+    child3To: int(canonical.child_3_to),
+    child3Adult: bool(canonical.child_3_adult),
+    child3IsPers: bool(canonical.child_3_ispers),
+    roomsMaxPers: int(canonical.rooms_max_pers),
   };
 
   await ctx.prisma.property.update({ where: { id: ctx.propertyId }, data });
@@ -172,8 +188,20 @@ export async function importParams(ctx: ImportContext, group: FetchedGroup): Pro
   return { written: keys.length, removed };
 }
 
-const FACILITY_KEYS = new Set(['id', 'code', 'icon']);
+// Pola spotykane w słownikach Hotresa: facilities {id, code, icon},
+// currencies {id, code, ratio, symbol_left, symbol_right}, countries {id, name, phone, code}.
+const DEFINITION_KEYS = new Set([
+  'id', 'code', 'name', 'icon', 'ratio', 'symbol_left', 'symbol_right', 'phone',
+]);
 
+/**
+ * Słowniki z api_definitions - w tym legenda udogodnień, bez której pole
+ * `facilities: "22,7,73"` przy standardach jest nie do odczytania.
+ *
+ * Zapisujemy KAŻDY słownik zwrócony przez Hotresa, nie tylko `facilities`:
+ * dokumentacja pokazuje przykład urwany wielokropkiem, więc lista słowników
+ * jest otwarta i zależy od obiektu.
+ */
 export async function importDefinitions(
   ctx: ImportContext,
   group: FetchedGroup,
@@ -181,31 +209,60 @@ export async function importDefinitions(
   const payload = group.byLang._;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return EMPTY;
 
-  // Poza `facilities` Hotres potrafi dorzucić kolejne słowniki - schemat ich
-  // nie zna, więc zamiast je zgubić, raportujemy je jako nieznane.
-  noteUnknown(ctx, 'definitions', payload, new Set(['facilities']));
+  const keys: { dictionary: string; hotresId: string }[] = [];
 
-  const facilities = toArray(payload.facilities);
-  const ids: string[] = [];
+  for (const [dictionary, entries] of Object.entries(payload)) {
+    if (!Array.isArray(entries)) {
+      // Słownik, który nie jest listą - nie wiemy, jak go rozłożyć, więc
+      // zgłaszamy zamiast po cichu pominąć.
+      noteUnknown(ctx, 'definitions', { [dictionary]: entries }, new Set());
+      continue;
+    }
 
-  for (const facility of facilities) {
-    const hotresId = str(facility?.id);
-    if (!hotresId) continue;
-    noteUnknown(ctx, 'definitions.facilities', facility, FACILITY_KEYS);
-    ids.push(hotresId);
-    const data = { code: str(facility.code), icon: str(facility.icon) };
-    await ctx.prisma.facility.upsert({
-      where: { propertyId_hotresId: { propertyId: ctx.propertyId, hotresId } },
-      create: { propertyId: ctx.propertyId, hotresId, ...data },
-      update: data,
-    });
+    for (const entry of entries) {
+      const hotresId = str(entry?.id);
+      if (!hotresId) continue;
+      noteUnknown(ctx, `definitions.${dictionary}`, entry, DEFINITION_KEYS);
+      keys.push({ dictionary, hotresId });
+
+      const data = {
+        code: str(entry.code),
+        name: str(entry.name),
+        icon: str(entry.icon),
+        ratio: str(entry.ratio),
+        symbolLeft: str(entry.symbol_left),
+        symbolRight: str(entry.symbol_right),
+        phone: str(entry.phone),
+      };
+      await ctx.prisma.definition.upsert({
+        where: {
+          propertyId_dictionary_hotresId: { propertyId: ctx.propertyId, dictionary, hotresId },
+        },
+        create: { propertyId: ctx.propertyId, dictionary, hotresId, ...data },
+        update: data,
+      });
+    }
   }
 
-  const removed = group.ok
-    ? await pruneChildren(ctx.prisma.facility, { propertyId: ctx.propertyId }, 'hotresId', ids)
-    : 0;
+  let removed = 0;
+  if (group.ok) {
+    const dictionaries = [...new Set(keys.map(key => key.dictionary))];
+    for (const dictionary of dictionaries) {
+      removed += await pruneChildren(
+        ctx.prisma.definition,
+        { propertyId: ctx.propertyId, dictionary },
+        'hotresId',
+        keys.filter(key => key.dictionary === dictionary).map(key => key.hotresId),
+      );
+    }
+    // Słownik, który zniknął z Hotresa w całości.
+    const { count } = await ctx.prisma.definition.deleteMany({
+      where: { propertyId: ctx.propertyId, NOT: { dictionary: { in: dictionaries } } },
+    });
+    removed += count;
+  }
 
-  return { written: ids.length, removed };
+  return { written: keys.length, removed };
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +272,8 @@ export async function importDefinitions(
 const ROOMTYPE_KEYS = new Set([
   'type_id', 'oid', 'title', 'advert', 'single', 'double', 'sofa', 'bunk_bed', 'extra_bed',
   'max_persons', 'max_adults', 'area', 'bedroom_cnt', 'bathroom_cnt', 'rooms_cnt', 'facilities',
+  'sofa_single', 'armchair', 'def_persons', 'min_persons', 'max_child_1', 'max_child_2',
+  'max_child_3', 'online', 'chamber_cnt',
   'price_from', 'floor', 'address', 'city', 'zip', 'google_x', 'google_y', 'yt_url',
   'photo', 'photo_s', 'photos', 'category', 'tags', 'niceurl', 'extrainfo', 'promo',
   'description', 'instructions', 'meta_title', 'meta_description',
@@ -245,6 +304,15 @@ export async function importRoomTypes(
       bunkBed: int(merged.bunk_bed),
       extraBed: int(merged.extra_bed),
       maxAdults: int(merged.max_adults ?? merged.max_persons),
+      sofaSingle: int(merged.sofa_single),
+      armchair: int(merged.armchair),
+      defPersons: int(merged.def_persons),
+      minPersons: int(merged.min_persons),
+      maxChild1: int(merged.max_child_1),
+      maxChild2: int(merged.max_child_2),
+      maxChild3: int(merged.max_child_3),
+      online: bool(merged.online),
+      chamberCnt: int(merged.chamber_cnt),
       area: float(merged.area),
       bedroomCnt: int(merged.bedroom_cnt),
       bathroomCnt: int(merged.bathroom_cnt),
@@ -349,7 +417,9 @@ export async function importRoomTypes(
 
 const ROOM_KEYS = new Set([
   'room_id', 'type_id', 'oid', 'code', 'single', 'double', 'sofa', 'bunk_bed', 'extra_bed',
-  'state', 'custom1', 'custom2', 'custom3', 'priority', 'priority_alloc',
+  'state', 'custom1', 'custom2', 'custom3', 'custom4', 'custom5', 'custom6',
+  'priority', 'priority_alloc', 'sofa_single', 'armchair', 'floor', 'tags',
+  'online', 'forchannel',
 ]);
 
 export async function importRooms(ctx: ImportContext, group: FetchedGroup): Promise<ImportOutcome> {
@@ -379,12 +449,21 @@ export async function importRooms(ctx: ImportContext, group: FetchedGroup): Prom
       sofa: int(item.sofa),
       bunkBed: int(item.bunk_bed),
       extraBed: int(item.extra_bed),
+      sofaSingle: int(item.sofa_single),
+      armchair: int(item.armchair),
       state: str(item.state),
+      floor: int(item.floor),
+      tags: str(item.tags),
+      online: bool(item.online),
+      forchannel: bool(item.forchannel),
       priority: int(item.priority),
       priorityAlloc: int(item.priority_alloc),
       custom1: str(item.custom1),
       custom2: str(item.custom2),
       custom3: str(item.custom3),
+      custom4: str(item.custom4),
+      custom5: str(item.custom5),
+      custom6: str(item.custom6),
     };
 
     await ctx.prisma.room.upsert({
@@ -409,6 +488,16 @@ const RATE_KEYS = new Set([
   'rate_id', 'oid', 'title', 'advert', 'currency', 'package', 'board', 'minimum_stay',
   'maximum_stay', 'photo', 'photo_s', 'photos', 'category_id', 'price', 'last_price', 'tags',
   'niceurl', 'custom_url', 'description', 'meta_title', 'meta_description',
+  'public', 'forchannel', 'valid_from', 'valid_till', 'cancellation', 'autocancel_time',
+  'cancel_rules', 'payment_types', 'parent_rate_id', 'parent_pricechange', 'parent_priceval',
+  'parent_pricecalc', 'discounts',
+]);
+
+/// Pola pojedynczego rabatu w `discounts`.
+const DISCOUNT_KEYS = new Set([
+  'name', 'mode', 'source', 'discount', 'active', 'stay_from', 'stay_to', 'date_from', 'date_to',
+  'min_days', 'min_amount', 'arrival_from', 'arrival_to', 'departure_from', 'departure_to',
+  'min_days_before', 'max_days_before', 'rooms_types_ids',
 ]);
 
 export async function importRates(ctx: ImportContext, group: FetchedGroup): Promise<ImportOutcome> {
@@ -439,6 +528,17 @@ export async function importRates(ctx: ImportContext, group: FetchedGroup): Prom
       photo: str(merged.photo),
       photoS: str(merged.photo_s),
       customUrl: str(merged.custom_url),
+      isPublic: bool(merged.public),
+      forchannel: bool(merged.forchannel),
+      validFrom: date(merged.valid_from),
+      validTill: date(merged.valid_till),
+      autocancelTime: str(merged.autocancel_time),
+      cancelRules: str(merged.cancel_rules),
+      paymentTypes: str(merged.payment_types),
+      parentRateId: str(merged.parent_rate_id),
+      parentPricechange: str(merged.parent_pricechange),
+      parentPriceval: str(merged.parent_priceval),
+      parentPricecalc: str(merged.parent_pricecalc),
     };
 
     const ratePlan = await ctx.prisma.ratePlan.upsert({
@@ -459,6 +559,7 @@ export async function importRates(ctx: ImportContext, group: FetchedGroup): Prom
         title: str(source.title),
         advert: str(source.advert),
         description: str(source.description),
+        cancellation: str(source.cancellation),
         niceurl: str(source.niceurl),
         metaTitle: str(source.meta_title),
         metaDescription: str(source.meta_description),
@@ -470,6 +571,42 @@ export async function importRates(ctx: ImportContext, group: FetchedGroup): Prom
         update: translation,
       });
     }
+
+    // Rabaty nie mają identyfikatora - tożsamością jest pozycja w odpowiedzi.
+    const discounts = toArray(merged.discounts);
+    for (const [index, discount] of discounts.entries()) {
+      noteUnknown(ctx, 'rates.discounts', discount, DISCOUNT_KEYS);
+      const discountData = {
+        name: str(discount.name),
+        mode: str(discount.mode),
+        source: str(discount.source),
+        discount: str(discount.discount),
+        active: bool(discount.active),
+        stayFrom: int(discount.stay_from),
+        stayTo: int(discount.stay_to),
+        minDays: int(discount.min_days),
+        minAmount: float(discount.min_amount),
+        minDaysBefore: int(discount.min_days_before),
+        maxDaysBefore: int(discount.max_days_before),
+        dateFrom: date(discount.date_from),
+        dateTo: date(discount.date_to),
+        arrivalFrom: date(discount.arrival_from),
+        arrivalTo: date(discount.arrival_to),
+        departureFrom: date(discount.departure_from),
+        departureTo: date(discount.departure_to),
+        roomsTypesIds: csv(discount.rooms_types_ids).join(',') || null,
+      };
+      await ctx.prisma.rateDiscount.upsert({
+        where: { ratePlanId_position: { ratePlanId: ratePlan.id, position: index } },
+        create: { ratePlanId: ratePlan.id, position: index, ...discountData },
+        update: discountData,
+      });
+    }
+    removed += (
+      await ctx.prisma.rateDiscount.deleteMany({
+        where: { ratePlanId: ratePlan.id, position: { gte: discounts.length } },
+      })
+    ).count;
 
     const photos = toArray(merged.photos);
     let position = 0;
@@ -508,7 +645,7 @@ export async function importRates(ctx: ImportContext, group: FetchedGroup): Prom
 // ---------------------------------------------------------------------------
 
 const ADDON_KEYS = new Set([
-  'addon_id', 'code', 'mode', 'groups_id', 'price', 'price_child1', 'price_child2',
+  'addon_id', 'title', 'code', 'mode', 'groups_id', 'price', 'price_child1', 'price_child2',
   'price_child3', 'tax', 'stock', 'included', 'upselling', 'bookingengine', 'ondiscount',
   'visible', 'active', 'photo', 'template', 'min_nights', 'max_nights', 'date_from', 'date_to',
   'arrival_from', 'arrival_to', 'departure_from', 'departure_to', 'min_adults', 'max_adults',
@@ -527,6 +664,7 @@ export async function importAddons(ctx: ImportContext, group: FetchedGroup): Pro
     noteUnknown(ctx, 'addons', item, ADDON_KEYS);
 
     const data = {
+      title: str(item.title),
       code: str(item.code),
       mode: str(item.mode),
       groupsId: str(item.groups_id),
@@ -756,7 +894,11 @@ export async function importTickets(
 // Treści i konta
 // ---------------------------------------------------------------------------
 
-const REVIEW_KEYS = new Set(['add_date', 'source', 'author', 'rate', 'description', 'lang']);
+const REVIEW_KEYS = new Set([
+  'add_date', 'source', 'author', 'rate', 'description', 'lang', 'tags',
+  'board_rate', 'service_rate', 'room_rate', 'location_rate',
+  'reservations_id', 'source_reservation_id',
+]);
 
 export async function importReviews(
   ctx: ImportContext,
@@ -780,6 +922,13 @@ export async function importReviews(
       rate: float(item?.rate),
       description: str(item?.description),
       lang: str(item?.lang),
+      tags: str(item?.tags),
+      boardRate: float(item?.board_rate),
+      serviceRate: float(item?.service_rate),
+      roomRate: float(item?.room_rate),
+      locationRate: float(item?.location_rate),
+      reservationsId: str(item?.reservations_id),
+      sourceReservationId: str(item?.source_reservation_id),
     };
 
     await ctx.prisma.review.upsert({

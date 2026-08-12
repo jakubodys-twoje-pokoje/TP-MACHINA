@@ -13,7 +13,7 @@ export async function readSnapshot(oid: string) {
       translations: true,
       photos: { orderBy: { position: 'asc' } },
       params: { orderBy: { key: 'asc' } },
-      facilities: { orderBy: { hotresId: 'asc' } },
+      definitions: { orderBy: [{ dictionary: 'asc' }, { hotresId: 'asc' }] },
       roomTypes: {
         orderBy: { hotresId: 'asc' },
         include: {
@@ -29,6 +29,7 @@ export async function readSnapshot(oid: string) {
         include: {
           translations: true,
           photos: { orderBy: { position: 'asc' } },
+          discounts: { orderBy: { position: 'asc' } },
         },
       },
       addons: {
@@ -48,7 +49,7 @@ export async function readSnapshot(oid: string) {
 export async function readCounts(propertyId: number) {
   const [
     roomTypes, rooms, ratePlans, addons, vouchers, tickets, reviews,
-    informator, users, params, facilities, photos,
+    informator, users, params, definitions, photos,
   ] = await Promise.all([
     prisma.roomType.count({ where: { propertyId } }),
     prisma.room.count({ where: { propertyId } }),
@@ -60,12 +61,12 @@ export async function readCounts(propertyId: number) {
     prisma.informatorItem.count({ where: { propertyId } }),
     prisma.propertyUser.count({ where: { propertyId } }),
     prisma.param.count({ where: { propertyId } }),
-    prisma.facility.count({ where: { propertyId } }),
+    prisma.definition.count({ where: { propertyId } }),
     prisma.propertyPhoto.count({ where: { propertyId } }),
   ]);
 
   return {
     roomTypes, rooms, ratePlans, addons, vouchers, tickets, reviews,
-    informator, users, params, facilities, photos,
+    informator, users, params, definitions, photos,
   };
 }

@@ -45,6 +45,24 @@ model Property {
   child2 Boolean?
   child3 Boolean?
 
+  /// Progi wiekowe dzieci - bez nich nie da się odtworzyć cennika w nowym PMS.
+  /// `*Adult` = liczone jak dorosły, `*IsPers` = liczone do limitu osób.
+  child1From   Int?
+  child1To     Int?
+  child1Adult  Boolean?
+  child1IsPers Boolean?
+  child2From   Int?
+  child2To     Int?
+  child2Adult  Boolean?
+  child2IsPers Boolean?
+  child3From   Int?
+  child3To     Int?
+  child3Adult  Boolean?
+  child3IsPers Boolean?
+
+  /// Maksymalna liczba osób w całym obiekcie
+  roomsMaxPers Int?
+
   address     String?
   city        String?
   zip         String?
@@ -79,7 +97,7 @@ model Property {
   translations PropertyTranslation[]
   photos       PropertyPhoto[]
   params       Param[]
-  facilities   Facility[]
+  definitions  Definition[]
   roomTypes    RoomType[]
   rooms        Room[]
   ratePlans    RatePlan[]
@@ -129,17 +147,35 @@ model Param {
   @@unique([propertyId, key])
 }
 
-/// Słownik udogodnień z api_definitions.
-model Facility {
+/// Wpis słownikowy z api_definitions.
+///
+/// Hotres zwraca tam mapę słowników (facilities i - zależnie od obiektu -
+/// kolejne). Trzymamy je w jednej tabeli z dyskryminatorem `dictionary`,
+/// żeby nowy słownik po stronie Hotresa nie wymagał zmiany schematu.
+/// To jest legenda do rozszyfrowania pól typu `facilities: "22,7,73"`.
+model Definition {
   id         Int    @id @default(autoincrement())
   propertyId Int
+  /// Nazwa słownika: facilities / currencies / countries / ...
+  dictionary String
   hotresId   String
-  code       String?
-  icon       String?
+
+  /// Kod pozycji - dla krajów to skrót ("POL"), nazwa siedzi w `name`.
+  code String?
+  name String?
+  icon String?
+
+  /// Tylko waluty
+  ratio       String?
+  symbolLeft  String?
+  symbolRight String?
+
+  /// Tylko kraje - prefiks telefoniczny
+  phone String?
 
   property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
-  @@unique([propertyId, hotresId])
+  @@unique([propertyId, dictionary, hotresId])
 }
 
 // ---------------------------------------------------------------------------
@@ -159,10 +195,24 @@ model RoomType {
   extraBed  Int?
   maxAdults Int?
 
+  sofaSingle Int?
+  armchair   Int?
+
+  /// Obłożenie: domyślne, minimalne i limity dzieci wg progów wiekowych obiektu
+  defPersons Int?
+  minPersons Int?
+  maxChild1  Int?
+  maxChild2  Int?
+  maxChild3  Int?
+
+  /// Widoczny w sprzedaży online
+  online Boolean?
+
   area        Float?
   bedroomCnt  Int?
   bathroomCnt Int?
   roomsCnt    Int?
+  chamberCnt  Int?
   floor       Int?
 
   priceFrom Float?
@@ -250,9 +300,17 @@ model Room {
   single   Int?
   double   Int?
   sofa     Int?
-  bunkBed  Int?
-  extraBed Int?
-  state    String?
+  bunkBed    Int?
+  extraBed   Int?
+  sofaSingle Int?
+  armchair   Int?
+  state      String?
+  floor      Int?
+  tags       String?
+
+  /// Widoczny w sprzedaży online / wystawiony do channel managera
+  online     Boolean?
+  forchannel Boolean?
 
   priority      Int?
   priorityAlloc Int?
@@ -260,6 +318,9 @@ model Room {
   custom1 String?
   custom2 String?
   custom3 String?
+  custom4 String?
+  custom5 String?
+  custom6 String?
 
   property Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
   roomType RoomType? @relation(fields: [roomTypeId], references: [id], onDelete: SetNull)
@@ -290,8 +351,28 @@ model RatePlan {
   photoS      String?
   customUrl   String?
 
+  /// Widoczny publicznie / wystawiony do channel managera
+  isPublic   Boolean?
+  forchannel Boolean?
+
+  /// Okres obowiązywania cennika
+  validFrom DateTime?
+  validTill DateTime?
+
+  /// Anulacje: `autocancelTime` bywa liczbą godzin albo "dis" (wyłączone)
+  autocancelTime String?
+  cancelRules    String?
+  paymentTypes   String?
+
+  /// Cennik pochodny: liczony od innego cennika
+  parentRateId      String?
+  parentPricechange String?
+  parentPriceval    String?
+  parentPricecalc   String?
+
   translations RatePlanTranslation[]
   photos       RatePlanPhoto[]
+  discounts    RateDiscount[]
   addonLinks   AddonRatePlan[]
 
   property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
@@ -307,6 +388,8 @@ model RatePlanTranslation {
   title           String?
   advert          String?
   description     String?
+  /// Zasady anulacji - proza, bywa inna w każdym języku
+  cancellation    String?
   niceurl         String?
   metaTitle       String?
   metaDescription String?
@@ -314,6 +397,41 @@ model RatePlanTranslation {
   ratePlan RatePlan @relation(fields: [ratePlanId], references: [id], onDelete: Cascade)
 
   @@unique([ratePlanId, lang])
+}
+
+/// Rabaty przypisane do cennika (pole `discounts` w api_rate).
+model RateDiscount {
+  id         Int    @id @default(autoincrement())
+  ratePlanId Int
+  /// Kolejność z odpowiedzi API - rabaty nie mają własnego identyfikatora
+  position   Int
+
+  name     String?
+  mode     String?
+  source   String?
+  discount String?
+  active   Boolean?
+
+  stayFrom Int?
+  stayTo   Int?
+  minDays  Int?
+  minAmount Float?
+  minDaysBefore Int?
+  maxDaysBefore Int?
+
+  dateFrom      DateTime?
+  dateTo        DateTime?
+  arrivalFrom   DateTime?
+  arrivalTo     DateTime?
+  departureFrom DateTime?
+  departureTo   DateTime?
+
+  /// Lista type_id, których dotyczy rabat (tak jak zwraca Hotres)
+  roomsTypesIds String?
+
+  ratePlan RatePlan @relation(fields: [ratePlanId], references: [id], onDelete: Cascade)
+
+  @@unique([ratePlanId, position])
 }
 
 model RatePlanPhoto {
@@ -338,6 +456,8 @@ model Addon {
   /// addon_id w Hotres
   hotresId   String
 
+  /// Nazwa dodatku; `code` bywa identyczne, ale to `title` jest etykietą
+  title    String?
   code     String?
   mode     String?
   groupsId String?
@@ -503,6 +623,17 @@ model Review {
   rate        Float?
   description String?
   lang        String?
+  tags        String?
+
+  /// Oceny cząstkowe
+  boardRate    Float?
+  serviceRate  Float?
+  roomRate     Float?
+  locationRate Float?
+
+  /// Powiązanie z rezerwacją (samych rezerwacji nie pobieramy)
+  reservationsId       String?
+  sourceReservationId  String?
 
   property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 

@@ -72,6 +72,11 @@ const FIXTURES: Responder = {
     google_y: '15.26707047053128',
     child_1: '1',
     child_2: '0',
+    child_1_from: '3',
+    child_1_to: '12',
+    child_1_adult: '0',
+    child_1_ispers: '1',
+    rooms_max_pers: '8',
     address: 'Wolności',
     city: 'Zakopane',
     zip: '58-560',
@@ -100,6 +105,9 @@ const FIXTURES: Responder = {
       { id: '1', code: 'WiFi', icon: 'https://panel.hotres.pl/1.svg' },
       { id: '22', code: 'Balkon', icon: 'https://panel.hotres.pl/22.svg' },
     ],
+    // Prawdziwe API zwraca więcej słowników niż pokazuje dokumentacja.
+    countries: [{ id: '1', name: 'Polska', phone: '48', code: 'POL' }],
+    currencies: [{ id: '1', code: 'PLN', ratio: '1', symbol_left: '', symbol_right: 'zł' }],
   },
   api_roomstypes: [
     {
@@ -179,11 +187,22 @@ const FIXTURES: Responder = {
     rate_id: '22784',
     title: 'Standard ze śniadaniem',
     description: '<p>opis cennika</p>',
+    cancellation: '<p>Zadatek bezzwrotny.</p>',
+    public: '1',
+    autocancel_time: 'dis',
+    payment_types: 'payu',
     photos: [{ src: '/474/cennik-1.jpg', url: 'https://img/cennik-1.jpg' }],
+    discounts: [
+      { name: 'Ekonomiczny', mode: 'percent', source: 'amount', discount: '11', active: '0',
+        arrival_from: '2026-06-27', arrival_to: '2026-07-04', rooms_types_ids: '29411,29412' },
+      { name: 'Last minute', mode: 'percent', source: 'amount', discount: '5', active: '1',
+        max_days_before: '3' },
+    ],
   }),
   api_addons: [
     {
       addon_id: '2',
+      title: 'Wino białe',
       code: 'wino',
       mode: 'once',
       groups_id: '4',
@@ -255,7 +274,7 @@ describe('runExport - pełna normalizacja', () => {
 
     const property = await prisma.property.findUniqueOrThrow({
       where: { oid: 'T-1' },
-      include: { translations: true, photos: true, params: true, facilities: true },
+      include: { translations: true, photos: true, params: true, definitions: true },
     });
 
     expect(property.city).toBe('Zakopane');
@@ -267,7 +286,64 @@ describe('runExport - pełna normalizacja', () => {
     expect(property.translations[0].description).toContain('ładny obiekt');
     expect(property.photos).toHaveLength(2);
     expect(property.params).toHaveLength(3);
-    expect(property.facilities.map(f => f.code).sort()).toEqual(['Balkon', 'WiFi']);
+    const facilities = property.definitions.filter(d => d.dictionary === 'facilities');
+    expect(facilities.map(d => d.code).sort()).toEqual(['Balkon', 'WiFi']);
+  });
+
+  it('zapisuje progi wiekowe dzieci - bez nich nie da się odtworzyć cennika', async () => {
+    await run('T-16', FIXTURES);
+    const property = await prisma.property.findUniqueOrThrow({ where: { oid: 'T-16' } });
+
+    expect(property.child1From).toBe(3);
+    expect(property.child1To).toBe(12);
+    expect(property.child1Adult).toBe(false);
+    expect(property.child1IsPers).toBe(true);
+    expect(property.roomsMaxPers).toBe(8);
+  });
+
+  it('zapisuje każdy słownik, nie tylko udogodnienia', async () => {
+    await run('T-17', FIXTURES);
+    const definitions = await prisma.definition.findMany({
+      where: { property: { oid: 'T-17' } },
+    });
+
+    const dictionaries = [...new Set(definitions.map(d => d.dictionary))].sort();
+    expect(dictionaries).toEqual(['countries', 'currencies', 'facilities']);
+
+    // Kraje trzymają nazwę w `name`, a skrót w `code` - obie wartości muszą przetrwać.
+    const country = definitions.find(d => d.dictionary === 'countries');
+    expect(country).toMatchObject({ name: 'Polska', code: 'POL', phone: '48' });
+
+    const currency = definitions.find(d => d.dictionary === 'currencies');
+    expect(currency).toMatchObject({ code: 'PLN', ratio: '1', symbolRight: 'zł' });
+  });
+
+  it('rozkłada rabaty cennika na osobne rekordy', async () => {
+    await run('T-18', FIXTURES);
+    const rate = await prisma.ratePlan.findFirstOrThrow({
+      where: { property: { oid: 'T-18' }, hotresId: '22784' },
+      include: { discounts: { orderBy: { position: 'asc' } }, translations: true },
+    });
+
+    expect(rate.isPublic).toBe(true);
+    expect(rate.autocancelTime).toBe('dis');
+    expect(rate.paymentTypes).toBe('payu');
+    expect(rate.translations[0].cancellation).toContain('Zadatek bezzwrotny');
+
+    expect(rate.discounts).toHaveLength(2);
+    expect(rate.discounts[0]).toMatchObject({
+      name: 'Ekonomiczny', discount: '11', active: false, roomsTypesIds: '29411,29412',
+    });
+    expect(rate.discounts[1]).toMatchObject({ name: 'Last minute', active: true, maxDaysBefore: 3 });
+    expect(rate.discounts[0].arrivalFrom?.toISOString()).toBe('2026-06-27T00:00:00.000Z');
+  });
+
+  it('zapisuje nazwę dodatku, nie tylko kod', async () => {
+    await run('T-19', FIXTURES);
+    const addon = await prisma.addon.findFirstOrThrow({ where: { property: { oid: 'T-19' } } });
+
+    expect(addon.title).toBe('Wino białe');
+    expect(addon.code).toBe('wino');
   });
 
   it('nie zapisuje poświadczeń z api_object', async () => {
