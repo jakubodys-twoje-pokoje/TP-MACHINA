@@ -77,23 +77,48 @@ app.get('/api/catalogue', (_req, res) => {
   });
 });
 
-/** Lista obiektów, które są już w bazie - do przełącznika u góry GUI. */
+/**
+ * Lista obiektów w bazie - podstawa widoku "Obiekty".
+ *
+ * Hotres nie ma pola z nazwą obiektu, więc etykietę składamy z tego, co jest:
+ * identyfikator tekstowy → nazwa firmy → miejscowość → sam OID.
+ */
 app.get('/api/properties', async (_req, res) => {
   const properties = await prisma.property.findMany({
     orderBy: { oid: 'asc' },
     select: {
       id: true,
       oid: true,
+      identifier: true,
+      companyName: true,
       city: true,
+      email: true,
       updatedAt: true,
-      translations: { select: { lang: true }, take: 1 },
-      _count: { select: { roomTypes: true, rooms: true, ratePlans: true } },
+      _count: {
+        select: {
+          roomTypes: true, rooms: true, ratePlans: true, addons: true,
+          reviews: true, definitions: true,
+        },
+      },
     },
   });
 
-  // Nazwa obiektu siedzi w Hotresie tylko jako dane firmy/adres - do listy
-  // wystarczy oid + miasto, resztę widać po wejściu w obiekt.
-  res.json(properties);
+  // Ostatni przebieg per obiekt - żeby na liście było widać, co i kiedy poszło.
+  const runs = await prisma.exportRun.findMany({
+    orderBy: { startedAt: 'desc' },
+    select: { oid: true, status: true, startedAt: true, requests: true },
+  });
+  const lastRun = new Map<string, (typeof runs)[number]>();
+  for (const run of runs) if (!lastRun.has(run.oid)) lastRun.set(run.oid, run);
+
+  res.json(
+    properties.map(property => ({
+      ...property,
+      label:
+        property.identifier || property.companyName || property.city || `OID ${property.oid}`,
+      lastRun: lastRun.get(property.oid) ?? null,
+    })),
+  );
 });
 
 /**

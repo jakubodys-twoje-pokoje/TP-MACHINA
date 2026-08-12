@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   BedDouble, Boxes, Database, DoorClosed, Gift, Info, LogOut, Loader2, MessageSquareQuote,
-  RefreshCw, Settings2, Sparkles, Tag, Ticket, Users, Warehouse,
+  Building2, RefreshCw, Settings2, Sparkles, Tag, Ticket, Users, Warehouse,
 } from 'lucide-react';
 
 import {
@@ -11,6 +11,7 @@ import {
 } from './api';
 import { Login } from './views/Login';
 import { ExportView } from './views/ExportView';
+import { PropertiesView } from './views/PropertiesView';
 import { ObjectView } from './views/ObjectView';
 import { RoomTypesView, RoomsView } from './views/RoomTypesView';
 import { RatesView } from './views/RatesView';
@@ -20,7 +21,7 @@ import {
 } from './views/CatalogViews';
 
 type SectionKey =
-  | 'export' | 'object' | 'roomTypes' | 'rooms' | 'rates' | 'addons' | 'vouchers'
+  | 'properties' | 'export' | 'object' | 'roomTypes' | 'rooms' | 'rates' | 'addons' | 'vouchers'
   | 'tickets' | 'reviews' | 'informator' | 'users' | 'params' | 'facilities';
 
 interface Section {
@@ -32,6 +33,7 @@ interface Section {
 }
 
 const SECTIONS: Section[] = [
+  { key: 'properties', label: 'Obiekty', icon: Building2 },
   { key: 'export', label: 'Pobieranie', icon: Database },
   { key: 'object', label: 'Obiekt', icon: Warehouse },
   { key: 'roomTypes', label: 'Standardy', icon: BedDouble, count: data => data.roomTypes?.length ?? 0 },
@@ -55,7 +57,7 @@ export const App: React.FC = () => {
   const [properties, setProperties] = useState<PropertyRow[]>([]);
 
   const [oid, setOid] = useState(() => localStorage.getItem(OID_STORAGE_KEY) ?? '');
-  const [section, setSection] = useState<SectionKey>('export');
+  const [section, setSection] = useState<SectionKey>('properties');
   const [data, setData] = useState<any>(null);
   const [loadingData, setLoadingData] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -136,6 +138,7 @@ export const App: React.FC = () => {
   }
 
   const hasData = Boolean(data);
+  const activeLabel = properties.find(property => property.oid === oid)?.label ?? null;
 
   return (
     <div className="min-h-screen flex">
@@ -182,23 +185,20 @@ export const App: React.FC = () => {
           </div>
 
           {properties.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1">
-              {properties.map(property => (
-                <button
-                  key={property.id}
-                  type="button"
-                  onClick={() => setOid(property.oid)}
-                  className={`text-[11px] font-mono px-2 py-1 rounded border transition-colors ${
-                    property.oid === oid
-                      ? 'bg-indigo-600 border-indigo-500 text-white'
-                      : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'
-                  }`}
-                  title={`${property.city ?? ''} · ${property._count.roomTypes} standardów`}
-                >
-                  {property.oid}
-                </button>
-              ))}
-            </div>
+            <button
+              type="button"
+              onClick={() => setSection('properties')}
+              className="mt-2 w-full text-left text-[11px] text-slate-500 hover:text-indigo-300 transition-colors"
+            >
+              {activeLabel ? (
+                <span className="text-slate-300 block truncate">{activeLabel}</span>
+              ) : (
+                'wybierz z listy obiektów'
+              )}
+              <span className="text-slate-600 block mt-0.5">
+                {properties.length} w bazie →
+              </span>
+            </button>
           )}
         </div>
 
@@ -207,7 +207,7 @@ export const App: React.FC = () => {
             const Icon = item.icon;
             const count = hasData && item.count ? item.count(data) : null;
             const active = section === item.key;
-            const dimmed = item.key !== 'export' && !hasData;
+            const dimmed = item.key !== 'export' && item.key !== 'properties' && !hasData;
 
             return (
               <button
@@ -252,7 +252,21 @@ export const App: React.FC = () => {
 
       {/* Treść */}
       <main className="flex-1 min-w-0 p-5 sm:p-8 max-w-6xl">
-        {section === 'export' ? (
+        {section === 'properties' ? (
+          <PropertiesView
+            properties={properties}
+            catalogue={catalogue}
+            activeOid={oid}
+            onOpen={nextOid => {
+              setOid(nextOid);
+              setSection('object');
+            }}
+            onRefresh={() => {
+              loadProperties();
+              loadData(oid);
+            }}
+          />
+        ) : section === 'export' ? (
           <ExportView
             catalogue={catalogue}
             oid={oid}

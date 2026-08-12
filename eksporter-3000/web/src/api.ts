@@ -57,9 +57,18 @@ export interface Catalogue {
 export interface PropertyRow {
   id: number;
   oid: string;
+  /** Etykieta złożona przez serwis - Hotres nie ma pola z nazwą obiektu. */
+  label: string;
+  identifier: string | null;
+  companyName: string | null;
   city: string | null;
+  email: string | null;
   updatedAt: string;
-  _count: { roomTypes: number; rooms: number; ratePlans: number };
+  _count: {
+    roomTypes: number; rooms: number; ratePlans: number;
+    addons: number; reviews: number; definitions: number;
+  };
+  lastRun: { status: string; startedAt: string; requests: number } | null;
 }
 
 export const getCatalogue = () => request<Catalogue>('/api/catalogue');

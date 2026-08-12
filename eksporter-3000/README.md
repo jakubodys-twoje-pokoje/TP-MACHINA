@@ -56,7 +56,8 @@ jednym kliknięciem**, a puste pola są pokazane wprost jako „puste", nigdy uk
 
 | Widok | Źródło | Co zawiera |
 |---|---|---|
-| Pobieranie | — | uruchomienie eksportu, postęp na żywo, historia przebiegów |
+| Obiekty | baza | lista wszystkich pobranych klientów: etykieta, OID, liczniki, data i status ostatniego pobrania, wyszukiwarka oraz **wsadowe pobieranie wielu OID-ów naraz** |
+| Pobieranie | — | pojedynczy eksport z pełną kontrolą zakresu, postęp na żywo, historia przebiegów |
 | Obiekt | `api_object` | kontakt, adres, dane do faktur, doba hotelowa, opisy, galeria |
 | Standardy | `api_roomstypes` + `api_roomtype` | łóżka, metraż, wyposażenie (po nazwach), opisy per język, galeria, przypisane pokoje |
 | Pokoje fizyczne | `api_rooms` | numery, stan, pola własne, powiązanie ze standardem |
@@ -88,6 +89,16 @@ dostępowe, nie dane obiektu.
 **Pełna normalizacja.** Żadnych blobów JSON — każde pole ma swoją kolumnę,
 tłumaczenia siedzą w tabelach `*Translation`, a listy w rodzaju
 `facilities: "22,7,73"` czy `rates_ids` są rozbite na relacje.
+
+**Hotres nie zwraca nazwy obiektu.** Etykietę na liście składamy z tego, co jest:
+identyfikator tekstowy → nazwa firmy → miejscowość → sam OID.
+
+**Dane czyta się z bazy, nie z Hotresa.** Połączenie do API powstaje wyłącznie
+przy pobieraniu; przeglądanie widoków działa nawet przy błędnych poświadczeniach
+Hotresa i nie zużywa limitu zapytań.
+
+**Wsadowo, ale po kolei.** Lista OID-ów leci sekwencyjnie, nie równolegle -
+równoległość tylko szybciej wyczerpałaby godzinowy limit Hotresa.
 
 **Pierwszy wybrany język jest główny.** Z niego biorą się wartości podstawowe
 rekordu; pozostałe języki lądują w zakładkach przy opisach.
@@ -194,4 +205,5 @@ web/src/views/            po jednym widoku na rodzaj danych
 
 ```bash
 cd server && npm test        # 34 testy: rzutowanie, klient Hotres, pełny przebieg na SQLite
+cd web && npm test           # 5 testów: parsowanie wklejonej listy OID-ów
 ```
