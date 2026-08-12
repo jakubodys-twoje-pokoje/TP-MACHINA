@@ -94,6 +94,13 @@ model Property {
   firstSeenAt DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  /// Postęp przepisywania do nowego PMS - pola NASZE, nie z Hotresa.
+  /// Ponowny eksport ich nie rusza (importer aktualizuje wyłącznie pola Hotresa).
+  migrationStatus    String    @default("todo") // todo | in_progress | done | skipped
+  migrationNote      String?
+  migrationUpdatedAt DateTime?
+  migrationUpdatedBy String?
+
   translations PropertyTranslation[]
   photos       PropertyPhoto[]
   params       Param[]

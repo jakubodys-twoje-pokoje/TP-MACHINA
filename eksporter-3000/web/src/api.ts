@@ -69,7 +69,29 @@ export interface PropertyRow {
     addons: number; reviews: number; definitions: number;
   };
   lastRun: { status: string; startedAt: string; requests: number } | null;
+
+  /** Postęp przepisywania - dane nasze, nie z Hotresa. */
+  migrationStatus: MigrationStatus;
+  migrationNote: string | null;
+  migrationUpdatedAt: string | null;
+  migrationUpdatedBy: string | null;
 }
+
+export type MigrationStatus = 'todo' | 'in_progress' | 'done' | 'skipped';
+
+export const MIGRATION_LABELS: Record<MigrationStatus, string> = {
+  todo: 'Do zrobienia',
+  in_progress: 'W trakcie',
+  done: 'Przepisane',
+  skipped: 'Pomijamy',
+};
+
+export const setMigration = (oid: string, patch: { status?: MigrationStatus; note?: string }) =>
+  request<{ oid: string }>(`/api/properties/${encodeURIComponent(oid)}/migration`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
 
 export const getCatalogue = () => request<Catalogue>('/api/catalogue');
 export const getProperties = () => request<PropertyRow[]>('/api/properties');

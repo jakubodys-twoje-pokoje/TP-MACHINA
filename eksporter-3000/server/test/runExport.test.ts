@@ -543,6 +543,37 @@ describe('runExport - pełna normalizacja', () => {
     expect(room.roomTypeId).not.toBeNull();
   });
 
+  it('ponowne pobranie NIE kasuje statusu migracji ani notatki', async () => {
+    await run('T-20', FIXTURES);
+
+    // Człowiek oznacza obiekt jako przepisany i zostawia notatkę.
+    await prisma.property.update({
+      where: { oid: 'T-20' },
+      data: {
+        migrationStatus: 'done',
+        migrationNote: 'cenniki przepisane, zostały dodatki',
+        migrationUpdatedBy: 'jakub',
+      },
+    });
+
+    await run('T-20', FIXTURES);
+
+    const property = await prisma.property.findUniqueOrThrow({ where: { oid: 'T-20' } });
+    expect(property.migrationStatus).toBe('done');
+    expect(property.migrationNote).toBe('cenniki przepisane, zostały dodatki');
+    expect(property.migrationUpdatedBy).toBe('jakub');
+    // ...a dane z Hotresa nadal się odświeżyły.
+    expect(property.city).toBe('Zakopane');
+  });
+
+  it('nowy obiekt startuje ze statusem "do zrobienia"', async () => {
+    await run('T-21', FIXTURES);
+    const property = await prisma.property.findUniqueOrThrow({ where: { oid: 'T-21' } });
+
+    expect(property.migrationStatus).toBe('todo');
+    expect(property.migrationNote).toBeNull();
+  });
+
   it('odrzuca nieznany język i nieznaną grupę', async () => {
     await expect(run('T-15', FIXTURES, { langs: ['xx'] })).rejects.toThrow('Nieznany język');
     await expect(run('T-15', FIXTURES, { groups: ['bzdura'] })).rejects.toThrow('Nieznana grupa');

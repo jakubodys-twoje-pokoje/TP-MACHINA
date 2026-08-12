@@ -94,6 +94,10 @@ app.get('/api/properties', async (_req, res) => {
       city: true,
       email: true,
       updatedAt: true,
+      migrationStatus: true,
+      migrationNote: true,
+      migrationUpdatedAt: true,
+      migrationUpdatedBy: true,
       _count: {
         select: {
           roomTypes: true, rooms: true, ratePlans: true, addons: true,
@@ -119,6 +123,48 @@ app.get('/api/properties', async (_req, res) => {
       lastRun: lastRun.get(property.oid) ?? null,
     })),
   );
+});
+
+const MIGRATION_STATUSES = ['todo', 'in_progress', 'done', 'skipped'];
+
+/**
+ * Postęp przepisywania obiektu do nowego PMS.
+ *
+ * To jedyne dane w bazie, których nie ma w Hotresie - dlatego ustawia je
+ * człowiek, a eksport ich nie nadpisuje.
+ */
+app.patch('/api/properties/:oid/migration', async (req, res) => {
+  const { status, note } = req.body ?? {};
+
+  if (status !== undefined && !MIGRATION_STATUSES.includes(String(status))) {
+    res.status(400).json({ error: `Nieznany status: ${status}` });
+    return;
+  }
+
+  const property = await prisma.property.findUnique({
+    where: { oid: String(req.params.oid) },
+    select: { id: true },
+  });
+  if (!property) {
+    res.status(404).json({ error: 'Obiekt nie był jeszcze eksportowany' });
+    return;
+  }
+
+  const updated = await prisma.property.update({
+    where: { id: property.id },
+    data: {
+      ...(status !== undefined ? { migrationStatus: String(status) } : {}),
+      ...(note !== undefined ? { migrationNote: note === '' ? null : String(note) } : {}),
+      migrationUpdatedAt: new Date(),
+      migrationUpdatedBy: readCredentials().user,
+    },
+    select: {
+      oid: true, migrationStatus: true, migrationNote: true,
+      migrationUpdatedAt: true, migrationUpdatedBy: true,
+    },
+  });
+
+  res.json(updated);
 });
 
 /**

@@ -56,7 +56,7 @@ jednym kliknięciem**, a puste pola są pokazane wprost jako „puste", nigdy uk
 
 | Widok | Źródło | Co zawiera |
 |---|---|---|
-| Obiekty | baza | lista wszystkich pobranych klientów: etykieta, OID, liczniki, data i status ostatniego pobrania, wyszukiwarka oraz **wsadowe pobieranie wielu OID-ów naraz** |
+| Obiekty | baza | lista wszystkich pobranych klientów: etykieta, OID, liczniki, data i status ostatniego pobrania, **status przepisywania z notatką**, wyszukiwarka, filtry oraz **wsadowe pobieranie wielu OID-ów naraz** |
 | Pobieranie | — | pojedynczy eksport z pełną kontrolą zakresu, postęp na żywo, historia przebiegów |
 | Obiekt | `api_object` | kontakt, adres, dane do faktur, doba hotelowa, opisy, galeria |
 | Standardy | `api_roomstypes` + `api_roomtype` | łóżka, metraż, wyposażenie (po nazwach), opisy per język, galeria, przypisane pokoje |
@@ -89,6 +89,12 @@ dostępowe, nie dane obiektu.
 **Pełna normalizacja.** Żadnych blobów JSON — każde pole ma swoją kolumnę,
 tłumaczenia siedzą w tabelach `*Translation`, a listy w rodzaju
 `facilities: "22,7,73"` czy `rates_ids` są rozbite na relacje.
+
+**Status przepisywania jest nasz, nie Hotresa.** Każdy obiekt ma status
+(do zrobienia / w trakcie / przepisane / pomijamy) i notatkę - to jedyne dane
+w bazie, których nie da się odtworzyć z Hotresa. Eksport ich nie nadpisuje
+(pilnuje tego test), ale **kasowanie pliku bazy je traci** - przy 50 klientach
+to jest ta rzecz, którą warto backupować.
 
 **Hotres nie zwraca nazwy obiektu.** Etykietę na liście składamy z tego, co jest:
 identyfikator tekstowy → nazwa firmy → miejscowość → sam OID.

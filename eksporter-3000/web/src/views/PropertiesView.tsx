@@ -1,9 +1,12 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, CheckCircle2, ChevronRight, Clock, Download, Loader2, Plus, X, Zap,
+  ChevronRight, Clock, Loader2, Plus, StickyNote, Zap,
 } from 'lucide-react';
 import { Card, Empty, PageHeader, SearchBox } from '../ui';
-import { streamExport, type Catalogue, type PropertyRow } from '../api';
+import {
+  MIGRATION_LABELS, setMigration, streamExport,
+  type Catalogue, type MigrationStatus, type PropertyRow,
+} from '../api';
 import { matches } from '../helpers';
 
 /** 1 obiekt / 2 obiekty / 5 obiektów - inaczej przycisk czyta się koślawo. */
@@ -31,6 +34,15 @@ const STATUS_STYLES: Record<QueueStatus, string> = {
   'błąd': 'bg-red-500/10 text-red-400',
 };
 
+const MIGRATION_STYLES: Record<MigrationStatus, string> = {
+  todo: 'bg-slate-800 text-slate-400 border-slate-700',
+  in_progress: 'bg-amber-500/10 text-amber-300 border-amber-500/40',
+  done: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/40',
+  skipped: 'bg-slate-900 text-slate-600 border-slate-800',
+};
+
+const MIGRATION_ORDER: MigrationStatus[] = ['todo', 'in_progress', 'done', 'skipped'];
+
 const RUN_STATUS_STYLES: Record<string, string> = {
   ok: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
   error: 'text-red-400 bg-red-500/10 border-red-500/30',
@@ -54,6 +66,9 @@ export const PropertiesView: React.FC<{
   onRefresh: () => void;
 }> = ({ properties, catalogue, activeOid, onOpen, onRefresh }) => {
   const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<MigrationStatus | 'all'>('all');
+  const [noteFor, setNoteFor] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState('');
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkInput, setBulkInput] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -62,15 +77,35 @@ export const PropertiesView: React.FC<{
 
   const filtered = useMemo(
     () =>
-      properties.filter(
-        property =>
+      properties.filter(property => {
+        if (statusFilter !== 'all' && property.migrationStatus !== statusFilter) return false;
+        return (
           matches(property.label, query) ||
           matches(property.oid, query) ||
           matches(property.city, query) ||
-          matches(property.companyName, query),
-      ),
-    [properties, query],
+          matches(property.companyName, query) ||
+          matches(property.migrationNote, query)
+        );
+      }),
+    [properties, query, statusFilter],
   );
+
+  const byStatus = useMemo(() => {
+    const counts: Record<string, number> = { todo: 0, in_progress: 0, done: 0, skipped: 0 };
+    for (const property of properties) counts[property.migrationStatus] = (counts[property.migrationStatus] ?? 0) + 1;
+    return counts;
+  }, [properties]);
+
+  const changeStatus = async (oid: string, status: MigrationStatus) => {
+    await setMigration(oid, { status });
+    onRefresh();
+  };
+
+  const saveNote = async (oid: string) => {
+    await setMigration(oid, { note: noteDraft });
+    setNoteFor(null);
+    onRefresh();
+  };
 
   const parsed = parseOids(bulkInput);
   const fresh = parsed.filter(oid => !properties.some(property => property.oid === oid));
@@ -154,6 +189,55 @@ export const PropertiesView: React.FC<{
           <Plus size={15} /> Dodaj obiekty
         </button>
       </PageHeader>
+
+      {properties.length > 0 && (
+        <div className="bg-surface border border-border rounded-xl p-4 mb-5">
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+            <div className="text-sm text-slate-300">
+              Przepisane do nowego PMS:{' '}
+              <strong className="text-emerald-400">{byStatus.done}</strong>
+              <span className="text-slate-500"> z {properties.length}</span>
+            </div>
+            <div className="flex gap-1.5 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setStatusFilter('all')}
+                className={`px-2.5 py-1 rounded-lg text-xs border transition-colors ${
+                  statusFilter === 'all'
+                    ? 'bg-indigo-600 border-indigo-500 text-white'
+                    : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-white'
+                }`}
+              >
+                wszystkie {properties.length}
+              </button>
+              {MIGRATION_ORDER.map(status => (
+                <button
+                  key={status}
+                  type="button"
+                  onClick={() => setStatusFilter(status)}
+                  className={`px-2.5 py-1 rounded-lg text-xs border transition-colors ${
+                    statusFilter === status
+                      ? 'bg-indigo-600 border-indigo-500 text-white'
+                      : `${MIGRATION_STYLES[status]} hover:brightness-125`
+                  }`}
+                >
+                  {MIGRATION_LABELS[status]} {byStatus[status] ?? 0}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="h-2 bg-slate-900 rounded-full overflow-hidden flex">
+            <div
+              className="h-full bg-emerald-500 transition-all"
+              style={{ width: `${(byStatus.done / properties.length) * 100}%` }}
+            />
+            <div
+              className="h-full bg-amber-500 transition-all"
+              style={{ width: `${(byStatus.in_progress / properties.length) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {bulkOpen && (
         <Card title="Pobierz wiele obiektów naraz">
@@ -241,17 +325,18 @@ export const PropertiesView: React.FC<{
           {filtered.map(property => {
             const active = property.oid === activeOid;
             return (
-              <button
+              <div
                 key={property.id}
-                type="button"
-                onClick={() => onOpen(property.oid)}
                 className={`w-full text-left bg-slate-900 border rounded-lg p-3.5 transition-colors flex items-center gap-4 flex-wrap ${
                   active
                     ? 'border-indigo-500/50 bg-slate-800/60'
-                    : 'border-slate-800 hover:border-slate-700 hover:bg-slate-800/40'
+                    : 'border-slate-800 hover:border-slate-700'
                 }`}
               >
-                <div className="min-w-0 flex-1">
+                <button
+                  type="button"
+                  onClick={() => onOpen(property.oid)}
+                  className="min-w-0 flex-1 text-left">
                   <div className="flex items-baseline gap-2 flex-wrap">
                     <span className="text-base font-semibold text-white truncate">
                       {property.label}
@@ -277,7 +362,13 @@ export const PropertiesView: React.FC<{
                       </span>
                     )}
                   </div>
-                </div>
+                  {property.migrationNote && (
+                    <div className="text-xs text-amber-300/80 mt-1.5 flex items-start gap-1.5">
+                      <StickyNote size={11} className="mt-0.5 flex-shrink-0" />
+                      <span className="break-words">{property.migrationNote}</span>
+                    </div>
+                  )}
+                </button>
 
                 <div className="flex items-center gap-3 text-xs text-slate-400">
                   <Stat label="standardy" value={property._count.roomTypes} />
@@ -286,8 +377,82 @@ export const PropertiesView: React.FC<{
                   <Stat label="dodatki" value={property._count.addons} />
                 </div>
 
-                <ChevronRight size={16} className="text-slate-600 flex-shrink-0" />
-              </button>
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={property.migrationStatus}
+                    onChange={event => changeStatus(property.oid, event.target.value as MigrationStatus)}
+                    className={`text-xs font-medium rounded-lg border px-2 py-1.5 outline-none cursor-pointer ${
+                      MIGRATION_STYLES[property.migrationStatus]
+                    }`}
+                    title={
+                      property.migrationUpdatedAt
+                        ? `zmienił ${property.migrationUpdatedBy ?? '?'}, ${new Date(property.migrationUpdatedAt).toLocaleString('pl-PL')}`
+                        : 'status przepisywania do nowego PMS'
+                    }
+                  >
+                    {MIGRATION_ORDER.map(status => (
+                      <option key={status} value={status} className="bg-slate-900 text-white">
+                        {MIGRATION_LABELS[status]}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNoteFor(noteFor === property.oid ? null : property.oid);
+                      setNoteDraft(property.migrationNote ?? '');
+                    }}
+                    title="Notatka"
+                    className={`p-1.5 rounded-lg border transition-colors ${
+                      property.migrationNote
+                        ? 'border-amber-500/40 text-amber-300'
+                        : 'border-slate-700 text-slate-500 hover:text-white'
+                    }`}
+                  >
+                    <StickyNote size={14} />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onOpen(property.oid)}
+                    className="p-1.5 text-slate-600 hover:text-white transition-colors"
+                    title="Otwórz dane"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+
+                {noteFor === property.oid && (
+                  <div className="w-full flex gap-2 mt-1">
+                    <input
+                      autoFocus
+                      value={noteDraft}
+                      onChange={event => setNoteDraft(event.target.value)}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') saveNote(property.oid);
+                        if (event.key === 'Escape') setNoteFor(null);
+                      }}
+                      placeholder="np. czeka na dane z recepcji, cenniki już przepisane…"
+                      className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => saveNote(property.oid)}
+                      className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-2 rounded-lg text-sm"
+                    >
+                      Zapisz
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNoteFor(null)}
+                      className="border border-slate-700 text-slate-400 px-3 py-2 rounded-lg text-sm"
+                    >
+                      Anuluj
+                    </button>
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
