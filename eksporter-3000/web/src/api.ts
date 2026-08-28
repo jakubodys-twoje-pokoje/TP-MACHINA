@@ -66,7 +66,7 @@ export interface PropertyRow {
   updatedAt: string;
   _count: {
     roomTypes: number; rooms: number; ratePlans: number;
-    addons: number; reviews: number; definitions: number;
+    addons: number; reviews: number; definitions: number; importFiles: number;
   };
   lastRun: { status: string; startedAt: string; requests: number } | null;
 
@@ -136,6 +136,52 @@ export const photosZipUrl = (
   const query = params.toString();
   return `/api/properties/${encodeURIComponent(oid)}/photos.zip${query ? `?${query}` : ''}`;
 };
+
+// --- pliki importu --------------------------------------------------------
+
+export interface ImportFile {
+  id: number;
+  filename: string;
+  mimeType: string | null;
+  size: number;
+  note: string | null;
+  uploadedAt: string;
+  uploadedBy: string | null;
+}
+
+export const getFiles = (oid: string) =>
+  request<ImportFile[]>(`/api/properties/${encodeURIComponent(oid)}/files`);
+
+export const fileDownloadUrl = (id: number) => `/api/files/${id}/download`;
+
+export const setFileNote = (id: number, note: string) =>
+  request<ImportFile>(`/api/files/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note }),
+  });
+
+export const deleteFile = (id: number) =>
+  request<{ ok: true }>(`/api/files/${id}`, { method: 'DELETE' });
+
+/** Wysyłka wieloczęściowa - Content-Type ustawia przeglądarka razem z boundary. */
+export async function uploadFiles(oid: string, files: File[]): Promise<ImportFile[]> {
+  const form = new FormData();
+  for (const file of files) form.append('files', file);
+
+  const response = await fetch(`/api/properties/${encodeURIComponent(oid)}/files`, {
+    method: 'POST',
+    credentials: 'include',
+    body: form,
+  });
+
+  if (response.status === 401) throw new NotAuthorized();
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error ?? `HTTP ${response.status}`);
+  }
+  return response.json() as Promise<ImportFile[]>;
+}
 
 // --- eksport (strumień NDJSON) -------------------------------------------
 

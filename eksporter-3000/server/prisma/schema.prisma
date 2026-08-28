@@ -101,6 +101,7 @@ model Property {
   migrationUpdatedAt DateTime?
   migrationUpdatedBy String?
   migrationSteps     MigrationStep[]
+  importFiles        ImportFile[]
 
   translations PropertyTranslation[]
   photos       PropertyPhoto[]
@@ -703,6 +704,29 @@ model MigrationStep {
   property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
 
   @@unique([propertyId, step])
+}
+
+/// Pliki importu - materiały, które człowiek przygotował dla danego obiektu
+/// (arkusze, zdjęcia od właściciela, notatki z rozmowy, gotowe paczki do wgrania
+/// w nowym PMS). Same pliki leżą na dysku obok bazy, tu są tylko metadane.
+model ImportFile {
+  id         Int    @id @default(autoincrement())
+  propertyId Int
+
+  /// Nazwa nadana przez użytkownika przy wgrywaniu.
+  filename String
+  /// Nazwa na dysku - generowana, żeby nazwa od użytkownika nigdy nie sterowała ścieżką.
+  storedName String
+  mimeType   String?
+  size       Int
+  note       String?
+
+  uploadedAt DateTime @default(now())
+  uploadedBy String?
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId])
 }
 
 // ---------------------------------------------------------------------------

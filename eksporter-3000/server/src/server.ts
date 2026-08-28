@@ -19,6 +19,9 @@ import { EXCLUDED, GROUPS, LANGS } from './catalogue.js';
 import { assertCredentials, isLoggedIn, login, logout, readCredentials, requireAuth } from './auth.js';
 import { normalizeOid } from './coerce.js';
 import { prisma, readCounts, readSnapshot } from './db.js';
+import {
+  MAX_FILE_SIZE, decodeOriginalName, removeStoredFile, storedFilePath, upload,
+} from './files.js';
 import { MIGRATION_STEP_KEYS, MIGRATION_STEPS, resolveSteps } from './migration.js';
 import { runExport } from './runExport.js';
 
@@ -100,7 +103,7 @@ app.get('/api/catalogue', (_req, res) => {
  * Hotres nie ma pola z nazwą obiektu, więc etykietę składamy z tego, co jest:
  * identyfikator tekstowy → nazwa firmy → miejscowość → sam OID.
  */
-app.get('/api/properties', async (_req, res) => {
+app.get('/api/properties', route(async (_req, res) => {
   const properties = await prisma.property.findMany({
     orderBy: { oid: 'asc' },
     select: {
@@ -120,7 +123,7 @@ app.get('/api/properties', async (_req, res) => {
         select: {
           roomTypes: true, rooms: true, ratePlans: true, addons: true,
           reviews: true, definitions: true, vouchers: true, tickets: true,
-          informator: true,
+          informator: true, importFiles: true,
         },
       },
     },
@@ -162,7 +165,7 @@ app.get('/api/properties', async (_req, res) => {
       };
     }),
   );
-});
+}));
 
 const MIGRATION_STATUSES = ['todo', 'in_progress', 'done', 'skipped'];
 
@@ -455,6 +458,127 @@ app.get('/api/properties/:oid/export.json', route(async (req, res) => {
   res.json(snapshot);
 }));
 
+// --- pliki importu --------------------------------------------------------
+
+/** Lista plików przypiętych do obiektu. */
+app.get('/api/properties/:oid/files', route(async (req, res) => {
+  const property = await prisma.property.findUnique({
+    where: { oid: normalizeOid(req.params.oid) },
+    select: { id: true },
+  });
+  if (!property) {
+    res.status(404).json({ error: 'Obiekt nie był jeszcze eksportowany' });
+    return;
+  }
+
+  res.json(
+    await prisma.importFile.findMany({
+      where: { propertyId: property.id },
+      orderBy: { uploadedAt: 'desc' },
+    }),
+  );
+}));
+
+/** Wgranie jednego lub wielu plików. */
+app.post(
+  '/api/properties/:oid/files',
+  upload.array('files', 50),
+  route(async (req, res) => {
+    const oid = normalizeOid(req.params.oid);
+    const files = (req.files ?? []) as Express.Multer.File[];
+
+    const property = await prisma.property.findUnique({ where: { oid }, select: { id: true } });
+    if (!property) {
+      // Obiekt musi istnieć - inaczej pliki wisiałyby bez właściciela.
+      for (const file of files) removeStoredFile(oid, file.filename);
+      res.status(404).json({ error: 'Obiekt nie był jeszcze eksportowany' });
+      return;
+    }
+
+    if (files.length === 0) {
+      res.status(400).json({ error: 'Nie przysłano żadnego pliku' });
+      return;
+    }
+
+    const note = req.body?.note ? String(req.body.note) : null;
+
+    const created = await Promise.all(
+      files.map(file =>
+        prisma.importFile.create({
+          data: {
+            propertyId: property.id,
+            filename: decodeOriginalName(file.originalname),
+            storedName: file.filename,
+            mimeType: file.mimetype || null,
+            size: file.size,
+            note,
+            uploadedBy: readCredentials().user,
+          },
+        }),
+      ),
+    );
+
+    res.json(created);
+  }),
+);
+
+/** Pobranie pliku pod oryginalną nazwą. */
+app.get('/api/files/:id/download', route(async (req, res) => {
+  const file = await prisma.importFile.findUnique({
+    where: { id: Number(req.params.id) },
+    include: { property: { select: { oid: true } } },
+  });
+  if (!file) {
+    res.status(404).json({ error: 'Nie ma takiego pliku' });
+    return;
+  }
+
+  const diskPath = storedFilePath(file.property.oid, file.storedName);
+  if (!fs.existsSync(diskPath)) {
+    res.status(410).json({ error: 'Plik zniknął z dysku - został skasowany poza aplikacją' });
+    return;
+  }
+
+  res.download(diskPath, file.filename);
+}));
+
+/** Notatka przy pliku - po co on tu jest. */
+app.patch('/api/files/:id', route(async (req, res) => {
+  const note = req.body?.note === undefined ? undefined : String(req.body.note);
+  if (note === undefined) {
+    res.status(400).json({ error: 'Brak pola note' });
+    return;
+  }
+
+  const file = await prisma.importFile.findUnique({ where: { id: Number(req.params.id) } });
+  if (!file) {
+    res.status(404).json({ error: 'Nie ma takiego pliku' });
+    return;
+  }
+
+  res.json(
+    await prisma.importFile.update({
+      where: { id: file.id },
+      data: { note: note === '' ? null : note },
+    }),
+  );
+}));
+
+app.delete('/api/files/:id', route(async (req, res) => {
+  const file = await prisma.importFile.findUnique({
+    where: { id: Number(req.params.id) },
+    include: { property: { select: { oid: true } } },
+  });
+  if (!file) {
+    res.status(404).json({ error: 'Nie ma takiego pliku' });
+    return;
+  }
+
+  removeStoredFile(file.property.oid, file.storedName);
+  await prisma.importFile.delete({ where: { id: file.id } });
+  res.json({ ok: true });
+}));
+
 // --- GUI ------------------------------------------------------------------
 
 if (fs.existsSync(WEB_DIST)) {
@@ -472,6 +596,12 @@ if (fs.existsSync(WEB_DIST)) {
 }
 
 app.use((error: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (error?.code === 'LIMIT_FILE_SIZE') {
+    res
+      .status(413)
+      .json({ error: `Plik jest za duży - limit to ${Math.round(MAX_FILE_SIZE / 1024 / 1024)} MB` });
+    return;
+  }
   console.error('[server]', error);
   res.status(500).json({ error: error?.message ?? 'Błąd serwera' });
 });

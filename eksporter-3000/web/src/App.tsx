@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   BedDouble, Boxes, Database, DoorClosed, Gift, Info, LogOut, Loader2, MessageSquareQuote,
-  Building2, RefreshCw, Settings2, Sparkles, Tag, Ticket, Users, Warehouse,
+  Building2, Paperclip, RefreshCw, Settings2, Sparkles, Tag, Ticket, Users, Warehouse,
 } from 'lucide-react';
 
 import {
@@ -12,6 +12,7 @@ import {
 import { Login } from './views/Login';
 import { ExportView } from './views/ExportView';
 import { PropertiesView } from './views/PropertiesView';
+import { FilesView } from './views/FilesView';
 import { ObjectView } from './views/ObjectView';
 import { RoomTypesView, RoomsView } from './views/RoomTypesView';
 import { RatesView } from './views/RatesView';
@@ -22,7 +23,7 @@ import {
 
 type SectionKey =
   | 'properties' | 'export' | 'object' | 'roomTypes' | 'rooms' | 'rates' | 'addons' | 'vouchers'
-  | 'tickets' | 'reviews' | 'informator' | 'users' | 'params' | 'facilities';
+  | 'tickets' | 'reviews' | 'informator' | 'users' | 'params' | 'facilities' | 'files';
 
 interface Section {
   key: SectionKey;
@@ -47,6 +48,7 @@ const SECTIONS: Section[] = [
   { key: 'users', label: 'Użytkownicy', icon: Users, count: data => data.users?.length ?? 0 },
   { key: 'params', label: 'Parametry', icon: Settings2, count: data => data.params?.length ?? 0 },
   { key: 'facilities', label: 'Słowniki (legendy)', icon: Sparkles, count: data => data.definitions?.length ?? 0 },
+  { key: 'files', label: 'Pliki importu', icon: Paperclip },
 ];
 
 const OID_STORAGE_KEY = 'eksporter3000.oid';
@@ -356,6 +358,7 @@ export const App: React.FC = () => {
             {section === 'users' && <UsersView data={data} />}
             {section === 'params' && <ParamsView data={data} />}
             {section === 'facilities' && <DefinitionsView data={data} />}
+            {section === 'files' && <FilesView oid={oid} onChanged={loadProperties} />}
           </>
         )}
       </main>

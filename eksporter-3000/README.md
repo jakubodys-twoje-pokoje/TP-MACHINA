@@ -42,6 +42,8 @@ npm run dev                 # http://localhost:4000
 | `HOTRES_API_USER` / `HOTRES_API_PASSWORD` | konto agencyjne w Hotresie |
 | `DATABASE_URL` | plik SQLite, domyślnie `file:./eksporter3000.db` |
 | `PORT` | port GUI i API, domyślnie 4000 |
+| `MAX_UPLOAD_MB` | limit wielkości wgrywanego pliku, domyślnie 200 |
+| `UPLOADS_DIR` | katalog na pliki importu, domyślnie `server/data/uploads` |
 
 Bez kompletu `EKSPORTER_USER` i `EKSPORTER_PASSWORD` serwis **nie wstanie** —
 lepiej to niż panel bez hasła.
@@ -70,6 +72,7 @@ jednym kliknięciem**, a puste pola są pokazane wprost jako „puste", nigdy uk
 | Użytkownicy | `api_users` | konta z dostępem do obiektu |
 | Parametry | `api_params` | surowa konfiguracja `be_*` |
 | Słowniki (legendy) | `api_definitions` | wyposażenie, waluty, kraje - zamiana numerów na nazwy |
+| Pliki importu | — | materiały człowieka przypięte do obiektu: arkusze, zdjęcia od właściciela, notatki, gotowe paczki |
 
 ### Dwie rzeczy, które oszczędzają najwięcej klikania
 
@@ -84,6 +87,13 @@ swojej stronie i pakuje je w foldery (`obiekt/`, `standardy/<id>-<nazwa>/`,
 `cenniki/<id>-<nazwa>/`, `vouchery/`, `bilety/`). Można wziąć całość albo
 pojedynczą galerię. Zdjęcia, których nie udało się pobrać, nie wywracają
 archiwum - lądują w pliku `BLEDY.txt` w środku.
+
+**Pliki importu.** Ostatnia sekcja przy każdym obiekcie to miejsce na własne
+pliki - przeciągasz je z pulpitu, dopisujesz notatkę „po co to jest", pobierasz
+pod oryginalną nazwą. Nie mają nic wspólnego z Hotresem i nigdzie nie są
+wysyłane: leżą na dysku serwera w `server/data/uploads/<oid>/`, a w bazie są
+tylko metadane. Nazwa od użytkownika nigdy nie trafia do ścieżki na dysku -
+plik dostaje losowy identyfikator, oryginalna nazwa wraca dopiero przy pobieraniu.
 
 ## Czego NIE pobieramy — świadomie
 
@@ -206,7 +216,12 @@ pm2 restart eksporter-3000
 
 ### Kopia danych
 
-Cała baza to jeden plik: `eksporter-3000/server/prisma/eksporter3000.db`.
+Do backupu idą **dwie rzeczy**:
+
+- `eksporter-3000/server/prisma/eksporter3000.db` - dane i postęp przepisywania,
+- `eksporter-3000/server/data/uploads/` - wgrane pliki importu.
+
+Tylko tego nie da się odtworzyć ponownym pobraniem z Hotresa.
 
 ---
 
