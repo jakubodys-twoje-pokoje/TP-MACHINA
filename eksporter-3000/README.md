@@ -94,6 +94,9 @@ pod oryginalną nazwą. Nie mają nic wspólnego z Hotresem i nigdzie nie są
 wysyłane: leżą na dysku serwera w `server/data/uploads/<oid>/`, a w bazie są
 tylko metadane. Nazwa od użytkownika nigdy nie trafia do ścieżki na dysku -
 plik dostaje losowy identyfikator, oryginalna nazwa wraca dopiero przy pobieraniu.
+Pojedynczy plik pobierasz jednym kliknięciem, a całą szufladę obiektu -
+przyciskiem „Pobierz wszystkie" jako ZIP (z `NOTATKI.txt` w środku, bo po samych
+nazwach nie widać, po co dany plik tam jest).
 
 ## Czego NIE pobieramy — świadomie
 

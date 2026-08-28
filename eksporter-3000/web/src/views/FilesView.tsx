@@ -4,7 +4,8 @@ import {
 } from 'lucide-react';
 import { Card, CopyButton, Empty, PageHeader } from '../ui';
 import {
-  deleteFile, fileDownloadUrl, getFiles, setFileNote, uploadFiles, type ImportFile,
+  deleteFile, fileDownloadUrl, filesZipUrl, getFiles, setFileNote, uploadFiles,
+  type ImportFile,
 } from '../api';
 import { plural } from '../helpers';
 
@@ -73,6 +74,14 @@ export const FilesView: React.FC<{ oid: string; onChanged?: () => void }> = ({ o
         count={files.length}
         subtitle="Miejsce na materiały do tego obiektu: arkusze, zdjęcia od właściciela, notatki, gotowe paczki do wgrania w nowym PMS. Pliki leżą na serwerze obok bazy - nie idą nigdzie dalej i nie mają nic wspólnego z Hotresem."
       >
+        {files.length > 1 && (
+          <a
+            href={filesZipUrl(oid)}
+            className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 px-3 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors whitespace-nowrap"
+          >
+            <Download size={15} /> Pobierz wszystkie ({files.length})
+          </a>
+        )}
         <button
           type="button"
           onClick={() => inputRef.current?.click()}

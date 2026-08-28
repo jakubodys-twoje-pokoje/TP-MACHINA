@@ -11,6 +11,8 @@ declare module 'archiver' {
     on(event: 'error' | 'warning', handler: (error: Error) => void): this;
     pipe(destination: Writable): Writable;
     append(source: Buffer | string, options: { name: string }): this;
+    /** Dokłada plik z dysku strumieniowo - bez wciągania go do pamięci. */
+    file(path: string, options: { name: string }): this;
     finalize(): Promise<void>;
   }
 }

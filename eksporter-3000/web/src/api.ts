@@ -154,6 +154,10 @@ export const getFiles = (oid: string) =>
 
 export const fileDownloadUrl = (id: number) => `/api/files/${id}/download`;
 
+/** Wszystkie pliki obiektu w jednym ZIP-ie. */
+export const filesZipUrl = (oid: string) =>
+  `/api/properties/${encodeURIComponent(oid)}/files.zip`;
+
 export const setFileNote = (id: number, note: string) =>
   request<ImportFile>(`/api/files/${id}`, {
     method: 'PATCH',

@@ -479,6 +479,76 @@ app.get('/api/properties/:oid/files', route(async (req, res) => {
   );
 }));
 
+/**
+ * Wszystkie pliki importu obiektu w jednym ZIP-ie.
+ *
+ * Pliki idą z dysku strumieniowo, więc paczka 200 MB nie ląduje w pamięci.
+ * Notatki dopisujemy obok, bo w samej nazwie pliku nie widać, po co on jest.
+ */
+app.get('/api/properties/:oid/files.zip', route(async (req, res) => {
+  const oid = normalizeOid(req.params.oid);
+  const property = await prisma.property.findUnique({ where: { oid }, select: { id: true } });
+  if (!property) {
+    res.status(404).json({ error: 'Obiekt nie był jeszcze eksportowany' });
+    return;
+  }
+
+  const files = await prisma.importFile.findMany({
+    where: { propertyId: property.id },
+    orderBy: { uploadedAt: 'asc' },
+  });
+  if (files.length === 0) {
+    res.status(404).json({ error: 'Ten obiekt nie ma wgranych plików' });
+    return;
+  }
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="pliki-importu-${oid}.zip"`);
+
+  const archive = new ZipArchive({ zlib: { level: 6 } });
+  archive.on('error', (error: Error) => {
+    console.error('[files.zip]', error);
+    res.destroy();
+  });
+  archive.pipe(res);
+
+  const used = new Set<string>();
+  const notes: string[] = [];
+  const missing: string[] = [];
+
+  for (const file of files) {
+    // Dwa pliki mogą mieć tę samą nazwę - w archiwum muszą się różnić.
+    let name = file.filename;
+    let counter = 2;
+    while (used.has(name)) {
+      name = file.filename.replace(/(\.[^.]+)?$/, `-${counter}$1`);
+      counter++;
+    }
+    used.add(name);
+
+    const diskPath = storedFilePath(oid, file.storedName);
+    if (!fs.existsSync(diskPath)) {
+      missing.push(file.filename);
+      continue;
+    }
+
+    archive.file(diskPath, { name });
+    if (file.note) notes.push(`${name} - ${file.note}`);
+  }
+
+  if (notes.length > 0) {
+    archive.append(`Notatki do plików:\n\n${notes.join('\n')}\n`, { name: 'NOTATKI.txt' });
+  }
+  if (missing.length > 0) {
+    archive.append(
+      `Tych plików nie było już na dysku:\n\n${missing.join('\n')}\n`,
+      { name: 'BRAKUJACE.txt' },
+    );
+  }
+
+  await archive.finalize();
+}));
+
 /** Wgranie jednego lub wielu plików. */
 app.post(
   '/api/properties/:oid/files',
